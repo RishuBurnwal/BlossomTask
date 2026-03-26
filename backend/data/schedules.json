@@ -1,0 +1,28 @@
+[
+  {
+    "id": "schedule_1774486613530_jv1cv9",
+    "name": "Default Sequential Pipeline",
+    "cron": "*/30 * * * *",
+    "enabled": true,
+    "sequence": [
+      {
+        "scriptId": "get-task"
+      },
+      {
+        "scriptId": "get-order-inquiry"
+      },
+      {
+        "scriptId": "funeral-finder",
+        "option": "batch"
+      },
+      {
+        "scriptId": "updater"
+      },
+      {
+        "scriptId": "closing-task"
+      }
+    ],
+    "createdAt": "2026-03-26T00:56:53.530Z",
+    "updatedAt": "2026-03-26T12:51:24.247Z"
+  }
+]
