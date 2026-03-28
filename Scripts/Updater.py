@@ -17,7 +17,6 @@ CSV_LOG_PATH = UPDATER_DIR / "updater_payloads.csv"
 API_URL = "http://ordstatus.tfdash.info:8061/api/createcomm"
 API_KEY_HEADER = "X-VCAppApiKey"
 API_KEY_VALUE = ""
-DRY_RUN = True
 
 
 def _clean(value):
@@ -117,6 +116,15 @@ def _resolved_status(row: Dict[str, str]) -> str:
     return "matched"
 
 
+def _tr_result_label(row: Dict[str, str]) -> str:
+    status = _resolved_status(row).strip().lower()
+    if status in {"matched"}:
+        return "Found"
+    if status in {"unmatched", "mismatched"}:
+        return "NotFound"
+    return "Review"
+
+
 def _load_processed_ids(path: Path) -> Set[str]:
     if not path.exists():
         return set()
@@ -137,28 +145,33 @@ def _append_run_log(message: str) -> None:
         f.write(f"[{timestamp}] {message}\n")
 
 
-def _append_payload_log(payload: Dict[str, str]) -> None:
+def _append_payload_log(record: Dict[str, str]) -> None:
     PAYLOAD_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with PAYLOAD_LOG_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def _append_csv_log(payload: Dict[str, str]) -> None:
+def _append_csv_log(record: Dict[str, str]) -> None:
     CSV_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     headers = [
+        "logged_at_utc",
+        "request_stage",
         "ord_id",
+        "payload_json",
         "trResult",
         "trText",
         "frType",
         "trEndDate",
         "trAddress",
+        "api_status_code",
+        "api_response_text",
     ]
     write_header = not CSV_LOG_PATH.exists()
     with CSV_LOG_PATH.open("a", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         if write_header:
             writer.writeheader()
-        writer.writerow({key: payload.get(key, "") for key in headers})
+        writer.writerow({key: record.get(key, "") for key in headers})
 
 
 def process_file():
@@ -200,12 +213,12 @@ def process_file():
                 "trText": _build_tr_text(row),
                 "trdirection": "in",
                 "trGroup": "",
-                "frType": _build_fr_type(row),
+                "frType": "",
                 "toType": "Us",
                 "price": "0.00",
                 "trEndDate": _build_tr_end_date(row),
                 "trAddress": _build_tr_address(row),
-                "trResult": f"Found + Match Score {_match_score(row)} | Status {_resolved_status(row)}",
+                "trResult": _tr_result_label(row),
             }
 
             headers = {
@@ -213,29 +226,71 @@ def process_file():
                 API_KEY_HEADER: API_KEY_VALUE,
             }
 
-            if DRY_RUN:
-                print(json.dumps(payload, ensure_ascii=False))
-                _append_payload_log(payload)
-                _append_csv_log(payload)
-                _append_run_log(f"DRY_RUN saved payload for ord_id={ord_id}")
-                _append_processed_id(LOG_PATH, ord_id)
-                processed_count += 1
-                continue
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            prepared_record = {
+                "logged_at_utc": datetime.utcnow().isoformat(),
+                "request_stage": "prepared",
+                "ord_id": ord_id,
+                "payload_json": payload_json,
+                "trResult": payload.get("trResult", ""),
+                "trText": payload.get("trText", ""),
+                "frType": payload.get("frType", ""),
+                "trEndDate": payload.get("trEndDate", ""),
+                "trAddress": payload.get("trAddress", ""),
+                "api_status_code": "PENDING",
+                "api_response_text": "",
+                "payload": payload,
+            }
+
+            _append_payload_log(prepared_record)
+            _append_csv_log(prepared_record)
+            print(f"PREPARED ord_id={ord_id} payload={payload_json}")
+            _append_run_log(f"PREPARED ord_id={ord_id} payload={payload_json}")
 
             try:
                 response = requests.post(API_URL, json=payload, headers=headers, timeout=30)
-                print(payload["ord_id"], response.status_code, response.text)
-                _append_payload_log(payload)
-                _append_csv_log(payload)
-                _append_run_log(f"POST ord_id={ord_id} status={response.status_code}")
+                response_record = {
+                    "logged_at_utc": datetime.utcnow().isoformat(),
+                    "request_stage": "sent",
+                    "ord_id": ord_id,
+                    "payload_json": payload_json,
+                    "trResult": payload.get("trResult", ""),
+                    "trText": payload.get("trText", ""),
+                    "frType": payload.get("frType", ""),
+                    "trEndDate": payload.get("trEndDate", ""),
+                    "trAddress": payload.get("trAddress", ""),
+                    "api_status_code": str(response.status_code),
+                    "api_response_text": response.text,
+                    "payload": payload,
+                }
+                _append_payload_log(response_record)
+                _append_csv_log(response_record)
+                print(f"SENT ord_id={ord_id} status={response.status_code} response={response.text}")
+                _append_run_log(f"SENT ord_id={ord_id} status={response.status_code} response={response.text}")
                 if response.ok:
                     _append_processed_id(LOG_PATH, ord_id)
                     processed_count += 1
             except Exception as exc:
-                print(f"Error posting ord_id={ord_id}: {exc}")
+                error_record = {
+                    "logged_at_utc": datetime.utcnow().isoformat(),
+                    "request_stage": "error",
+                    "ord_id": ord_id,
+                    "payload_json": payload_json,
+                    "trResult": payload.get("trResult", ""),
+                    "trText": payload.get("trText", ""),
+                    "frType": payload.get("frType", ""),
+                    "trEndDate": payload.get("trEndDate", ""),
+                    "trAddress": payload.get("trAddress", ""),
+                    "api_status_code": "ERROR",
+                    "api_response_text": str(exc),
+                    "payload": payload,
+                }
+                _append_payload_log(error_record)
+                _append_csv_log(error_record)
+                print(f"ERROR ord_id={ord_id} err={exc}")
                 _append_run_log(f"ERROR ord_id={ord_id} err={exc}")
 
-    summary = f"Updater finished: processed={processed_count}, skipped={skipped_count}, dry_run={DRY_RUN}"
+    summary = f"Updater finished: processed={processed_count}, skipped={skipped_count}"
     print(summary)
     _append_run_log(summary)
 

@@ -45,6 +45,19 @@ export function DashboardHeader() {
     },
   });
 
+  const { data: jobsData } = useQuery({
+    queryKey: ["jobs", "run-history"],
+    queryFn: api.jobs,
+    refetchInterval: 8000,
+  });
+
+  const runHistoryItems =
+    (scheduleHistoryData?.history?.length ?? 0) > 0
+      ? scheduleHistoryData?.history ?? []
+      : (jobsData?.jobs ?? [])
+          .filter((job) => job.kind === "pipeline" || job.kind === "script")
+          .slice(0, 20);
+
   const runPipeline = useMutation({
     mutationFn: () => api.runPipeline(),
     onSuccess: ({ jobId }) => {
@@ -323,10 +336,10 @@ export function DashboardHeader() {
             </button>
           </div>
           <div className="space-y-2">
-            {(scheduleHistoryData?.history ?? []).length === 0 && (
-              <p className="text-xs text-muted-foreground">No runs found for selected schedule.</p>
+            {runHistoryItems.length === 0 && (
+              <p className="text-xs text-muted-foreground">No runs found yet.</p>
             )}
-            {(scheduleHistoryData?.history ?? []).map((job) => (
+            {runHistoryItems.map((job) => (
               <button
                 key={job.id}
                 onClick={() => setSelectedHistoryJobId((current) => (current === job.id ? null : job.id))}

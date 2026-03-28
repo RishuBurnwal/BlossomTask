@@ -16,9 +16,60 @@ app.use(express.json({ limit: "2mb" }));
 const PORT = Number(process.env.BACKEND_PORT || 8787);
 const jobsFile = "jobs.json";
 const schedulesFile = "schedules.json";
+const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
 const runningProcesses = new Map();
 const scheduleTasks = new Map();
 const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "updater", "closing-task"];
+
+function ensureRunHistoryFile() {
+  fs.mkdirSync(path.dirname(runHistoryFile), { recursive: true });
+  if (!fs.existsSync(runHistoryFile)) {
+    fs.writeFileSync(runHistoryFile, "", "utf-8");
+  }
+}
+
+function parseLoggedLine(line) {
+  const source = String(line || "");
+  const match = source.match(/^\[([^\]]+)\]\s*(.*)$/);
+  if (!match) {
+    return { timestamp: new Date().toISOString(), message: source };
+  }
+  return { timestamp: match[1], message: match[2] };
+}
+
+function appendRunHistoryEntry(entry) {
+  ensureRunHistoryFile();
+  fs.appendFileSync(runHistoryFile, `${JSON.stringify(entry)}\n`, "utf-8");
+}
+
+function seedRunHistoryFromExistingJobs() {
+  ensureRunHistoryFile();
+  const stats = fs.statSync(runHistoryFile);
+  if (stats.size > 0) {
+    return;
+  }
+
+  const jobs = loadJobs();
+  jobs
+    .slice()
+    .reverse()
+    .forEach((job) => {
+      (job.logs || []).forEach((line) => {
+        const parsed = parseLoggedLine(line);
+        appendRunHistoryEntry({
+          taskId: job.id,
+          jobId: job.id,
+          kind: job.kind,
+          scriptId: job.scriptId ?? null,
+          status: job.status,
+          progress: job.progress,
+          timestamp: parsed.timestamp,
+          message: parsed.message,
+          fullLogs: job.logs,
+        });
+      });
+    });
+}
 
 function defaultPipelineSequence() {
   return [
@@ -212,10 +263,44 @@ function appendLog(jobId, line) {
   const index = jobs.findIndex((entry) => entry.id === jobId);
   if (index === -1) return;
   const job = jobs[index];
-  job.logs = [...job.logs, `[${new Date().toISOString()}] ${line}`].slice(-500);
+  const timestamp = new Date().toISOString();
+  const formattedLine = `[${timestamp}] ${line}`;
+  job.logs = [...job.logs, formattedLine].slice(-500);
   job.updatedAt = new Date().toISOString();
   jobs[index] = job;
   saveJobs(jobs);
+
+  appendRunHistoryEntry({
+    taskId: job.id,
+    jobId: job.id,
+    kind: job.kind,
+    scriptId: job.scriptId ?? null,
+    status: job.status,
+    progress: job.progress,
+    timestamp,
+    message: String(line || ""),
+    fullLogs: job.logs,
+  });
+}
+
+function appendScriptRunSummary(jobId, scriptId) {
+  const job = loadJobs().find((entry) => entry.id === jobId);
+  if (!job) return;
+  if ((job.logs || []).some((line) => String(line).includes("RUN_SUMMARY|"))) {
+    return;
+  }
+
+  const startedAtMs = job.startedAt ? new Date(job.startedAt).getTime() : null;
+  const finishedAtMs = job.finishedAt ? new Date(job.finishedAt).getTime() : null;
+  const durationSec =
+    startedAtMs && finishedAtMs && Number.isFinite(startedAtMs) && Number.isFinite(finishedAtMs)
+      ? Math.max(0, Math.round((finishedAtMs - startedAtMs) / 1000))
+      : null;
+
+  appendLog(
+    jobId,
+    `RUN_SUMMARY|taskId=${jobId}|scriptId=${scriptId}|status=${job.status}|exitCode=${job.exitCode ?? "n/a"}|progress=${job.progress ?? 0}|durationSec=${durationSec ?? "n/a"}|logLines=${(job.logs || []).length}`,
+  );
 }
 
 async function runScriptJob({ jobId, scriptId, option }) {
@@ -285,6 +370,7 @@ async function runScriptJob({ jobId, scriptId, option }) {
         exitCode: 1,
       });
       appendLog(jobId, `Process error: ${error.message}`);
+      appendScriptRunSummary(jobId, scriptId);
       resolve({ success: false, exitCode: 1 });
     });
 
@@ -298,6 +384,7 @@ async function runScriptJob({ jobId, scriptId, option }) {
           exitCode: code,
         });
         appendLog(jobId, `${script.name} stopped by user`);
+        appendScriptRunSummary(jobId, scriptId);
         resolve({ success: false, exitCode: code ?? 1 });
         return;
       }
@@ -309,6 +396,7 @@ async function runScriptJob({ jobId, scriptId, option }) {
         exitCode: code,
       });
       appendLog(jobId, `${script.name} finished with code ${code}`);
+      appendScriptRunSummary(jobId, scriptId);
       resolve({ success, exitCode: code ?? 1 });
     });
   });
@@ -434,6 +522,7 @@ function resetSchedules() {
 }
 
 resetSchedules();
+seedRunHistoryFromExistingJobs();
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "webui-backend" });

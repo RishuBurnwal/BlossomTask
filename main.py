@@ -39,6 +39,28 @@ def ensure_command(name: str) -> str:
 def _find_pids_for_port(port: int) -> set[int]:
     pids: set[int] = set()
 
+    if os.name == "nt":
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for line in (result.stdout or "").splitlines():
+            if "LISTENING" not in line.upper():
+                continue
+            if f":{port}" not in line:
+                continue
+            parts = line.split()
+            if not parts:
+                continue
+            pid_token = parts[-1]
+            if pid_token.isdigit():
+                pids.add(int(pid_token))
+
+        if pids:
+            return pids
+
     lsof_bin = shutil.which("lsof")
     if lsof_bin:
         result = subprocess.run(
@@ -68,6 +90,38 @@ def _find_pids_for_port(port: int) -> set[int]:
     return pids
 
 
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _terminate_pid(pid: int, port: int) -> None:
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 and _pid_exists(pid):
+            _print(f"Unable to stop PID {pid} on port {port}: {(result.stderr or result.stdout).strip()}")
+        return
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        _print(f"Permission denied while terminating PID {pid} on port {port}")
+
+
 def kill_required_ports(ports: tuple[int, ...] = REQUIRED_PORTS) -> None:
     own_pid = os.getpid()
     for port in ports:
@@ -77,17 +131,15 @@ def kill_required_ports(ports: tuple[int, ...] = REQUIRED_PORTS) -> None:
 
         _print(f"Port {port} busy. Stopping processes: {sorted(pids)}")
         for pid in pids:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                _print(f"Permission denied while terminating PID {pid} on port {port}")
+            _terminate_pid(pid, port)
 
         time.sleep(0.8)
 
-        survivors = {pid for pid in pids if Path(f"/proc/{pid}").exists()}
+        survivors = {pid for pid in pids if _pid_exists(pid)}
         for pid in survivors:
+            if os.name == "nt":
+                _terminate_pid(pid, port)
+                continue
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -151,7 +203,7 @@ def launch_ui() -> int:
                 _print(f"Vite CLI is still missing after install: {vite_cli}")
                 return 1
 
-        frontend_cmd = [node_bin, str(vite_cli)]
+        frontend_cmd = [node_bin, str(vite_cli), "--port", "8080", "--strictPort"]
         _print(f"Frontend command: {' '.join(frontend_cmd)}")
         frontend = subprocess.Popen(
             frontend_cmd,

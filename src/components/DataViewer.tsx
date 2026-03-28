@@ -11,9 +11,11 @@ export function DataViewer() {
   const [activePath, setActivePath] = useState("");
   const [selectedFile, setSelectedFile] = useState<string>("");
   const [viewMode, setViewMode] = useState<"table" | "json" | "raw" | "terminal">("table");
+  const [searchQuery, setSearchQuery] = useState("");
   const [liveRefresh, setLiveRefresh] = useState(false);
   const [terminalSource, setTerminalSource] = useState<"file" | "runtime">("file");
   const [selectedRuntimeJobId, setSelectedRuntimeJobId] = useState<string>("");
+  const [hasInitializedFileSelection, setHasInitializedFileSelection] = useState(false);
 
   const { data: datasetsData } = useQuery({
     queryKey: ["datasets"],
@@ -96,6 +98,7 @@ export function DataViewer() {
 
   useEffect(() => {
     if (activeTab !== "all") return;
+    if (hasInitializedFileSelection) return;
     if (selectedFile) return;
     if (!quickFiles.length) return;
     const firstPath = quickFiles[0].path;
@@ -103,25 +106,53 @@ export function DataViewer() {
     const chunks = firstPath.split("/");
     chunks.pop();
     setActivePath(chunks.join("/"));
-  }, [activeTab, quickFiles, selectedFile]);
+    setHasInitializedFileSelection(true);
+  }, [activeTab, hasInitializedFileSelection, quickFiles, selectedFile]);
 
   const pathSegments = useMemo(() => activePath.split("/").filter(Boolean), [activePath]);
 
+  const normalizeRows = (value: unknown): DataRow[] => {
+    if (Array.isArray(value)) {
+      return value as DataRow[];
+    }
+    if (value && typeof value === "object") {
+      return [value as DataRow];
+    }
+    return [];
+  };
+
   const datasets = datasetsData?.datasets;
   const tabs: { id: FileTab; label: string; icon: React.ReactNode; data: DataRow[] }[] = [
-    { id: "main", label: "Main Data", icon: <FileSpreadsheet className="h-3.5 w-3.5" />, data: datasets?.main?.rows ?? [] },
+    {
+      id: "main",
+      label: "Main Data",
+      icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
+      data: normalizeRows(datasets?.main?.rows),
+    },
     {
       id: "all",
       label: "All Files",
       icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
-      data: (selectedFileData?.parsed as DataRow[]) ?? [],
+      data: normalizeRows(selectedFileData?.parsed),
     },
   ];
 
   const current = tabs.find((t) => t.id === activeTab)!;
+  const filteredRows = useMemo(() => {
+    const rows = Array.isArray(current.data) ? current.data : [];
+    const needle = searchQuery.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((row) => {
+      if (!row || typeof row !== "object") return false;
+      return Object.entries(row).some(([key, value]) =>
+        `${key} ${String(value ?? "")}`.toLowerCase().includes(needle),
+      );
+    });
+  }, [current.data, searchQuery]);
+
   const tableHeaders = useMemo(() => {
     const headers = new Set<string>();
-    current.data.forEach((row) => {
+    (Array.isArray(current.data) ? current.data : []).forEach((row) => {
       Object.keys(row).forEach((key) => headers.add(key));
     });
     return [...headers];
@@ -297,7 +328,10 @@ export function DataViewer() {
                 {files.map((file) => (
                   <button
                     key={file.path}
-                    onClick={() => setSelectedFile(file.path)}
+                    onClick={() => {
+                      setSelectedFile(file.path);
+                      setHasInitializedFileSelection(true);
+                    }}
                     className={`flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-xs ${
                       selectedFile === file.path ? "bg-accent" : "hover:bg-accent"
                     }`}
@@ -317,6 +351,7 @@ export function DataViewer() {
               onChange={(event) => {
                 const value = event.target.value;
                 setSelectedFile(value);
+                setHasInitializedFileSelection(true);
                 const chunks = value.split("/");
                 chunks.pop();
                 setActivePath(chunks.join("/"));
@@ -357,6 +392,12 @@ export function DataViewer() {
 
         {activeTab === "all" && (
           <>
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search data..."
+              className="h-8 min-w-[220px] rounded-md border bg-background px-2 text-xs"
+            />
             <button
               onClick={refreshNow}
               className="rounded-md border bg-background px-2 py-1 text-xs hover:bg-accent"
@@ -388,7 +429,7 @@ export function DataViewer() {
               </tr>
             </thead>
             <tbody>
-              {current.data.map((row, index) => (
+              {filteredRows.map((row, index) => (
                 <tr key={index} className="border-b transition-colors hover:bg-accent/30">
                   {tableHeaders.map((header) => (
                     <td key={`${index}-${header}`} className="px-3 py-2 whitespace-nowrap align-top">
@@ -397,7 +438,7 @@ export function DataViewer() {
                   ))}
                 </tr>
               ))}
-              {current.data.length === 0 ? (
+              {filteredRows.length === 0 ? (
                 <tr>
                   <td className="px-3 py-8 text-center text-muted-foreground" colSpan={Math.max(1, tableHeaders.length)}>
                     No data found
@@ -411,7 +452,7 @@ export function DataViewer() {
 
       {viewMode === "json" && (
         <pre className="max-h-[400px] overflow-auto whitespace-pre-wrap p-4 text-xs font-mono">
-          {JSON.stringify(current.data, null, 2)}
+          {JSON.stringify(filteredRows, null, 2)}
         </pre>
       )}
 
