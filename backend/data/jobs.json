@@ -8,16 +8,18 @@
     "trigger": {
       "type": "manual"
     },
-    "status": "running",
+    "status": "failed",
     "logs": [
-      "[2026-03-28T20:30:00.942Z] Starting GetTask"
+      "[2026-03-28T20:30:00.942Z] Starting GetTask",
+      "[2026-03-28T20:30:01.203Z] File \"D:\\BlossomTask-master\\Scripts\\GetTask.py\", line 1\r\n    <<<<<<< HEAD\r\n    ^^\r\nSyntaxError: invalid syntax",
+      "[2026-03-28T20:30:01.212Z] GetTask finished with code 1"
     ],
-    "progress": 5,
+    "progress": 100,
     "createdAt": "2026-03-28T20:30:00.938Z",
-    "updatedAt": "2026-03-28T20:30:00.942Z",
+    "updatedAt": "2026-03-28T20:30:01.212Z",
     "startedAt": "2026-03-28T20:30:00.941Z",
-    "finishedAt": null,
-    "exitCode": null
+    "finishedAt": "2026-03-28T20:30:01.211Z",
+    "exitCode": 1
   },
   {
     "id": "job_1774729800932_3air1a",
@@ -47,17 +49,18 @@
       "scheduleId": "schedule_1774486613530_jv1cv9",
       "scheduleName": "Default Sequential Pipeline"
     },
-    "status": "running",
+    "status": "failed",
     "logs": [
       "[2026-03-28T20:30:00.934Z] Triggered by schedule Default Sequential Pipeline",
       "[2026-03-28T20:30:00.937Z] Pipeline started with 5 steps",
-      "[2026-03-28T20:30:00.939Z] Step 1/5 -> get-task (job_1774729800938_gc1ljp)"
+      "[2026-03-28T20:30:00.939Z] Step 1/5 -> get-task (job_1774729800938_gc1ljp)",
+      "[2026-03-28T20:30:01.215Z] Pipeline failed at get-task"
     ],
-    "progress": 1,
+    "progress": 100,
     "createdAt": "2026-03-28T20:30:00.932Z",
-    "updatedAt": "2026-03-28T20:30:00.939Z",
+    "updatedAt": "2026-03-28T20:30:01.215Z",
     "startedAt": "2026-03-28T20:30:00.936Z",
-    "finishedAt": null,
-    "exitCode": null
+    "finishedAt": "2026-03-28T20:30:01.214Z",
+    "exitCode": 1
   }
 ]
