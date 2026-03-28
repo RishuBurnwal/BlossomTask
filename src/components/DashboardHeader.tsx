@@ -45,6 +45,7 @@ export function DashboardHeader() {
     },
   });
 
+<<<<<<< HEAD
   const { data: jobsData } = useQuery({
     queryKey: ["jobs", "run-history"],
     queryFn: api.jobs,
@@ -58,6 +59,8 @@ export function DashboardHeader() {
           .filter((job) => job.kind === "pipeline" || job.kind === "script")
           .slice(0, 20);
 
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
   const runPipeline = useMutation({
     mutationFn: () => api.runPipeline(),
     onSuccess: ({ jobId }) => {
@@ -150,7 +153,11 @@ export function DashboardHeader() {
   });
 
   return (
+<<<<<<< HEAD
     <header className="relative z-10 glass-panel border-b px-4 py-3 lg:px-6">
+=======
+    <header className="sticky top-0 z-50 glass-panel border-b px-4 py-3 lg:px-6">
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         {/* Logo & Title */}
         <div className="flex items-center gap-3">
@@ -277,7 +284,11 @@ export function DashboardHeader() {
             </button>
           )}
         </div>
+<<<<<<< HEAD
         <div className="space-y-2">
+=======
+        <div className="max-h-32 space-y-2 overflow-auto">
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
           {schedules.length === 0 && (
             <p className="text-xs text-muted-foreground">No schedules saved yet.</p>
           )}
@@ -335,11 +346,19 @@ export function DashboardHeader() {
               {clearHistory.isPending ? "Clearing..." : "Clear History"}
             </button>
           </div>
+<<<<<<< HEAD
           <div className="space-y-2">
             {runHistoryItems.length === 0 && (
               <p className="text-xs text-muted-foreground">No runs found yet.</p>
             )}
             {runHistoryItems.map((job) => (
+=======
+          <div className="max-h-32 space-y-2 overflow-auto">
+            {(scheduleHistoryData?.history ?? []).length === 0 && (
+              <p className="text-xs text-muted-foreground">No runs found for selected schedule.</p>
+            )}
+            {(scheduleHistoryData?.history ?? []).map((job) => (
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
               <button
                 key={job.id}
                 onClick={() => setSelectedHistoryJobId((current) => (current === job.id ? null : job.id))}

@@ -16,11 +16,15 @@ app.use(express.json({ limit: "2mb" }));
 const PORT = Number(process.env.BACKEND_PORT || 8787);
 const jobsFile = "jobs.json";
 const schedulesFile = "schedules.json";
+<<<<<<< HEAD
 const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 const runningProcesses = new Map();
 const scheduleTasks = new Map();
 const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "updater", "closing-task"];
 
+<<<<<<< HEAD
 function ensureRunHistoryFile() {
   fs.mkdirSync(path.dirname(runHistoryFile), { recursive: true });
   if (!fs.existsSync(runHistoryFile)) {
@@ -71,6 +75,8 @@ function seedRunHistoryFromExistingJobs() {
     });
 }
 
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 function defaultPipelineSequence() {
   return [
     { scriptId: "get-task" },
@@ -263,6 +269,7 @@ function appendLog(jobId, line) {
   const index = jobs.findIndex((entry) => entry.id === jobId);
   if (index === -1) return;
   const job = jobs[index];
+<<<<<<< HEAD
   const timestamp = new Date().toISOString();
   const formattedLine = `[${timestamp}] ${line}`;
   job.logs = [...job.logs, formattedLine].slice(-500);
@@ -301,6 +308,12 @@ function appendScriptRunSummary(jobId, scriptId) {
     jobId,
     `RUN_SUMMARY|taskId=${jobId}|scriptId=${scriptId}|status=${job.status}|exitCode=${job.exitCode ?? "n/a"}|progress=${job.progress ?? 0}|durationSec=${durationSec ?? "n/a"}|logLines=${(job.logs || []).length}`,
   );
+=======
+  job.logs = [...job.logs, `[${new Date().toISOString()}] ${line}`].slice(-500);
+  job.updatedAt = new Date().toISOString();
+  jobs[index] = job;
+  saveJobs(jobs);
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 }
 
 async function runScriptJob({ jobId, scriptId, option }) {
@@ -370,12 +383,16 @@ async function runScriptJob({ jobId, scriptId, option }) {
         exitCode: 1,
       });
       appendLog(jobId, `Process error: ${error.message}`);
+<<<<<<< HEAD
       appendScriptRunSummary(jobId, scriptId);
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       resolve({ success: false, exitCode: 1 });
     });
 
     child.on("close", (code) => {
       runningProcesses.delete(jobId);
+<<<<<<< HEAD
       const current = loadJobs().find((entry) => entry.id === jobId);
       if (current?.status === "cancelled") {
         upsertJob(jobId, {
@@ -388,6 +405,8 @@ async function runScriptJob({ jobId, scriptId, option }) {
         resolve({ success: false, exitCode: code ?? 1 });
         return;
       }
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       const success = code === 0;
       upsertJob(jobId, {
         status: success ? "success" : "failed",
@@ -396,7 +415,10 @@ async function runScriptJob({ jobId, scriptId, option }) {
         exitCode: code,
       });
       appendLog(jobId, `${script.name} finished with code ${code}`);
+<<<<<<< HEAD
       appendScriptRunSummary(jobId, scriptId);
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       resolve({ success, exitCode: code ?? 1 });
     });
   });
@@ -522,7 +544,10 @@ function resetSchedules() {
 }
 
 resetSchedules();
+<<<<<<< HEAD
 seedRunHistoryFromExistingJobs();
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "webui-backend" });

@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import { useEffect, useMemo, useRef, useState } from "react";
+=======
+import { useEffect, useState } from "react";
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 import { Play, Eye, RotateCcw, Loader2, CheckCircle2, XCircle, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -21,8 +25,11 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
   const [progress, setProgress] = useState(0);
   const [customTiming, setCustomTiming] = useState("10");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+<<<<<<< HEAD
   const [stickToBottom, setStickToBottom] = useState(true);
   const terminalRef = useRef<HTMLPreElement | null>(null);
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 
   const runMutation = useMutation({
     mutationFn: (option?: string) => api.runScript(script.id, option),
@@ -37,6 +44,7 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
     },
   });
 
+<<<<<<< HEAD
   const cancelMutation = useMutation({
     mutationFn: (jobId: string) => api.cancelJob(jobId),
     onSuccess: () => {
@@ -53,6 +61,12 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
     queryKey: ["job", effectiveJobId],
     queryFn: () => api.job(effectiveJobId as string),
     enabled: Boolean(effectiveJobId),
+=======
+  const jobQuery = useQuery({
+    queryKey: ["job", activeJobId],
+    queryFn: () => api.job(activeJobId as string),
+    enabled: Boolean(activeJobId),
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
     refetchInterval: (query) => {
       const currentStatus = query.state.data?.job?.status;
       if (!currentStatus || ["success", "failed", "cancelled"].includes(currentStatus)) {
@@ -79,12 +93,15 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
     return;
   }, [jobQuery.data, script.name]);
 
+<<<<<<< HEAD
   useEffect(() => {
     if (!activeJobId && liveJob?.id) {
       setActiveJobId(liveJob.id);
     }
   }, [activeJobId, liveJob?.id]);
 
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
   const runScript = (option?: string) => {
     const resolvedOption = option ?? (script.hasOptions ? selectedOption : undefined);
     if (resolvedOption) setSelectedOption(resolvedOption);
@@ -108,11 +125,17 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
     setProgress(0);
     setActiveJobId(null);
     setShowTerminal(false);
+<<<<<<< HEAD
     setStickToBottom(true);
   };
 
   const displayJob = jobQuery.data?.job ?? liveJob;
   const logText = useMemo(() => (displayJob?.logs?.join("\n") || "Waiting for logs...").trim(), [displayJob?.logs]);
+=======
+  };
+
+  const displayJob = jobQuery.data?.job ?? liveJob;
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
   const displayProgress = displayJob?.progress ?? progress;
   const displayStatus = displayJob
     ? (displayJob.status === "running" || displayJob.status === "queued"
@@ -133,6 +156,7 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
 
   const statusLabel = { idle: "Idle", running: "Running", success: "Done", error: "Failed" };
 
+<<<<<<< HEAD
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal || !stickToBottom) return;
@@ -146,6 +170,8 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
     setStickToBottom(remaining < 24);
   };
 
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
   return (
     <>
       <div className="group rounded-xl border bg-card p-4 card-shadow transition-all duration-300 hover:card-shadow-hover animate-fade-in">
@@ -231,6 +257,7 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
             Run
           </Button>
 
+<<<<<<< HEAD
           {displayStatus === "running" && effectiveJobId && (
             <Button
               size="sm"
@@ -244,6 +271,8 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
             </Button>
           )}
 
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
           <Button size="sm" variant="outline" onClick={() => setShowViewOptions(true)} className="gap-1.5">
             <Eye className="h-3 w-3" />
             View
@@ -254,13 +283,18 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
             Reset
           </Button>
 
+<<<<<<< HEAD
           {effectiveJobId && (
+=======
+          {activeJobId && (
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
             <Button size="sm" variant="ghost" onClick={() => setShowTerminal((prev) => !prev)}>
               {showTerminal ? "Hide Terminal" : "Show Terminal"}
             </Button>
           )}
         </div>
 
+<<<<<<< HEAD
         {showTerminal && effectiveJobId && (
           <div className="relative z-0 mt-3 rounded-lg border bg-muted/40 p-2">
             <div className="mb-2 flex items-center justify-between text-[11px] text-muted-foreground">
@@ -273,6 +307,16 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
               className="max-h-56 overflow-auto overscroll-contain whitespace-pre-wrap rounded border bg-background p-2 text-[11px] font-mono leading-relaxed"
             >
               {logText}
+=======
+        {showTerminal && activeJobId && (
+          <div className="mt-3 rounded-lg border bg-muted/40 p-2">
+            <div className="mb-2 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span className="font-mono">{activeJobId}</span>
+              <span>{jobQuery.data?.job?.status ?? status}</span>
+            </div>
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border bg-background p-2 text-[11px] font-mono leading-relaxed">
+              {(jobQuery.data?.job?.logs?.join("\n") || "Waiting for logs...").trim()}
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
             </pre>
           </div>
         )}
@@ -284,6 +328,7 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
         scriptName={script.name}
         sourcePath={
           script.id === "get-task"
+<<<<<<< HEAD
             ? "GetTask/Tasks_OrderID.csv"
             : script.id === "get-order-inquiry"
               ? "GetOrderInquiry/OrderInquiry.csv"
@@ -292,6 +337,12 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
                 : script.id === "closing-task"
                   ? "ClosingTask/closing_task_payloads.csv"
                   : "Funeral_Finder/Funeral_data.csv"
+=======
+            ? "GetTask/task.csv"
+            : script.id === "get-order-inquiry"
+              ? "GetOrderInquiry/OrderInquiry.csv"
+              : "Funeral_Finder/Funeral_data.csv"
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
         }
       />
     </>

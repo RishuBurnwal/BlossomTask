@@ -39,6 +39,7 @@ def ensure_command(name: str) -> str:
 def _find_pids_for_port(port: int) -> set[int]:
     pids: set[int] = set()
 
+<<<<<<< HEAD
     if os.name == "nt":
         result = subprocess.run(
             ["netstat", "-ano", "-p", "tcp"],
@@ -61,6 +62,8 @@ def _find_pids_for_port(port: int) -> set[int]:
         if pids:
             return pids
 
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
     lsof_bin = shutil.which("lsof")
     if lsof_bin:
         result = subprocess.run(
@@ -90,6 +93,7 @@ def _find_pids_for_port(port: int) -> set[int]:
     return pids
 
 
+<<<<<<< HEAD
 def _pid_exists(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -122,6 +126,8 @@ def _terminate_pid(pid: int, port: int) -> None:
         _print(f"Permission denied while terminating PID {pid} on port {port}")
 
 
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 def kill_required_ports(ports: tuple[int, ...] = REQUIRED_PORTS) -> None:
     own_pid = os.getpid()
     for port in ports:
@@ -131,6 +137,7 @@ def kill_required_ports(ports: tuple[int, ...] = REQUIRED_PORTS) -> None:
 
         _print(f"Port {port} busy. Stopping processes: {sorted(pids)}")
         for pid in pids:
+<<<<<<< HEAD
             _terminate_pid(pid, port)
 
         time.sleep(0.8)
@@ -140,6 +147,19 @@ def kill_required_ports(ports: tuple[int, ...] = REQUIRED_PORTS) -> None:
             if os.name == "nt":
                 _terminate_pid(pid, port)
                 continue
+=======
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                _print(f"Permission denied while terminating PID {pid} on port {port}")
+
+        time.sleep(0.8)
+
+        survivors = {pid for pid in pids if Path(f"/proc/{pid}").exists()}
+        for pid in survivors:
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -203,7 +223,11 @@ def launch_ui() -> int:
                 _print(f"Vite CLI is still missing after install: {vite_cli}")
                 return 1
 
+<<<<<<< HEAD
         frontend_cmd = [node_bin, str(vite_cli), "--port", "8080", "--strictPort"]
+=======
+        frontend_cmd = [node_bin, str(vite_cli)]
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
         _print(f"Frontend command: {' '.join(frontend_cmd)}")
         frontend = subprocess.Popen(
             frontend_cmd,

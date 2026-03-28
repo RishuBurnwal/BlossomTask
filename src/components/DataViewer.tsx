@@ -11,11 +11,17 @@ export function DataViewer() {
   const [activePath, setActivePath] = useState("");
   const [selectedFile, setSelectedFile] = useState<string>("");
   const [viewMode, setViewMode] = useState<"table" | "json" | "raw" | "terminal">("table");
+<<<<<<< HEAD
   const [searchQuery, setSearchQuery] = useState("");
   const [liveRefresh, setLiveRefresh] = useState(false);
   const [terminalSource, setTerminalSource] = useState<"file" | "runtime">("file");
   const [selectedRuntimeJobId, setSelectedRuntimeJobId] = useState<string>("");
   const [hasInitializedFileSelection, setHasInitializedFileSelection] = useState(false);
+=======
+  const [liveRefresh, setLiveRefresh] = useState(false);
+  const [terminalSource, setTerminalSource] = useState<"file" | "runtime">("file");
+  const [selectedRuntimeJobId, setSelectedRuntimeJobId] = useState<string>("");
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 
   const { data: datasetsData } = useQuery({
     queryKey: ["datasets"],
@@ -98,7 +104,10 @@ export function DataViewer() {
 
   useEffect(() => {
     if (activeTab !== "all") return;
+<<<<<<< HEAD
     if (hasInitializedFileSelection) return;
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
     if (selectedFile) return;
     if (!quickFiles.length) return;
     const firstPath = quickFiles[0].path;
@@ -106,6 +115,7 @@ export function DataViewer() {
     const chunks = firstPath.split("/");
     chunks.pop();
     setActivePath(chunks.join("/"));
+<<<<<<< HEAD
     setHasInitializedFileSelection(true);
   }, [activeTab, hasInitializedFileSelection, quickFiles, selectedFile]);
 
@@ -129,15 +139,29 @@ export function DataViewer() {
       icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
       data: normalizeRows(datasets?.main?.rows),
     },
+=======
+  }, [activeTab, quickFiles, selectedFile]);
+
+  const pathSegments = useMemo(() => activePath.split("/").filter(Boolean), [activePath]);
+
+  const datasets = datasetsData?.datasets;
+  const tabs: { id: FileTab; label: string; icon: React.ReactNode; data: DataRow[] }[] = [
+    { id: "main", label: "Main Data", icon: <FileSpreadsheet className="h-3.5 w-3.5" />, data: datasets?.main?.rows ?? [] },
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
     {
       id: "all",
       label: "All Files",
       icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
+<<<<<<< HEAD
       data: normalizeRows(selectedFileData?.parsed),
+=======
+      data: (selectedFileData?.parsed as DataRow[]) ?? [],
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
     },
   ];
 
   const current = tabs.find((t) => t.id === activeTab)!;
+<<<<<<< HEAD
   const filteredRows = useMemo(() => {
     const rows = Array.isArray(current.data) ? current.data : [];
     const needle = searchQuery.trim().toLowerCase();
@@ -153,6 +177,11 @@ export function DataViewer() {
   const tableHeaders = useMemo(() => {
     const headers = new Set<string>();
     (Array.isArray(current.data) ? current.data : []).forEach((row) => {
+=======
+  const tableHeaders = useMemo(() => {
+    const headers = new Set<string>();
+    current.data.forEach((row) => {
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       Object.keys(row).forEach((key) => headers.add(key));
     });
     return [...headers];
@@ -328,10 +357,14 @@ export function DataViewer() {
                 {files.map((file) => (
                   <button
                     key={file.path}
+<<<<<<< HEAD
                     onClick={() => {
                       setSelectedFile(file.path);
                       setHasInitializedFileSelection(true);
                     }}
+=======
+                    onClick={() => setSelectedFile(file.path)}
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
                     className={`flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-xs ${
                       selectedFile === file.path ? "bg-accent" : "hover:bg-accent"
                     }`}
@@ -351,7 +384,10 @@ export function DataViewer() {
               onChange={(event) => {
                 const value = event.target.value;
                 setSelectedFile(value);
+<<<<<<< HEAD
                 setHasInitializedFileSelection(true);
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
                 const chunks = value.split("/");
                 chunks.pop();
                 setActivePath(chunks.join("/"));
@@ -392,12 +428,15 @@ export function DataViewer() {
 
         {activeTab === "all" && (
           <>
+<<<<<<< HEAD
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Search data..."
               className="h-8 min-w-[220px] rounded-md border bg-background px-2 text-xs"
             />
+=======
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
             <button
               onClick={refreshNow}
               className="rounded-md border bg-background px-2 py-1 text-xs hover:bg-accent"
@@ -429,7 +468,11 @@ export function DataViewer() {
               </tr>
             </thead>
             <tbody>
+<<<<<<< HEAD
               {filteredRows.map((row, index) => (
+=======
+              {current.data.map((row, index) => (
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
                 <tr key={index} className="border-b transition-colors hover:bg-accent/30">
                   {tableHeaders.map((header) => (
                     <td key={`${index}-${header}`} className="px-3 py-2 whitespace-nowrap align-top">
@@ -438,7 +481,11 @@ export function DataViewer() {
                   ))}
                 </tr>
               ))}
+<<<<<<< HEAD
               {filteredRows.length === 0 ? (
+=======
+              {current.data.length === 0 ? (
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
                 <tr>
                   <td className="px-3 py-8 text-center text-muted-foreground" colSpan={Math.max(1, tableHeaders.length)}>
                     No data found
@@ -452,7 +499,11 @@ export function DataViewer() {
 
       {viewMode === "json" && (
         <pre className="max-h-[400px] overflow-auto whitespace-pre-wrap p-4 text-xs font-mono">
+<<<<<<< HEAD
           {JSON.stringify(filteredRows, null, 2)}
+=======
+          {JSON.stringify(current.data, null, 2)}
+>>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
         </pre>
       )}
 
