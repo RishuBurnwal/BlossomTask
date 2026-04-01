@@ -1,16 +1,42 @@
-<<<<<<< HEAD
-import csv
 import json
 import os
+import csv
+import argparse
+import sys
 from pathlib import Path
+from datetime import datetime
 
 import requests
 
-TIMEOUT_SECONDS = 60
+# ── Optional openpyxl for Excel output ──────────────────────────────────────
+try:
+    import openpyxl
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+
+# ── Constants ────────────────────────────────────────────────────────────────
+TIMEOUT_SECONDS = 120          # generous timeout for large payloads
+SCRIPT_NAME     = "GetTask"
+SCRIPTS_DIR     = Path(__file__).resolve().parent
+OUTPUT_DIR      = SCRIPTS_DIR / "outputs" / SCRIPT_NAME
+
+# Output file paths
+CSV_PATH     = OUTPUT_DIR / "data.csv"
+EXCEL_PATH   = OUTPUT_DIR / "data.xlsx"
+PAYLOAD_PATH = OUTPUT_DIR / "payload.json"
+LOGS_PATH    = OUTPUT_DIR / "logs.txt"
+QUERY_PATH   = OUTPUT_DIR / "query.txt"
 
 
-def load_dotenv_file(path=".env"):
-    if not os.path.exists(path):
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def load_dotenv_file(path=None):
+    """Load a .env file from the Scripts directory (or given path)."""
+    if path is None:
+        path = SCRIPTS_DIR / ".env"
+    path = Path(path)
+    if not path.exists():
         return
     with open(path, "r", encoding="utf-8") as f:
         for raw_line in f:
@@ -18,504 +44,413 @@ def load_dotenv_file(path=".env"):
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            key = key.strip()
+            key   = key.strip()
             value = value.strip().strip('"').strip("'")
             if key and key not in os.environ:
                 os.environ[key] = value
 
 
-def _required_env(name):
+def _required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
-        raise SystemExit(f"Missing required environment variable: {name}")
+        raise SystemExit(f"[GetTask] Missing required environment variable: {name}")
     return value
 
 
-def _to_json_text(data):
-    """Convert values for CSV cells without dropping nested data."""
-    if isinstance(data, (dict, list)):
-        return json.dumps(data, ensure_ascii=False)
-    return data
-
-
-def _normalize_for_csv(payload):
-    """
-    Return a list of row dicts suitable for csv.DictWriter.
-    Adds a __raw_json column per row so no content is lost in CSV export.
-    """
-    if isinstance(payload, list):
-        rows = []
-        for item in payload:
-            if isinstance(item, dict):
-                row = {k: _to_json_text(v) for k, v in item.items()}
-                row["__raw_json"] = json.dumps(item, ensure_ascii=False)
-                rows.append(row)
-            else:
-                rows.append(
-                    {
-                        "value": _to_json_text(item),
-                        "__raw_json": json.dumps(item, ensure_ascii=False),
-                    }
-                )
-        return rows
-
-    if isinstance(payload, dict):
-        row = {k: _to_json_text(v) for k, v in payload.items()}
-        row["__raw_json"] = json.dumps(payload, ensure_ascii=False)
-        return [row]
-
-    return [
-        {
-            "value": _to_json_text(payload),
-            "__raw_json": json.dumps(payload, ensure_ascii=False),
-        }
-    ]
-
-
-def _normalized_url(raw_url):
-    """Fix known malformed endpoint pattern from copied API URL."""
+def _normalized_url(raw_url: str) -> str:
+    """Fix common URL typo: ':8061api/' → ':8061/api/'"""
     return raw_url.replace(":8061api/", ":8061/api/")
 
 
-def _load_existing_ord_ids(csv_path):
-    """Load existing ord_ID values from cumulative CSV."""
-    if not csv_path.exists():
-        return set()
-
-    existing = set()
-    with csv_path.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            value = str(row.get("ord_ID") or "").strip()
-            if value:
-                existing.add(value)
-    return existing
+def get_now_iso() -> str:
+    return datetime.now().isoformat()
 
 
-def _dedupe_by_ord_id(payload, existing_ord_ids):
-    """Return (new_records, total_received, duplicates_skipped)."""
-    if not isinstance(payload, list):
-        return payload, 1, 0
-
-    total_received = len(payload)
-    duplicates_skipped = 0
-    new_records = []
-
-    for item in payload:
-        if not isinstance(item, dict):
-            new_records.append(item)
-            continue
-
-        ord_id = str(item.get("ord_ID") or "").strip()
-        if ord_id and ord_id in existing_ord_ids:
-            duplicates_skipped += 1
-            continue
-
-        if ord_id:
-            existing_ord_ids.add(ord_id)
-        new_records.append(item)
-
-    return new_records, total_received, duplicates_skipped
-
-
-def _append_jsonl(jsonl_path, records):
-    if not isinstance(records, list) or not records:
+def configure_console_encoding() -> None:
+    """Avoid Windows cp1252 crashes when printing Unicode log characters."""
+    if not sys.platform.startswith("win"):
         return
-    with jsonl_path.open("a", encoding="utf-8") as f:
-        for item in records:
-            f.write(json.dumps(item, ensure_ascii=False))
-            f.write("\n")
-
-
-def _append_json_array(json_path, records):
-    if not isinstance(records, list) or not records:
-        return
-
-    existing = []
-    if json_path.exists():
-        try:
-            with json_path.open("r", encoding="utf-8") as f:
-                parsed = json.load(f)
-            if isinstance(parsed, list):
-                existing = parsed
-        except Exception:
-            existing = []
-
-    existing.extend(records)
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(existing, f, ensure_ascii=False, indent=2)
-
-
-def _write_log(log_path, total_received, new_count, duplicates_skipped):
-    line = (
-        f"total_received={total_received} | "
-        f"new_appended={new_count} | "
-        f"duplicates_skipped={duplicates_skipped}\n"
-    )
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(line)
-
-
-def _append_csv(csv_path, rows):
-    if not rows:
-        return
-
-    file_exists = csv_path.exists()
-    if file_exists:
-        with csv_path.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-        fieldnames = header or list(rows[0].keys())
-    else:
-        fieldnames = []
-        for row in rows:
-            for key in row.keys():
-                if key not in fieldnames:
-                    fieldnames.append(key)
-
-    with csv_path.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        if not file_exists:
-            writer.writeheader()
-        writer.writerows(rows)
-
-
-def main():
-    load_dotenv_file()
-
-    raw_api_url = _required_env("API_URL_TASK_OPENED")
-    task_subject = _required_env("TASK_SUBJECT")
-    api_key_header = _required_env("API_KEY_HEADER")
-    api_key_value = _required_env("API_KEY_VALUE")
-
-    headers = {api_key_header: api_key_value}
-    request_url = _normalized_url(raw_api_url).split("?")[0]
-    params = {"trsubject": task_subject}
-
-    print("Request URL:", request_url)
-    print("Request Params:")
-    print(json.dumps(params, indent=2))
-    print("Request Headers:")
-    print(json.dumps(headers, indent=2))
-
-    response = requests.get(
-        request_url,
-        params=params,
-        headers=headers,
-        timeout=TIMEOUT_SECONDS,
-    )
-
-    print("\nHTTP Status:", response.status_code)
-    print("Final Request URL Sent:", response.url)
-    print("\nRaw API Response (exact text):")
-    print(response.text)
-
-    response.raise_for_status()
-
-    cumulative_csv_path = Path(os.getenv("TASK_OPENED_OUTPUT_CSV", "outputs/GetTask/Tasks_OrderID.csv").strip())
-    cumulative_json_path = Path(os.getenv("TASK_OPENED_OUTPUT_JSON", "outputs/GetTask/Tasks_OrderID.json").strip())
-    log_path = Path(os.getenv("TASK_OPENED_OUTPUT_LOG", "outputs/GetTask/Tasks_OrderID.log").strip())
-
-    cumulative_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    cumulative_json_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        payload = response.json()
-    except json.JSONDecodeError:
-        payload = response.text
+        stdout_encoding = (getattr(sys.stdout, "encoding", "") or "").lower()
+        stderr_encoding = (getattr(sys.stderr, "encoding", "") or "").lower()
 
-    existing_ord_ids = _load_existing_ord_ids(cumulative_csv_path)
-    deduped_payload, total_received, duplicates_skipped = _dedupe_by_ord_id(payload, existing_ord_ids)
+        if hasattr(sys.stdout, "reconfigure") and stdout_encoding and not stdout_encoding.startswith("utf"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure") and stderr_encoding and not stderr_encoding.startswith("utf"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except Exception:
+        # Keep script running even when stream reconfiguration is unavailable.
+        pass
 
-    new_count = len(deduped_payload) if isinstance(deduped_payload, list) else (1 if deduped_payload else 0)
 
-    print("\nFormatted API Response (line-by-line):")
-    if isinstance(deduped_payload, (list, dict)):
-        print(json.dumps(deduped_payload, indent=2, ensure_ascii=False))
+# ── logs.txt helpers ─────────────────────────────────────────────────────────
+
+def load_logged_ids() -> set:
+    """
+    Read logs.txt and return a set of already-processed order IDs.
+    If the file does not exist, return an empty set (process everything).
+    """
+    if not LOGS_PATH.exists():
+        return set()
+    ids = set()
+    with open(LOGS_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            oid = line.strip()
+            if oid:
+                ids.add(oid)
+    return ids
+
+
+def append_logged_id(order_id: str):
+    """Append a single order ID to logs.txt."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(LOGS_PATH, "a", encoding="utf-8") as f:
+        f.write(order_id + "\n")
+
+
+# ── Output writers ───────────────────────────────────────────────────────────
+
+FIELDNAMES = [
+    "order_id", "task_id", "source_status",
+    "subject", "last_processed_at"
+]
+
+
+def save_csv(records: list):
+    """Write / append records to data.csv."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    file_exists = CSV_PATH.exists()
+
+    # Collect all keys across all records for dynamic columns
+    all_keys = list(FIELDNAMES)
+    for rec in records:
+        for k in rec:
+            if k not in all_keys:
+                all_keys.append(k)
+
+    with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=all_keys, extrasaction="ignore")
+        if not file_exists:
+            writer.writeheader()
+        writer.writerows(records)
+
+    print(f"[GetTask] CSV saved/updated: {CSV_PATH}  (+{len(records)} rows)")
+
+
+def save_excel(records: list):
+    """Write all records from data.csv into data.xlsx (full overwrite each run)."""
+    if not OPENPYXL_AVAILABLE:
+        print("[GetTask] WARNING: openpyxl not installed – skipping Excel output. "
+              "Run: pip install openpyxl")
+        return
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Read current CSV (includes previously saved + new records)
+    all_rows = []
+    if CSV_PATH.exists():
+        with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or FIELDNAMES
+            all_rows = list(reader)
     else:
-        print(deduped_payload)
+        fieldnames = FIELDNAMES
 
-    rows = _normalize_for_csv(deduped_payload)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "GetTask Data"
+    ws.append(list(fieldnames))
+    for row in all_rows:
+        ws.append([row.get(col, "") for col in fieldnames])
 
-    if isinstance(deduped_payload, list) and deduped_payload:
-        _append_json_array(cumulative_json_path, deduped_payload)
-    if rows:
-        _append_csv(cumulative_csv_path, rows)
+    wb.save(EXCEL_PATH)
+    print(f"[GetTask] Excel saved: {EXCEL_PATH}  ({len(all_rows)} rows total)")
 
-    _write_log(log_path, total_received, new_count, duplicates_skipped)
 
-    print("\nRun summary:")
-    print(f"Total records received: {total_received}")
-    print(f"New records appended: {new_count}")
-    print(f"Duplicate records skipped: {duplicates_skipped}")
+def save_payload(raw_payload):
+    """Save the raw server payload to payload.json."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(PAYLOAD_PATH, "w", encoding="utf-8") as f:
+        json.dump(raw_payload, f, indent=2, ensure_ascii=False)
+    count = len(raw_payload) if isinstance(raw_payload, list) else 1
+    print(f"[GetTask] Payload JSON saved: {PAYLOAD_PATH}  ({count} items)")
 
-    print("\nSaved files:")
-    print(str(cumulative_csv_path))
-    print(str(cumulative_json_path))
-    print(str(log_path))
+
+def save_query_txt(request_url: str, params: dict, headers: dict, actual_url: str):
+    """Save query.txt – shows exactly what was sent to the server."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(QUERY_PATH, "w", encoding="utf-8", newline="\n") as f:
+        f.write(f"Generated at : {get_now_iso()}\n")
+        f.write("\n")
+        f.write("=== REQUEST URL (base) ===\n")
+        f.write(f"{request_url}\n")
+        f.write("\n")
+        f.write("=== QUERY PARAMETERS SENT ===\n")
+        for k, v in params.items():
+            f.write(f"  {k} = {v}\n")
+        f.write("\n")
+        f.write("=== FULL URL (as prepared by requests) ===\n")
+        f.write(f"{actual_url}\n")
+        f.write("\n")
+        f.write("=== HEADERS SENT ===\n")
+        for k, v in headers.items():
+            f.write(f"  {k}: {v}\n")
+    print(f"[GetTask] Query saved : {QUERY_PATH}")
+
+
+def save_one_record_to_csv(record: dict):
+    """Append a single record to data.csv immediately."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    file_exists = CSV_PATH.exists()
+
+    # Build column order: canonical first, then any extra
+    all_keys = list(FIELDNAMES)
+    for k in record:
+        if k not in all_keys:
+            all_keys.append(k)
+
+    with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=all_keys, extrasaction="ignore")
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(record)
+
+
+def rebuild_excel_from_csv():
+    """Rebuild data.xlsx from the current data.csv (called after each save)."""
+    if not OPENPYXL_AVAILABLE:
+        return
+    if not CSV_PATH.exists():
+        return
+    with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or FIELDNAMES
+        all_rows = list(reader)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "GetTask Data"
+    ws.append(list(fieldnames))
+    for row in all_rows:
+        ws.append([row.get(col, "") for col in fieldnames])
+    wb.save(EXCEL_PATH)
+    print(f"  📊 Excel updated: {len(all_rows)} rows total")
+
+
+# ── Core fetch ───────────────────────────────────────────────────────────────
+
+def fetch_all_tasks(request_url: str, params: dict, headers: dict):
+    """
+    Fetch tasks from the server. Handles both paginated and non-paginated responses.
+    Returns (all_items, actual_url_used, final_params_used).
+
+    Strategy:
+      1. Try a page-based loop (page=1,2,3…) until an empty page is returned.
+      2. If the API doesn't support pagination, the first response is everything.
+    """
+    all_items      = []
+    page           = 1
+    page_size_hint = 100    # Tell server we want up to 100 per page if it supports it
+    actual_url     = request_url   # will be updated after first real request
+    final_params   = dict(params)
+
+    while True:
+        paged_params = dict(params)
+        paged_params["page"]     = page
+        paged_params["pageSize"] = page_size_hint
+        paged_params["limit"]    = page_size_hint
+        paged_params["offset"]   = (page - 1) * page_size_hint
+
+        print(f"[GetTask] Fetching page {page} …")
+        try:
+            resp = requests.get(
+                request_url,
+                params=paged_params,
+                headers=headers,
+                timeout=TIMEOUT_SECONDS
+            )
+            resp.raise_for_status()
+            # Capture the exact URL requests actually sent
+            if page == 1:
+                actual_url   = resp.url
+                final_params = paged_params
+            payload = resp.json()
+        except Exception as e:
+            print(f"[GetTask] Request failed on page {page}: {e}")
+            break
+
+        # Normalise to list
+        if isinstance(payload, dict):
+            items = (
+                payload.get("data")
+                or payload.get("results")
+                or payload.get("tasks")
+                or payload.get("items")
+                or []
+            )
+            if not items and page == 1:
+                items = [payload] if payload else []
+        elif isinstance(payload, list):
+            items = payload
+        else:
+            items = []
+
+        if not items:
+            break
+
+        all_items.extend(items)
+        print(f"[GetTask] Page {page}: received {len(items)} items  (total so far: {len(all_items)})")
+
+        if len(items) < page_size_hint:
+            break
+
+        page += 1
+
+    return all_items, actual_url, final_params
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    configure_console_encoding()
+
+    parser = argparse.ArgumentParser(description="GetTask – fetch open CRM tasks")
+    parser.add_argument("--force",  action="store_true",
+                        help="Ignore logs.txt and reprocess all order IDs")
+    parser.add_argument("--limit",  type=int, default=0,
+                        help="Cap how many NEW records to process (0 = unlimited)")
+    args = parser.parse_args()
+
+    load_dotenv_file()
+
+    raw_api_url   = _required_env("API_URL_TASK_OPENED")
+    task_subject  = _required_env("TASK_SUBJECT")
+    api_key_header = _required_env("API_KEY_HEADER")
+    api_key_value  = _required_env("API_KEY_VALUE")
+
+    headers     = {api_key_header: api_key_value, "Accept": "application/json"}
+    request_url = _normalized_url(raw_api_url).split("?")[0]
+    params      = {"trsubject": task_subject}
+
+    print(f"[GetTask] Fetching open tasks from: {request_url}")
+    print(f"[GetTask] Subject filter: {task_subject}")
+
+    # ── 1. Fetch ALL items from server ───────────────────────────────────────
+    raw_payload, actual_url, final_params = fetch_all_tasks(request_url, params, headers)
+
+    print(f"")
+    print(f"┌─────────────────────────────────────────────────────────┐")
+    print(f"│  SERVER RESPONSE SUMMARY                                │")
+    print(f"│  Total items received : {len(raw_payload):<33}│")
+    print(f"└─────────────────────────────────────────────────────────┘")
+
+    # Save query.txt – exact request that was sent
+    save_query_txt(request_url, final_params, headers, actual_url)
+
+    if not raw_payload:
+        print("[GetTask] No tasks returned – nothing to do.")
+        return
+
+    # Always save the raw payload exactly as received
+    save_payload(raw_payload)
+
+    # ── 2. Load already-processed IDs from logs.txt ──────────────────────────
+    logged_ids = set() if args.force else load_logged_ids()
+    if logged_ids:
+        print(f"[GetTask] Loaded {len(logged_ids)} already-processed IDs from logs.txt")
+    else:
+        if LOGS_PATH.exists() and not args.force:
+            print("[GetTask] logs.txt exists but is empty – will process all items")
+        elif not LOGS_PATH.exists():
+            print("[GetTask] logs.txt not found – will process all items")
+
+    # ── 3. Process each item (save CSV + Excel immediately after each) ────────
+    new_count     = 0
+    skipped_count = 0
+    total_items   = len(raw_payload)
+
+    print(f"\n{'='*60}")
+    print(f"  LIVE PROCESSING  –  {total_items} items from server")
+    print(f"{'='*60}\n")
+
+    for idx, item in enumerate(raw_payload, start=1):
+        if not isinstance(item, dict):
+            continue
+
+        # Resolve order_id from known field names
+        order_id = str(
+            item.get("ord_ID") or
+            item.get("ordid")  or
+            item.get("ord_id") or
+            item.get("orderId") or
+            item.get("order_id") or
+            ""
+        ).strip()
+
+        task_id = str(item.get("trID") or item.get("task_id") or "").strip()
+
+        print(f"[{idx}/{total_items}] ─────────────────────────────────────")
+        print(f"  Order ID : {order_id or '(not found)'}")
+        print(f"  Task  ID : {task_id or '(none)'}")
+
+        if not order_id:
+            print(f"  ⚠  WARNING: no order_id in response – skipping")
+            print(f"     Raw item: {item}")
+            continue
+
+        if order_id in logged_ids and not args.force:
+            print(f"  ⏭  SKIP – already in logs.txt")
+            skipped_count += 1
+            continue
+
+        # Show key server fields
+        status  = item.get("trStatus", "Open")
+        subject = item.get("trSubject", task_subject)
+        print(f"  Status   : {status}")
+        print(f"  Subject  : {subject}")
+
+        # Show any extra interesting fields from server response
+        extra_fields = {k: v for k, v in item.items()
+                        if k not in ("ord_ID", "ordid", "ord_id", "orderId", "order_id",
+                                     "trID", "task_id", "trStatus", "trSubject")}
+        if extra_fields:
+            print(f"  Extra fields from server:")
+            for k, v in extra_fields.items():
+                print(f"    {k}: {v}")
+
+        record = {
+            "order_id":          order_id,
+            "task_id":           task_id,
+            "source_status":     status,
+            "subject":           subject,
+            "last_processed_at": get_now_iso(),
+        }
+        for k, v in item.items():
+            if k not in record:
+                record[k] = v
+
+        # ── IMMEDIATE save: CSV row + full Excel rebuild ──────────────────
+        save_one_record_to_csv(record)
+        rebuild_excel_from_csv()
+        logged_ids.add(order_id)
+        append_logged_id(order_id)
+        new_count += 1
+        print(f"  ✓ SAVED to CSV & Excel  (total saved so far: {new_count})")
+
+        if args.limit > 0 and new_count >= args.limit:
+            print(f"\n[GetTask] Reached --limit={args.limit}; stopping early.")
+            break
+
+    print(f"\n{'='*60}")
+    print(f"  DONE  –  New saved: {new_count}  |  Skipped: {skipped_count}")
+    print(f"{'='*60}")
+    print(f"\n[GetTask] Output folder : {OUTPUT_DIR}")
+    print(f"[GetTask] Files created :")
+    for f in [CSV_PATH, EXCEL_PATH, PAYLOAD_PATH, LOGS_PATH, QUERY_PATH]:
+        exists = "✓" if f.exists() else "✗"
+        print(f"  {exists}  {f.name}")
 
 
 if __name__ == "__main__":
     main()
-=======
-import csv
-import json
-import os
-from pathlib import Path
-
-import requests
-
-TIMEOUT_SECONDS = 60
-
-
-def load_dotenv_file(path=".env"):
-    if not os.path.exists(path):
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
-
-
-def _required_env(name):
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise SystemExit(f"Missing required environment variable: {name}")
-    return value
-
-
-def _to_json_text(data):
-    """Convert values for CSV cells without dropping nested data."""
-    if isinstance(data, (dict, list)):
-        return json.dumps(data, ensure_ascii=False)
-    return data
-
-
-def _normalize_for_csv(payload):
-    """
-    Return a list of row dicts suitable for csv.DictWriter.
-    Adds a __raw_json column per row so no content is lost in CSV export.
-    """
-    if isinstance(payload, list):
-        rows = []
-        for item in payload:
-            if isinstance(item, dict):
-                row = {k: _to_json_text(v) for k, v in item.items()}
-                row["__raw_json"] = json.dumps(item, ensure_ascii=False)
-                rows.append(row)
-            else:
-                rows.append(
-                    {
-                        "value": _to_json_text(item),
-                        "__raw_json": json.dumps(item, ensure_ascii=False),
-                    }
-                )
-        return rows
-
-    if isinstance(payload, dict):
-        row = {k: _to_json_text(v) for k, v in payload.items()}
-        row["__raw_json"] = json.dumps(payload, ensure_ascii=False)
-        return [row]
-
-    return [
-        {
-            "value": _to_json_text(payload),
-            "__raw_json": json.dumps(payload, ensure_ascii=False),
-        }
-    ]
-
-
-def _normalized_url(raw_url):
-    """Fix known malformed endpoint pattern from copied API URL."""
-    return raw_url.replace(":8061api/", ":8061/api/")
-
-
-def _load_existing_ord_ids(csv_path):
-    """Load existing ord_ID values from cumulative CSV."""
-    if not csv_path.exists():
-        return set()
-
-    existing = set()
-    with csv_path.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            value = str(row.get("ord_ID") or "").strip()
-            if value:
-                existing.add(value)
-    return existing
-
-
-def _dedupe_by_ord_id(payload, existing_ord_ids):
-    """Return (new_records, total_received, duplicates_skipped)."""
-    if not isinstance(payload, list):
-        return payload, 1, 0
-
-    total_received = len(payload)
-    duplicates_skipped = 0
-    new_records = []
-
-    for item in payload:
-        if not isinstance(item, dict):
-            new_records.append(item)
-            continue
-
-        ord_id = str(item.get("ord_ID") or "").strip()
-        if ord_id and ord_id in existing_ord_ids:
-            duplicates_skipped += 1
-            continue
-
-        if ord_id:
-            existing_ord_ids.add(ord_id)
-        new_records.append(item)
-
-    return new_records, total_received, duplicates_skipped
-
-
-def _append_jsonl(jsonl_path, records):
-    if not isinstance(records, list) or not records:
-        return
-    with jsonl_path.open("a", encoding="utf-8") as f:
-        for item in records:
-            f.write(json.dumps(item, ensure_ascii=False))
-            f.write("\n")
-
-
-def _append_json_array(json_path, records):
-    if not isinstance(records, list) or not records:
-        return
-
-    existing = []
-    if json_path.exists():
-        try:
-            with json_path.open("r", encoding="utf-8") as f:
-                parsed = json.load(f)
-            if isinstance(parsed, list):
-                existing = parsed
-        except Exception:
-            existing = []
-
-    existing.extend(records)
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(existing, f, ensure_ascii=False, indent=2)
-
-
-def _write_log(log_path, total_received, new_count, duplicates_skipped):
-    line = (
-        f"total_received={total_received} | "
-        f"new_appended={new_count} | "
-        f"duplicates_skipped={duplicates_skipped}\n"
-    )
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(line)
-
-
-def _append_csv(csv_path, rows):
-    if not rows:
-        return
-
-    file_exists = csv_path.exists()
-    if file_exists:
-        with csv_path.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-        fieldnames = header or list(rows[0].keys())
-    else:
-        fieldnames = []
-        for row in rows:
-            for key in row.keys():
-                if key not in fieldnames:
-                    fieldnames.append(key)
-
-    with csv_path.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        if not file_exists:
-            writer.writeheader()
-        writer.writerows(rows)
-
-
-def main():
-    load_dotenv_file()
-
-    raw_api_url = _required_env("API_URL_TASK_OPENED")
-    task_subject = _required_env("TASK_SUBJECT")
-    api_key_header = _required_env("API_KEY_HEADER")
-    api_key_value = _required_env("API_KEY_VALUE")
-
-    headers = {api_key_header: api_key_value}
-    request_url = _normalized_url(raw_api_url).split("?")[0]
-    params = {"trsubject": task_subject}
-
-    print("Request URL:", request_url)
-    print("Request Params:")
-    print(json.dumps(params, indent=2))
-    print("Request Headers:")
-    print(json.dumps(headers, indent=2))
-
-    response = requests.get(
-        request_url,
-        params=params,
-        headers=headers,
-        timeout=TIMEOUT_SECONDS,
-    )
-
-    print("\nHTTP Status:", response.status_code)
-    print("Final Request URL Sent:", response.url)
-    print("\nRaw API Response (exact text):")
-    print(response.text)
-
-    response.raise_for_status()
-
-    cumulative_csv_path = Path(os.getenv("TASK_OPENED_OUTPUT_CSV", "outputs/GetTask/Tasks_OrderID.csv").strip())
-    cumulative_json_path = Path(os.getenv("TASK_OPENED_OUTPUT_JSON", "outputs/GetTask/Tasks_OrderID.json").strip())
-    log_path = Path(os.getenv("TASK_OPENED_OUTPUT_LOG", "outputs/GetTask/Tasks_OrderID.log").strip())
-
-    cumulative_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    cumulative_json_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        payload = response.json()
-    except json.JSONDecodeError:
-        payload = response.text
-
-    existing_ord_ids = _load_existing_ord_ids(cumulative_csv_path)
-    deduped_payload, total_received, duplicates_skipped = _dedupe_by_ord_id(payload, existing_ord_ids)
-
-    new_count = len(deduped_payload) if isinstance(deduped_payload, list) else (1 if deduped_payload else 0)
-
-    print("\nFormatted API Response (line-by-line):")
-    if isinstance(deduped_payload, (list, dict)):
-        print(json.dumps(deduped_payload, indent=2, ensure_ascii=False))
-    else:
-        print(deduped_payload)
-
-    rows = _normalize_for_csv(deduped_payload)
-
-    if isinstance(deduped_payload, list) and deduped_payload:
-        _append_json_array(cumulative_json_path, deduped_payload)
-    if rows:
-        _append_csv(cumulative_csv_path, rows)
-
-    _write_log(log_path, total_received, new_count, duplicates_skipped)
-
-    print("\nRun summary:")
-    print(f"Total records received: {total_received}")
-    print(f"New records appended: {new_count}")
-    print(f"Duplicate records skipped: {duplicates_skipped}")
-
-    print("\nSaved files:")
-    print(str(cumulative_csv_path))
-    print(str(cumulative_json_path))
-    print(str(log_path))
-
-
-if __name__ == "__main__":
-    main()
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb

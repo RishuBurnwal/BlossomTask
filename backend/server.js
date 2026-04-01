@@ -3,7 +3,7 @@ import cors from "cors";
 import cron from "node-cron";
 import path from "node:path";
 import fs from "node:fs";
-import { spawn } from "node:child_process";
+import { execFile, execSync, spawn } from "node:child_process";
 import { compareByOrderId } from "./lib/compare.js";
 import { getDefaultDatasets, listTree, readFileContent, resolveOutputPath } from "./lib/files.js";
 import { getScriptById, scriptCatalog } from "./lib/scripts.js";
@@ -16,15 +16,57 @@ app.use(express.json({ limit: "2mb" }));
 const PORT = Number(process.env.BACKEND_PORT || 8787);
 const jobsFile = "jobs.json";
 const schedulesFile = "schedules.json";
-<<<<<<< HEAD
 const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 const runningProcesses = new Map();
 const scheduleTasks = new Map();
 const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "updater", "closing-task"];
 
-<<<<<<< HEAD
+// Platform-aware Python binary detection
+let PYTHON_BIN = "python3";
+if (process.platform === "win32") {
+  try {
+    execSync("python --version", { stdio: "ignore" });
+    PYTHON_BIN = "python";
+  } catch {
+    PYTHON_BIN = "python3";
+  }
+}
+
+function killJobProcess(childProc) {
+  if (!childProc?.pid) {
+    return;
+  }
+  if (process.platform === "win32") {
+    execFile(
+      "taskkill",
+      ["/PID", String(childProc.pid), "/T", "/F"],
+      { windowsHide: true },
+      () => {
+        try {
+          childProc.kill();
+        } catch {
+          // ignore
+        }
+      },
+    );
+    return;
+  }
+  try {
+    childProc.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+  setTimeout(() => {
+    if (childProc.exitCode === null && childProc.signalCode === null) {
+      try {
+        childProc.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+    }
+  }, 2000);
+}
+
 function ensureRunHistoryFile() {
   fs.mkdirSync(path.dirname(runHistoryFile), { recursive: true });
   if (!fs.existsSync(runHistoryFile)) {
@@ -75,8 +117,6 @@ function seedRunHistoryFromExistingJobs() {
     });
 }
 
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 function defaultPipelineSequence() {
   return [
     { scriptId: "get-task" },
@@ -269,7 +309,6 @@ function appendLog(jobId, line) {
   const index = jobs.findIndex((entry) => entry.id === jobId);
   if (index === -1) return;
   const job = jobs[index];
-<<<<<<< HEAD
   const timestamp = new Date().toISOString();
   const formattedLine = `[${timestamp}] ${line}`;
   job.logs = [...job.logs, formattedLine].slice(-500);
@@ -308,12 +347,6 @@ function appendScriptRunSummary(jobId, scriptId) {
     jobId,
     `RUN_SUMMARY|taskId=${jobId}|scriptId=${scriptId}|status=${job.status}|exitCode=${job.exitCode ?? "n/a"}|progress=${job.progress ?? 0}|durationSec=${durationSec ?? "n/a"}|logLines=${(job.logs || []).length}`,
   );
-=======
-  job.logs = [...job.logs, `[${new Date().toISOString()}] ${line}`].slice(-500);
-  job.updatedAt = new Date().toISOString();
-  jobs[index] = job;
-  saveJobs(jobs);
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 }
 
 async function runScriptJob({ jobId, scriptId, option }) {
@@ -335,19 +368,23 @@ async function runScriptJob({ jobId, scriptId, option }) {
 
   const effectiveOption = scriptId === "funeral-finder"
     ? (option || "batch")
-    : option;
+    : scriptId === "closing-task"
+      ? (option || "live")
+      : option;
 
   if (effectiveOption) {
     appendLog(jobId, `Run mode: ${effectiveOption}`);
   }
 
+  const cancelFlagPath = path.join(process.cwd(), "Scripts", "outputs", `.cancel_${jobId}`);
   const env = {
     ...process.env,
     RUN_MODE: effectiveOption || "",
     PYTHONUNBUFFERED: "1",
+    BLOSSOM_CANCEL_FLAG: cancelFlagPath,
   };
 
-  const child = spawn("python3", [script.file], {
+  const child = spawn(PYTHON_BIN, [script.file], {
     cwd: path.dirname(script.file),
     env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -383,16 +420,12 @@ async function runScriptJob({ jobId, scriptId, option }) {
         exitCode: 1,
       });
       appendLog(jobId, `Process error: ${error.message}`);
-<<<<<<< HEAD
       appendScriptRunSummary(jobId, scriptId);
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       resolve({ success: false, exitCode: 1 });
     });
 
     child.on("close", (code) => {
       runningProcesses.delete(jobId);
-<<<<<<< HEAD
       const current = loadJobs().find((entry) => entry.id === jobId);
       if (current?.status === "cancelled") {
         upsertJob(jobId, {
@@ -405,8 +438,6 @@ async function runScriptJob({ jobId, scriptId, option }) {
         resolve({ success: false, exitCode: code ?? 1 });
         return;
       }
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       const success = code === 0;
       upsertJob(jobId, {
         status: success ? "success" : "failed",
@@ -415,10 +446,7 @@ async function runScriptJob({ jobId, scriptId, option }) {
         exitCode: code,
       });
       appendLog(jobId, `${script.name} finished with code ${code}`);
-<<<<<<< HEAD
       appendScriptRunSummary(jobId, scriptId);
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
       resolve({ success, exitCode: code ?? 1 });
     });
   });
@@ -544,10 +572,7 @@ function resetSchedules() {
 }
 
 resetSchedules();
-<<<<<<< HEAD
 seedRunHistoryFromExistingJobs();
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "webui-backend" });
@@ -610,11 +635,18 @@ app.post("/api/jobs/run-pipeline", async (req, res) => {
 });
 
 app.post("/api/jobs/:jobId/cancel", (req, res) => {
-  const process = runningProcesses.get(req.params.jobId);
-  if (!process) {
+  const childProc = runningProcesses.get(req.params.jobId);
+  if (!childProc) {
     return res.status(404).json({ error: "Running process not found" });
   }
-  process.kill("SIGTERM");
+  try {
+    const cancelFlagPath = path.join(process.cwd(), "Scripts", "outputs", `.cancel_${req.params.jobId}`);
+    fs.mkdirSync(path.dirname(cancelFlagPath), { recursive: true });
+    fs.writeFileSync(cancelFlagPath, new Date().toISOString(), "utf-8");
+  } catch {
+    // ignore
+  }
+  killJobProcess(childProc);
   upsertJob(req.params.jobId, { status: "cancelled", finishedAt: new Date().toISOString() });
   appendLog(req.params.jobId, "Cancelled by user");
   return res.json({ ok: true });
@@ -669,6 +701,24 @@ app.patch("/api/schedules/:id", (req, res) => {
   schedules[index] = next;
   saveSchedules(schedules);
   resetSchedules();
+
+  // When disabling a schedule, cancel any running pipelines for it
+  if (wasEnabled && !next.enabled) {
+    const runningPipeline = getRunningPipelineForSchedule(req.params.id);
+    if (runningPipeline) {
+      const childProc = runningProcesses.get(runningPipeline.id);
+      if (childProc) {
+        killJobProcess(childProc);
+      }
+      upsertJob(runningPipeline.id, {
+        status: "cancelled",
+        finishedAt: new Date().toISOString(),
+        progress: 100,
+      });
+      appendLog(runningPipeline.id, "Pipeline cancelled: schedule was disabled");
+    }
+  }
+
   if (!wasEnabled && next.enabled) {
     triggerSchedulePipeline(next, { immediate: true });
   }
@@ -762,6 +812,35 @@ app.post("/api/compare/order-id", (req, res) => {
 app.get("/api/config/outputs-root", (_req, res) => {
   const absolute = resolveOutputPath("");
   return res.json({ outputsRoot: absolute });
+});
+
+// Pipeline global status: are any pipelines currently running?
+app.get("/api/pipeline/status", (_req, res) => {
+  const jobs = loadJobs();
+  const schedules = loadSchedules();
+
+  const runningPipelines = jobs.filter(
+    (job) => job.kind === "pipeline" && job.status === "running",
+  );
+  const runningScripts = jobs.filter(
+    (job) => job.kind === "script" && job.status === "running",
+  );
+  const anyEnabled = schedules.some((s) => s.enabled);
+
+  let state = "idle";
+  if (runningPipelines.length > 0 || runningScripts.length > 0) {
+    state = "running";
+  } else if (!anyEnabled) {
+    state = "disabled";
+  }
+
+  return res.json({
+    state,
+    runningPipelines: runningPipelines.length,
+    runningScripts: runningScripts.length,
+    enabledSchedules: schedules.filter((s) => s.enabled).length,
+    totalSchedules: schedules.length,
+  });
 });
 
 app.listen(PORT, () => {
