@@ -4,6 +4,7 @@ import type {
   DataRow,
   FileEntry,
   Job,
+  PipelineStatus,
   PreflightReport,
   ScheduleItem,
   ScriptConfig,
@@ -35,6 +36,8 @@ export const api = {
   health: () => request<{ ok: boolean; service: string }>("/health"),
 
   preflight: () => request<PreflightReport>("/preflight"),
+
+  pipelineStatus: () => request<PipelineStatus>("/pipeline/status"),
 
   scripts: () => request<{ scripts: ScriptConfig[] }>("/scripts"),
 

@@ -23,3 +23,18 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Script outputs
+Scripts/outputs/
+scripts/outputs/
+
+# Runtime/generated outputs
+outputs/
+outputs/debug/*.txt
+outputs/debug/search_5446250_raw.txt
+backend/data/run_history_logs.jsonl
+
+# Python cache artifacts
+__pycache__/
+Scripts/__pycache__/
+*.pyc

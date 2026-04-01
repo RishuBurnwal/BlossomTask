@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Moon, Sun, Play, Settings2, Clock, Power, Trash2, Zap, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
+import { Moon, Sun, Play, Settings2, Clock, Power, Trash2, Zap, ChevronDown, ChevronUp, ShieldCheck, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { useTheme } from "@/contexts/ThemeContext";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
+import type { PipelineStatus } from "@/lib/types";
 
 export function DashboardHeader() {
   const queryClient = useQueryClient();
@@ -16,6 +17,15 @@ export function DashboardHeader() {
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
   const [selectedHistoryJobId, setSelectedHistoryJobId] = useState<string | null>(null);
   const [showPreflight, setShowPreflight] = useState(false);
+  const [pipelineUpdaterMode, setPipelineUpdaterMode] = useState("complete");
+
+  const { data: pipelineStatusData } = useQuery({
+    queryKey: ["pipeline-status"],
+    queryFn: api.pipelineStatus,
+    refetchInterval: 3000,
+  });
+
+  const pipelineState = (pipelineStatusData as PipelineStatus | undefined)?.state ?? "idle";
   const { data: scheduleData } = useQuery({
     queryKey: ["schedules"],
     queryFn: api.schedules,
@@ -45,7 +55,6 @@ export function DashboardHeader() {
     },
   });
 
-<<<<<<< HEAD
   const { data: jobsData } = useQuery({
     queryKey: ["jobs", "run-history"],
     queryFn: api.jobs,
@@ -58,11 +67,17 @@ export function DashboardHeader() {
       : (jobsData?.jobs ?? [])
           .filter((job) => job.kind === "pipeline" || job.kind === "script")
           .slice(0, 20);
-
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
   const runPipeline = useMutation({
-    mutationFn: () => api.runPipeline(),
+    mutationFn: () => {
+      const sequence = [
+        { scriptId: "get-task" },
+        { scriptId: "get-order-inquiry" },
+        { scriptId: "funeral-finder", option: "batch" },
+        { scriptId: "updater", option: pipelineUpdaterMode },
+        { scriptId: "closing-task" },
+      ];
+      return api.runPipeline(sequence);
+    },
     onSuccess: ({ jobId }) => {
       toast.success(`Pipeline started (${jobId})`);
     },
@@ -153,12 +168,10 @@ export function DashboardHeader() {
   });
 
   return (
-<<<<<<< HEAD
-    <header className="relative z-10 glass-panel border-b px-4 py-3 lg:px-6">
-=======
-    <header className="sticky top-0 z-50 glass-panel border-b px-4 py-3 lg:px-6">
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <>
+      {/* Compact sticky bar only — avoids covering Script Panels when scrolling */}
+      <header className="sticky top-0 z-40 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:px-6">
+      <div className="flex flex-wrap flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         {/* Logo & Title */}
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
@@ -167,6 +180,17 @@ export function DashboardHeader() {
           <div>
             <h1 className="text-lg font-semibold tracking-tight">DataFlow Pipeline</h1>
             <p className="text-xs text-muted-foreground">Processing Dashboard</p>
+          </div>
+          {/* Pipeline Status Badge */}
+          <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+            pipelineState === "running"
+              ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+              : pipelineState === "disabled"
+                ? "bg-zinc-500/15 text-zinc-500"
+                : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+          }`}>
+            <Activity className={`h-3 w-3 ${pipelineState === "running" ? "animate-pulse" : ""}`} />
+            {pipelineState === "running" ? "Running" : pipelineState === "disabled" ? "All Disabled" : "Idle"}
           </div>
         </div>
 
@@ -232,6 +256,21 @@ export function DashboardHeader() {
             {runPipeline.isPending ? "Running..." : "Run Full Pipeline"}
           </Button>
 
+          {/* Pipeline Updater Mode */}
+          <div className="flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5">
+            <span className="text-[10px] text-muted-foreground whitespace-nowrap">Updater:</span>
+            <select
+              value={pipelineUpdaterMode}
+              onChange={(e) => setPipelineUpdaterMode(e.target.value)}
+              className="h-6 rounded border bg-background px-1.5 text-[10px] text-foreground"
+            >
+              <option value="complete">Complete (All)</option>
+              <option value="found_only">Found Only</option>
+              <option value="not_found">Not Found</option>
+              <option value="review">Review Data</option>
+            </select>
+          </div>
+
           <Button
             onClick={() => preflightMutation.mutate()}
             disabled={preflightMutation.isPending}
@@ -270,8 +309,11 @@ export function DashboardHeader() {
           )}
         </div>
       </div>
+      </header>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      {/* Schedules + run history scroll with the page (not sticky) */}
+      <div className="border-b bg-background px-4 py-3 lg:px-6">
+      <div className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border bg-card p-3">
           <div className="mb-2 flex items-center justify-between">
           <h2 className="text-xs font-semibold text-muted-foreground">Saved Schedules</h2>
@@ -284,11 +326,7 @@ export function DashboardHeader() {
             </button>
           )}
         </div>
-<<<<<<< HEAD
-        <div className="space-y-2">
-=======
         <div className="max-h-32 space-y-2 overflow-auto">
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
           {schedules.length === 0 && (
             <p className="text-xs text-muted-foreground">No schedules saved yet.</p>
           )}
@@ -346,19 +384,11 @@ export function DashboardHeader() {
               {clearHistory.isPending ? "Clearing..." : "Clear History"}
             </button>
           </div>
-<<<<<<< HEAD
-          <div className="space-y-2">
+          <div className="max-h-32 space-y-2 overflow-auto">
             {runHistoryItems.length === 0 && (
               <p className="text-xs text-muted-foreground">No runs found yet.</p>
             )}
             {runHistoryItems.map((job) => (
-=======
-          <div className="max-h-32 space-y-2 overflow-auto">
-            {(scheduleHistoryData?.history ?? []).length === 0 && (
-              <p className="text-xs text-muted-foreground">No runs found for selected schedule.</p>
-            )}
-            {(scheduleHistoryData?.history ?? []).map((job) => (
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
               <button
                 key={job.id}
                 onClick={() => setSelectedHistoryJobId((current) => (current === job.id ? null : job.id))}
@@ -444,6 +474,7 @@ export function DashboardHeader() {
           </div>
         </div>
       )}
-    </header>
+      </div>
+    </>
   );
 }

@@ -40,7 +40,7 @@ const Index = () => {
 
       <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6 space-y-6">
         {/* Script Panels */}
-        <section>
+        <section className="scroll-mt-4">
           <h2 className="mb-3 text-sm font-semibold text-muted-foreground uppercase tracking-wider">Script Panels</h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {scripts.map((s) => (

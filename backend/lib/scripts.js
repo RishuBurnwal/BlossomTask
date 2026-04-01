@@ -32,8 +32,8 @@ export const scriptCatalog = [
     name: "Updater",
     description: "Update workflow data and checkpoints",
     file: path.join(scriptsRoot, "Updater.py"),
-    hasOptions: false,
-    options: [],
+    hasOptions: true,
+    options: ["complete", "found_only", "not_found", "review"],
   },
   {
     id: "closing-task",

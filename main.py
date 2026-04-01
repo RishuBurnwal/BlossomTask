@@ -1,380 +1,819 @@
 #!/usr/bin/env python3
-from __future__ import annotations
+"""
+BlossomTask – Professional CLI Launcher & Pipeline Orchestrator
+===============================================================
+Interactive menu-driven interface for managing the BlossomTask
+funeral order automation pipeline.
+
+Usage:
+  python main.py                  # Interactive menu (default)
+  python main.py --ui             # Launch full-stack UI directly
+  python main.py --stage search   # Run a specific pipeline stage
+  python main.py --help           # Show all CLI options
+"""
 
 import argparse
-import json
-import os
-import re
-import shutil
-import signal
 import subprocess
 import sys
+import os
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import webbrowser
+import signal
+import shutil
+import platform
+import socket
 from pathlib import Path
-from typing import Any
 
-
+# ── Paths ────────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent
-BACKEND_URL = "http://localhost:8787"
-FRONTEND_URL = "http://localhost:8080"
-REQUIRED_PORTS = (8787, 8080)
-REQUIRED_SCRIPT_IDS = {"get-task", "get-order-inquiry", "funeral-finder", "updater", "closing-task"}
+SCRIPTS_DIR = ROOT / "Scripts"
+BACKEND_DIR = ROOT / "backend"
+REQUIREMENTS_TXT = ROOT / "requirements.txt"
+PACKAGE_JSON = ROOT / "package.json"
+ENV_FILE = ROOT / ".env"
+SCRIPTS_ENV_FILE = SCRIPTS_DIR / ".env"
+DOCKERFILE = ROOT / "Dockerfile"
+DOCKER_COMPOSE = ROOT / "docker-compose.yml"
+
+# ── Version & Branding ──────────────────────────────────────────────────────
+VERSION = "2.0.0"
+APP_NAME = "BlossomTask"
+TAGLINE = "Funeral Order Automation Pipeline"
+
+# ── Default Ports ────────────────────────────────────────────────────────────
+DEFAULT_FRONTEND_PORT = 8080
+DEFAULT_BACKEND_PORT = 8787
+
+# ── Colors (ANSI) ───────────────────────────────────────────────────────────
+class C:
+    """ANSI color codes for terminal output."""
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    DIM     = "\033[2m"
+    RED     = "\033[91m"
+    GREEN   = "\033[92m"
+    YELLOW  = "\033[93m"
+    BLUE    = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN    = "\033[96m"
+    WHITE   = "\033[97m"
+    BG_BLUE = "\033[44m"
+    BG_GREEN = "\033[42m"
+
+    @staticmethod
+    def supports_color():
+        """Check if the terminal supports ANSI colors."""
+        if os.name == 'nt':
+            # Enable ANSI on Windows 10+
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+                return True
+            except Exception:
+                return False
+        return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
 
 
-def _print(message: str) -> None:
-    print(f"[main.py] {message}")
+# Disable colors if terminal doesn't support them
+if not C.supports_color():
+    for attr in dir(C):
+        if attr.isupper() and not attr.startswith('_'):
+            setattr(C, attr, '')
 
 
-def ensure_command(name: str) -> str:
-    path = shutil.which(name)
-    if not path:
-        raise RuntimeError(f"Required command not found in PATH: {name}")
-    return path
+# ── Utility Functions ────────────────────────────────────────────────────────
+
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
 
 
-def _find_pids_for_port(port: int) -> set[int]:
-    pids: set[int] = set()
-
-<<<<<<< HEAD
-    if os.name == "nt":
-        result = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        for line in (result.stdout or "").splitlines():
-            if "LISTENING" not in line.upper():
-                continue
-            if f":{port}" not in line:
-                continue
-            parts = line.split()
-            if not parts:
-                continue
-            pid_token = parts[-1]
-            if pid_token.isdigit():
-                pids.add(int(pid_token))
-
-        if pids:
-            return pids
-
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
-    lsof_bin = shutil.which("lsof")
-    if lsof_bin:
-        result = subprocess.run(
-            [lsof_bin, "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        for token in result.stdout.split():
-            if token.isdigit():
-                pids.add(int(token))
-
-    if pids:
-        return pids
-
-    fuser_bin = shutil.which("fuser")
-    if fuser_bin:
-        result = subprocess.run(
-            [fuser_bin, f"{port}/tcp"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        for token in re.findall(r"\d+", (result.stdout or "") + " " + (result.stderr or "")):
-            pids.add(int(token))
-
-    return pids
+def print_banner():
+    """Display the application banner."""
+    banner = f"""
+{C.CYAN}{C.BOLD}╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║   🌸  {APP_NAME} v{VERSION}                                     ║
+║       {TAGLINE}                        ║
+║                                                              ║
+║   Platform : {platform.system()} {platform.release():<20}                 ║
+║   Python   : {platform.python_version():<20}                         ║
+║   Node     : {get_node_version():<20}                         ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝{C.RESET}
+"""
+    print(banner)
 
 
-<<<<<<< HEAD
-def _pid_exists(pid: int) -> bool:
+def print_section(title, icon="📋"):
+    """Print a section header."""
+    print(f"\n{C.BOLD}{C.BLUE}{'─' * 60}{C.RESET}")
+    print(f"  {icon}  {C.BOLD}{title}{C.RESET}")
+    print(f"{C.BLUE}{'─' * 60}{C.RESET}\n")
+
+
+def print_success(msg):
+    print(f"  {C.GREEN}✅ {msg}{C.RESET}")
+
+
+def print_error(msg):
+    print(f"  {C.RED}❌ {msg}{C.RESET}")
+
+
+def print_warn(msg):
+    print(f"  {C.YELLOW}⚠️  {msg}{C.RESET}")
+
+
+def print_info(msg):
+    print(f"  {C.CYAN}ℹ️  {msg}{C.RESET}")
+
+
+def print_step(num, msg):
+    print(f"  {C.MAGENTA}[{num}]{C.RESET} {msg}")
+
+
+def get_node_version():
+    """Get installed Node.js version."""
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        result = subprocess.run(
+            ["node", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip() if result.returncode == 0 else "Not installed"
+    except Exception:
+        return "Not installed"
+
+
+def get_npm_version():
+    """Get installed npm version."""
+    try:
+        result = subprocess.run(
+            ["npm", "--version"],
+            capture_output=True, text=True, timeout=5,
+            shell=(sys.platform == "win32")
+        )
+        return result.stdout.strip() if result.returncode == 0 else "Not installed"
+    except Exception:
+        return "Not installed"
+
+
+def get_docker_version():
+    """Get installed Docker version."""
+    try:
+        result = subprocess.run(
+            ["docker", "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def is_port_in_use(port):
+    """Check if a port is currently in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
+
+def load_dotenv(path=".env"):
+    """Load .env file into environment."""
+    env_path = Path(path) if not isinstance(path, Path) else path
+    if not env_path.exists():
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                os.environ[key] = value
+
+
+def find_python():
+    """Find the best Python executable."""
+    if sys.platform == "win32":
+        return sys.executable
+    for candidate in ["python3", "python"]:
+        if shutil.which(candidate):
+            return candidate
+    return sys.executable
+
+
+# ── Pipeline Functions ───────────────────────────────────────────────────────
+
+PIPELINE_STAGES = [
+    ("GetTask",          "Fetch open tasks from CRM",               "📥"),
+    ("GetOrderInquiry",  "Enrich tasks with order details",         "📋"),
+    ("Funeral_Finder",   "AI-powered funeral/obituary lookup",      "🔍"),
+    ("Updater",          "Prepare and upload results to CRM",       "📤"),
+    ("ClosingTask",      "Close processed CRM tasks",               "✅"),
+]
+
+
+def run_script(name, args=None):
+    """Run a Python script from the Scripts directory."""
+    script_path = SCRIPTS_DIR / f"{name}.py"
+    if not script_path.exists():
+        print_error(f"Script not found: {script_path}")
         return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
+
+    python_bin = find_python()
+    cmd = [python_bin, str(script_path)]
+    if args:
+        cmd.extend(args)
+
+    print(f"\n  {C.BOLD}>>> Running {name}...{C.RESET}")
+    result = subprocess.run(cmd, cwd=str(ROOT), env=os.environ.copy())
+    return result.returncode == 0
+
+
+def run_pipeline(force=False, dry_run=False, limit=0, stage=None):
+    """Run the full data processing pipeline."""
+    print_section("Pipeline Execution", "🚀")
+
+    common_args = []
+    if force:
+        common_args.append("--force")
+        print_info("Force mode: re-processing all records")
+    if limit > 0:
+        common_args.extend(["--limit", str(limit)])
+        print_info(f"Limit: processing max {limit} records per stage")
+
+    crm_args = list(common_args)
+    if dry_run:
+        crm_args.append("--dry-run")
+        print_warn("Dry-run mode: NO actual CRM updates will be made")
+
+    print()
+    total = len(PIPELINE_STAGES)
+    for idx, (name, description, icon) in enumerate(PIPELINE_STAGES, 1):
+        if stage and stage.lower() not in name.lower():
+            continue
+
+        print(f"  {C.BLUE}[{idx}/{total}]{C.RESET} {icon}  {C.BOLD}{name}{C.RESET} — {description}")
+        current_args = crm_args if name in ["Updater", "ClosingTask"] else common_args
+        success = run_script(name, current_args)
+        if not success:
+            print_error(f"Stage '{name}' failed. Pipeline stopped.")
+            return False
+        print_success(f"{name} completed")
+
+    print(f"\n  {C.GREEN}{C.BOLD}🎉 Pipeline execution completed successfully!{C.RESET}\n")
     return True
 
 
-def _terminate_pid(pid: int, port: int) -> None:
-    if os.name == "nt":
-        result = subprocess.run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0 and _pid_exists(pid):
-            _print(f"Unable to stop PID {pid} on port {port}: {(result.stderr or result.stdout).strip()}")
-        return
+# ── Server Launch Functions ──────────────────────────────────────────────────
 
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        _print(f"Permission denied while terminating PID {pid} on port {port}")
+def launch_backend(port=DEFAULT_BACKEND_PORT):
+    """Launch the Node.js backend server."""
+    node_bin = shutil.which("node") or "node"
+    env = os.environ.copy()
+    env["BACKEND_PORT"] = str(port)
 
-
-=======
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
-def kill_required_ports(ports: tuple[int, ...] = REQUIRED_PORTS) -> None:
-    own_pid = os.getpid()
-    for port in ports:
-        pids = {pid for pid in _find_pids_for_port(port) if pid != own_pid}
-        if not pids:
-            continue
-
-        _print(f"Port {port} busy. Stopping processes: {sorted(pids)}")
-        for pid in pids:
-<<<<<<< HEAD
-            _terminate_pid(pid, port)
-
-        time.sleep(0.8)
-
-        survivors = {pid for pid in pids if _pid_exists(pid)}
-        for pid in survivors:
-            if os.name == "nt":
-                _terminate_pid(pid, port)
-                continue
-=======
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                _print(f"Permission denied while terminating PID {pid} on port {port}")
-
-        time.sleep(0.8)
-
-        survivors = {pid for pid in pids if Path(f"/proc/{pid}").exists()}
-        for pid in survivors:
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                _print(f"Permission denied while force-killing PID {pid} on port {port}")
-
-
-def wait_for_backend(timeout_seconds: float = 20.0) -> bool:
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        try:
-            data = http_json("GET", "/api/health")
-            if data.get("ok") is True:
-                return True
-        except Exception:
-            pass
-        time.sleep(0.4)
-    return False
-
-
-def is_backend_running() -> bool:
-    try:
-        data = http_json("GET", "/api/health")
-        return data.get("ok") is True
-    except Exception:
-        return False
-
-
-def launch_ui() -> int:
-    node_bin = ensure_command("node")
-    backend = None
-
-    kill_required_ports()
-
-    _print("Starting backend server...")
+    print_info(f"Starting backend server on port {port}...")
     backend = subprocess.Popen(
         [node_bin, "backend/server.js"],
         cwd=str(ROOT),
         stdout=sys.stdout,
         stderr=sys.stderr,
+        env=env,
     )
+    return backend
+
+
+def launch_frontend(port=DEFAULT_FRONTEND_PORT):
+    """Launch the Vite frontend dev server."""
+    npm_bin = shutil.which("npm") or "npm"
+    use_shell = sys.platform == "win32"
+    env = os.environ.copy()
+
+    print_info(f"Starting frontend dev server on port {port}...")
+    frontend = subprocess.Popen(
+        [npm_bin, "run", "dev", "--", "--port", str(port)],
+        cwd=str(ROOT),
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        shell=use_shell,
+        env=env,
+    )
+    return frontend
+
+
+def launch_ui(frontend_port=DEFAULT_FRONTEND_PORT, backend_port=DEFAULT_BACKEND_PORT):
+    """Launch both backend and frontend servers."""
+    is_docker = os.path.exists("/.dockerenv")
+
+    backend = launch_backend(backend_port)
+    frontend = launch_frontend(frontend_port)
+
+    if not is_docker:
+        time.sleep(5)
+        url = f"http://localhost:{frontend_port}"
+        print_success(f"Dashboard UI: {url}")
+        try:
+            webbrowser.open(url)
+        except Exception:
+            print_warn("Could not open browser automatically.")
+    else:
+        print_info(f"Running in Docker. Access UI at http://localhost:{frontend_port}")
 
     try:
-        if not wait_for_backend(20):
-            _print("Backend failed to become healthy within timeout")
-            if backend and backend.poll() is None:
-                backend.terminate()
-            return 1
-
-        _print("Starting frontend dev server (Vite)...")
-        vite_cli = ROOT / "node_modules" / "vite" / "bin" / "vite.js"
-        if not vite_cli.exists():
-            _print("Vite CLI not found in node_modules. Installing dependencies with npm install...")
-            npm_bin = ensure_command("npm")
-            install = subprocess.run([npm_bin, "install"], cwd=str(ROOT), check=False)
-            if install.returncode != 0:
-                _print("npm install failed; cannot start frontend")
-                return int(install.returncode)
-            if not vite_cli.exists():
-                _print(f"Vite CLI is still missing after install: {vite_cli}")
-                return 1
-
-<<<<<<< HEAD
-        frontend_cmd = [node_bin, str(vite_cli), "--port", "8080", "--strictPort"]
-=======
-        frontend_cmd = [node_bin, str(vite_cli)]
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
-        _print(f"Frontend command: {' '.join(frontend_cmd)}")
-        frontend = subprocess.Popen(
-            frontend_cmd,
-            cwd=str(ROOT),
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-        )
-
-        _print(f"Opening UI in browser: {FRONTEND_URL}")
-        webbrowser.open(FRONTEND_URL)
-        _print("UI stack is running. Press Ctrl+C to stop backend + frontend.")
-
         while True:
             if backend.poll() is not None:
-                _print("Backend process exited")
-                return int(backend.returncode or 1)
+                print_warn("Backend process exited")
+                break
             if frontend.poll() is not None:
-                _print("Frontend process exited")
-                return int(frontend.returncode or 1)
+                print_warn("Frontend process exited")
+                break
             time.sleep(1)
     except KeyboardInterrupt:
-        _print("Stopping UI stack...")
-        return 0
+        print_info("Stopping servers...")
     finally:
-        owned_processes = [locals().get("frontend")]
-        owned_processes.append(backend)
-
-        for proc in owned_processes:
-            if proc and proc.poll() is None:
-                proc.send_signal(signal.SIGTERM)
-        time.sleep(0.6)
-        for proc in owned_processes:
-            if proc and proc.poll() is None:
-                proc.kill()
+        backend.terminate()
+        frontend.terminate()
 
 
-def http_json(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    url = f"{BACKEND_URL}{path}"
-    data = None
-    headers = {"Content-Type": "application/json"}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
+# ── Docker Functions ─────────────────────────────────────────────────────────
 
-    req = urllib.request.Request(url, method=method.upper(), data=data, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            body = response.read().decode("utf-8")
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as exc:
-        message = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"HTTP {exc.code} for {path}: {message}") from exc
+def run_with_docker():
+    """Build and run the project using Docker Compose."""
+    print_section("Docker Deployment", "🐳")
 
+    docker_ver = get_docker_version()
+    if not docker_ver:
+        print_error("Docker is not installed or not in PATH.")
+        print_info("Install Docker from: https://docs.docker.com/get-docker/")
+        return
 
-def verify_frontend_connections() -> int:
-    ensure_command("node")
+    print_info(f"Docker: {docker_ver}")
 
-    _print("Verifying frontend/backend/script integration...")
-    backend = None
-    if not is_backend_running():
-        backend = subprocess.Popen(
-            ["node", "backend/server.js"],
+    if not DOCKER_COMPOSE.exists():
+        print_error("docker-compose.yml not found!")
+        return
+
+    print_info("Building and starting containers...")
+    print()
+
+    use_shell = sys.platform == "win32"
+    result = subprocess.run(
+        ["docker", "compose", "up", "--build"],
+        cwd=str(ROOT),
+        shell=use_shell,
+    )
+
+    if result.returncode != 0:
+        # Try legacy docker-compose command
+        print_warn("Trying legacy docker-compose command...")
+        subprocess.run(
+            ["docker-compose", "up", "--build"],
             cwd=str(ROOT),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            shell=use_shell,
         )
 
-    try:
-        if not wait_for_backend(20):
-            _print("FAIL: backend health endpoint not ready")
-            return 1
 
-        scripts = http_json("GET", "/api/scripts").get("scripts", [])
-        script_ids = {item.get("id") for item in scripts}
-        required_ids = REQUIRED_SCRIPT_IDS
-        if script_ids != required_ids:
-            _print(f"FAIL: script catalog mismatch. expected={required_ids}, actual={script_ids}")
-            return 1
-        _print("PASS: script catalog is connected")
+# ── Dependency Installer ────────────────────────────────────────────────────
 
-        datasets = http_json("GET", "/api/data/datasets").get("datasets", {})
-        for key in ("main", "error", "low", "review"):
-            if key not in datasets:
-                _print(f"FAIL: dataset key missing -> {key}")
-                return 1
-        _print("PASS: data viewer datasets endpoint is connected")
+def list_and_install_dependencies():
+    """List all project dependencies and offer to install them."""
+    print_section("Dependency Manager", "📦")
 
-        entries = http_json("GET", "/api/files/tree?path=&recursive=1").get("entries", [])
-        if not entries:
-            _print("FAIL: file tree is empty")
-            return 1
-        _print("PASS: recursive file navigation endpoint is connected")
+    # ── Python Dependencies ──
+    print(f"  {C.BOLD}{C.YELLOW}Python Dependencies (requirements.txt):{C.RESET}")
+    python_deps = []
+    if REQUIREMENTS_TXT.exists():
+        with open(REQUIREMENTS_TXT, "r", encoding="utf-8") as f:
+            for line in f:
+                dep = line.strip()
+                if dep and not dep.startswith("#"):
+                    python_deps.append(dep)
+    else:
+        print_warn("requirements.txt not found!")
 
-        content = http_json("GET", "/api/files/content?path=Funeral_Finder/Funeral_data.csv&limit=1")
-        parsed = content.get("parsed", [])
-        order_id = ""
-        if parsed:
-            row = parsed[0]
-            order_id = str(row.get("ord_id") or row.get("orderId") or "").strip()
+    for dep in python_deps:
+        # Check if installed
+        try:
+            result = subprocess.run(
+                [find_python(), "-c", f"import importlib; importlib.import_module('{dep.split('==')[0].split('>=')[0].replace('-', '_')}')"],
+                capture_output=True, timeout=5
+            )
+            status = f"{C.GREEN}✓ installed{C.RESET}" if result.returncode == 0 else f"{C.RED}✗ missing{C.RESET}"
+        except Exception:
+            status = f"{C.YELLOW}? unknown{C.RESET}"
+        print(f"    {C.DIM}•{C.RESET} {dep:<25} {status}")
 
-        if not order_id:
-            _print("FAIL: could not read a test order id for compare endpoint")
-            return 1
+    print()
 
-        compare = http_json(
-            "POST",
-            "/api/compare/order-id",
-            {
-                "orderId": order_id,
-                "files": ["Funeral_Finder/Funeral_data.csv", "Funeral_Finder/Funeral_data.csv"],
-            },
+    # ── Node.js Dependencies ──
+    print(f"  {C.BOLD}{C.YELLOW}Node.js Dependencies (package.json):{C.RESET}")
+    node_ver = get_node_version()
+    npm_ver = get_npm_version()
+    print(f"    Node.js  : {node_ver}")
+    print(f"    npm      : {npm_ver}")
+
+    node_modules_exists = (ROOT / "node_modules").exists()
+    if node_modules_exists:
+        print(f"    Status   : {C.GREEN}✓ node_modules found{C.RESET}")
+    else:
+        print(f"    Status   : {C.RED}✗ node_modules missing{C.RESET}")
+
+    # Count dependencies from package.json
+    if PACKAGE_JSON.exists():
+        import json
+        with open(PACKAGE_JSON, "r", encoding="utf-8") as f:
+            pkg = json.load(f)
+        dep_count = len(pkg.get("dependencies", {}))
+        dev_count = len(pkg.get("devDependencies", {}))
+        print(f"    Packages : {dep_count} dependencies, {dev_count} devDependencies")
+
+    print()
+
+    # ── Environment Files ──
+    print(f"  {C.BOLD}{C.YELLOW}Environment Configuration:{C.RESET}")
+    for label, env_path in [("Root .env", ENV_FILE), ("Scripts/.env", SCRIPTS_ENV_FILE)]:
+        exists = env_path.exists()
+        status = f"{C.GREEN}✓ found{C.RESET}" if exists else f"{C.RED}✗ missing{C.RESET}"
+        print(f"    {label:<20} {status}")
+
+    print()
+
+    # ── Install Prompt ──
+    print(f"  {C.BOLD}Install Options:{C.RESET}")
+    print(f"    {C.CYAN}[1]{C.RESET} Install Python dependencies (pip install -r requirements.txt)")
+    print(f"    {C.CYAN}[2]{C.RESET} Install Node.js dependencies (npm install)")
+    print(f"    {C.CYAN}[3]{C.RESET} Install ALL dependencies (Python + Node.js)")
+    print(f"    {C.CYAN}[0]{C.RESET} Back to main menu")
+    print()
+
+    choice = input(f"  {C.BOLD}Select option: {C.RESET}").strip()
+
+    if choice in ["1", "3"]:
+        print_info("Installing Python dependencies...")
+        python_bin = find_python()
+        result = subprocess.run(
+            [python_bin, "-m", "pip", "install", "-r", str(REQUIREMENTS_TXT)],
+            cwd=str(ROOT),
         )
-        if not isinstance(compare.get("matches"), list) or not isinstance(compare.get("differences"), list):
-            _print("FAIL: comparison endpoint payload is invalid")
-            return 1
-        _print(
-            f"PASS: live comparison endpoint is connected (orderId={order_id}, matches={len(compare['matches'])}, differences={len(compare['differences'])})"
-        )
+        if result.returncode == 0:
+            print_success("Python dependencies installed!")
+        else:
+            print_error("Failed to install Python dependencies")
 
-        _print("Integration verification PASSED")
-        return 0
-    finally:
-        if backend and backend.poll() is None:
+    if choice in ["2", "3"]:
+        print_info("Installing Node.js dependencies...")
+        use_shell = sys.platform == "win32"
+        result = subprocess.run(
+            ["npm", "install"],
+            cwd=str(ROOT),
+            shell=use_shell,
+        )
+        if result.returncode == 0:
+            print_success("Node.js dependencies installed!")
+        else:
+            print_error("Failed to install Node.js dependencies")
+
+
+# ── Port Management ──────────────────────────────────────────────────────────
+
+def manage_ports():
+    """Custom port configuration for frontend and backend."""
+    print_section("Port Configuration", "🔌")
+
+    # Show current status
+    fe_status = f"{C.RED}IN USE{C.RESET}" if is_port_in_use(DEFAULT_FRONTEND_PORT) else f"{C.GREEN}Available{C.RESET}"
+    be_status = f"{C.RED}IN USE{C.RESET}" if is_port_in_use(DEFAULT_BACKEND_PORT) else f"{C.GREEN}Available{C.RESET}"
+
+    print(f"  Current Port Status:")
+    print(f"    Frontend (Vite)   : {DEFAULT_FRONTEND_PORT}  [{fe_status}]")
+    print(f"    Backend  (Express): {DEFAULT_BACKEND_PORT}  [{be_status}]")
+    print()
+
+    print(f"  {C.BOLD}Options:{C.RESET}")
+    print(f"    {C.CYAN}[1]{C.RESET} Start with default ports ({DEFAULT_FRONTEND_PORT} / {DEFAULT_BACKEND_PORT})")
+    print(f"    {C.CYAN}[2]{C.RESET} Set custom ports")
+    print(f"    {C.CYAN}[3]{C.RESET} Start backend only (port {DEFAULT_BACKEND_PORT})")
+    print(f"    {C.CYAN}[4]{C.RESET} Start frontend only (port {DEFAULT_FRONTEND_PORT})")
+    print(f"    {C.CYAN}[0]{C.RESET} Back to main menu")
+    print()
+
+    choice = input(f"  {C.BOLD}Select option: {C.RESET}").strip()
+
+    if choice == "1":
+        launch_ui()
+    elif choice == "2":
+        try:
+            fe_port = int(input(f"  Frontend port [{DEFAULT_FRONTEND_PORT}]: ").strip() or DEFAULT_FRONTEND_PORT)
+            be_port = int(input(f"  Backend port  [{DEFAULT_BACKEND_PORT}]: ").strip() or DEFAULT_BACKEND_PORT)
+            launch_ui(frontend_port=fe_port, backend_port=be_port)
+        except ValueError:
+            print_error("Invalid port number")
+    elif choice == "3":
+        backend = launch_backend()
+        print_success(f"Backend running at http://localhost:{DEFAULT_BACKEND_PORT}")
+        try:
+            backend.wait()
+        except KeyboardInterrupt:
             backend.terminate()
-            try:
-                backend.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                backend.kill()
+    elif choice == "4":
+        frontend = launch_frontend()
+        print_success(f"Frontend running at http://localhost:{DEFAULT_FRONTEND_PORT}")
+        try:
+            frontend.wait()
+        except KeyboardInterrupt:
+            frontend.terminate()
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="UI launcher (backend + frontend)")
-    parser.add_argument("--ui", action="store_true", help="Launch backend + frontend UI")
-    parser.add_argument("--verify", action="store_true", help="Run API integration verification checks")
-    return parser.parse_args()
+# ── System Health Check ──────────────────────────────────────────────────────
+
+def system_health_check():
+    """Comprehensive health check of the project setup."""
+    print_section("System Health Check", "🩺")
+
+    checks = []
+
+    # Python version
+    py_ver = platform.python_version()
+    py_ok = tuple(int(x) for x in py_ver.split(".")[:2]) >= (3, 10)
+    checks.append(("Python 3.10+", py_ok, f"v{py_ver}"))
+
+    # Node.js version
+    node_ver = get_node_version()
+    node_ok = node_ver != "Not installed"
+    checks.append(("Node.js 18+", node_ok, node_ver))
+
+    # npm
+    npm_ver = get_npm_version()
+    npm_ok = npm_ver != "Not installed"
+    checks.append(("npm", npm_ok, f"v{npm_ver}" if npm_ok else "Not installed"))
+
+    # Docker (optional)
+    docker_ver = get_docker_version()
+    docker_ok = docker_ver is not None
+    checks.append(("Docker (optional)", docker_ok or True, docker_ver or "Not installed (optional)"))
+
+    # Scripts directory
+    scripts_ok = SCRIPTS_DIR.exists()
+    script_count = len(list(SCRIPTS_DIR.glob("*.py"))) if scripts_ok else 0
+    checks.append(("Scripts directory", scripts_ok, f"{script_count} Python scripts"))
+
+    # Environment files
+    root_env_ok = ENV_FILE.exists()
+    checks.append(("Root .env", root_env_ok, str(ENV_FILE)))
+
+    scripts_env_ok = SCRIPTS_ENV_FILE.exists()
+    checks.append(("Scripts/.env", scripts_env_ok, str(SCRIPTS_ENV_FILE)))
+
+    # node_modules
+    nm_ok = (ROOT / "node_modules").exists()
+    checks.append(("node_modules", nm_ok, "Installed" if nm_ok else "Run 'npm install'"))
+
+    # Backend server file
+    server_ok = (BACKEND_DIR / "server.js").exists()
+    checks.append(("backend/server.js", server_ok, str(BACKEND_DIR / "server.js")))
+
+    # Output directories
+    outputs_ok = (SCRIPTS_DIR / "outputs").exists()
+    checks.append(("Scripts/outputs/", outputs_ok, "Created" if outputs_ok else "Will be auto-created"))
+
+    # Docker files
+    dock_ok = DOCKERFILE.exists() and DOCKER_COMPOSE.exists()
+    checks.append(("Docker config", dock_ok, "Dockerfile + docker-compose.yml"))
+
+    # Print results
+    passed = 0
+    total = len(checks)
+    for label, ok, detail in checks:
+        icon = f"{C.GREEN}✓{C.RESET}" if ok else f"{C.RED}✗{C.RESET}"
+        print(f"    {icon}  {label:<25} {C.DIM}{detail}{C.RESET}")
+        if ok:
+            passed += 1
+
+    print()
+    if passed == total:
+        print_success(f"All {total} checks passed! System is ready.")
+    else:
+        print_warn(f"{passed}/{total} checks passed. Fix issues above before running.")
+
+    # Port check
+    print()
+    print(f"  {C.BOLD}Port Availability:{C.RESET}")
+    for port_name, port_num in [("Frontend", DEFAULT_FRONTEND_PORT), ("Backend", DEFAULT_BACKEND_PORT)]:
+        in_use = is_port_in_use(port_num)
+        icon = f"{C.RED}● IN USE{C.RESET}" if in_use else f"{C.GREEN}● Free{C.RESET}"
+        print(f"    {port_name:<12} :{port_num}  {icon}")
 
 
-def main() -> int:
-    args = parse_args()
+# ── Pipeline Configuration ───────────────────────────────────────────────────
 
-    if args.verify:
-        return verify_frontend_connections()
+def configure_pipeline():
+    """Configure and run the pipeline with custom options."""
+    print_section("Pipeline Configuration", "⚙️")
 
+    print(f"  {C.BOLD}Pipeline Stages:{C.RESET}")
+    for idx, (name, desc, icon) in enumerate(PIPELINE_STAGES, 1):
+        print(f"    {icon}  {C.CYAN}[{idx}]{C.RESET} {name:<20} — {desc}")
+
+    print()
+    print(f"  {C.BOLD}Run Options:{C.RESET}")
+    print(f"    {C.CYAN}[A]{C.RESET} Run ALL stages (full pipeline)")
+    print(f"    {C.CYAN}[1-5]{C.RESET} Run a specific stage only")
+    print(f"    {C.CYAN}[D]{C.RESET} Dry-run (simulate without CRM updates)")
+    print(f"    {C.CYAN}[F]{C.RESET} Force re-process all records")
+    print(f"    {C.CYAN}[0]{C.RESET} Back to main menu")
+    print()
+
+    choice = input(f"  {C.BOLD}Select option: {C.RESET}").strip().upper()
+
+    if choice == "0":
+        return
+    elif choice == "A":
+        limit_str = input(f"  Max records (0=unlimited) [{C.DIM}0{C.RESET}]: ").strip() or "0"
+        run_pipeline(limit=int(limit_str))
+    elif choice == "D":
+        limit_str = input(f"  Max records (0=unlimited) [{C.DIM}5{C.RESET}]: ").strip() or "5"
+        run_pipeline(dry_run=True, limit=int(limit_str))
+    elif choice == "F":
+        run_pipeline(force=True)
+    elif choice in ["1", "2", "3", "4", "5"]:
+        stage_name = PIPELINE_STAGES[int(choice) - 1][0]
+        print_info(f"Running single stage: {stage_name}")
+        run_pipeline(stage=stage_name)
+    else:
+        print_error("Invalid option")
+
+
+# ── View Output Files ────────────────────────────────────────────────────────
+
+def view_outputs():
+    """Browse and display output files."""
+    print_section("Output File Browser", "📁")
+
+    outputs_dir = SCRIPTS_DIR / "outputs"
+    if not outputs_dir.exists():
+        print_warn("No outputs directory found. Run the pipeline first.")
+        return
+
+    for stage_dir in sorted(outputs_dir.iterdir()):
+        if stage_dir.is_dir():
+            files = list(stage_dir.iterdir())
+            file_count = len(files)
+            total_size = sum(f.stat().st_size for f in files if f.is_file())
+            size_label = f"{total_size / 1024:.1f} KB" if total_size < 1024 * 1024 else f"{total_size / (1024 * 1024):.1f} MB"
+
+            print(f"  📂 {C.BOLD}{stage_dir.name}/{C.RESET}")
+            for f in sorted(files):
+                if f.is_file():
+                    fsize = f.stat().st_size
+                    fsize_label = f"{fsize / 1024:.1f} KB" if fsize < 1024 * 1024 else f"{fsize / (1024 * 1024):.1f} MB"
+                    print(f"     {C.DIM}├──{C.RESET} {f.name:<40} {C.DIM}{fsize_label}{C.RESET}")
+            print(f"     {C.DIM}└── {file_count} files, {size_label} total{C.RESET}")
+            print()
+
+
+# ── Interactive Menu ─────────────────────────────────────────────────────────
+
+def interactive_menu():
+    """Main interactive menu loop."""
+    while True:
+        clear_screen()
+        print_banner()
+
+        print(f"  {C.BOLD}{C.WHITE}MAIN MENU{C.RESET}")
+        print(f"  {C.DIM}{'─' * 50}{C.RESET}")
+        print()
+        print(f"    {C.CYAN}[1]{C.RESET}  🖥️   Launch Dashboard UI         {C.DIM}(Frontend + Backend){C.RESET}")
+        print(f"    {C.CYAN}[2]{C.RESET}  🚀  Run Full Pipeline            {C.DIM}(All 5 Stages){C.RESET}")
+        print(f"    {C.CYAN}[3]{C.RESET}  ⚙️   Configure & Run Pipeline     {C.DIM}(Custom Options){C.RESET}")
+        print(f"    {C.CYAN}[4]{C.RESET}  🔌  Port Configuration           {C.DIM}(Custom Ports / Single Server){C.RESET}")
+        print(f"    {C.CYAN}[5]{C.RESET}  🐳  Run with Docker              {C.DIM}(docker-compose up){C.RESET}")
+        print(f"    {C.CYAN}[6]{C.RESET}  📦  Install Dependencies          {C.DIM}(Python + Node.js){C.RESET}")
+        print(f"    {C.CYAN}[7]{C.RESET}  🩺  System Health Check           {C.DIM}(Verify Setup){C.RESET}")
+        print(f"    {C.CYAN}[8]{C.RESET}  📁  View Output Files             {C.DIM}(Browse Results){C.RESET}")
+        print()
+        print(f"    {C.RED}[0]{C.RESET}  🚪  Exit")
+        print()
+
+        choice = input(f"  {C.BOLD}➤ Select option: {C.RESET}").strip()
+
+        if choice == "1":
+            launch_ui()
+        elif choice == "2":
+            load_dotenv(ROOT / ".env")
+            run_pipeline()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "3":
+            load_dotenv(ROOT / ".env")
+            configure_pipeline()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "4":
+            manage_ports()
+        elif choice == "5":
+            run_with_docker()
+        elif choice == "6":
+            list_and_install_dependencies()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "7":
+            system_health_check()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "8":
+            view_outputs()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice in ["0", "q", "quit", "exit"]:
+            print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
+            sys.exit(0)
+        else:
+            print_error("Invalid option. Please try again.")
+            time.sleep(1)
+
+
+# ── CLI Entry Point ──────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=f"{APP_NAME} v{VERSION} — {TAGLINE}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+Examples:
+  python main.py                   Interactive menu (default)
+  python main.py --ui              Launch dashboard UI directly
+  python main.py --docker          Run with Docker Compose
+  python main.py --install         Install all dependencies
+  python main.py --health          System health check
+  python main.py --pipeline        Run full pipeline
+  python main.py --stage search    Run a specific pipeline stage
+  python main.py --dry-run         Pipeline dry-run mode
+        """
+    )
+
+    # Action flags
+    parser.add_argument("--ui", action="store_true",
+                        help="Launch backend + frontend dashboard UI")
+    parser.add_argument("--docker", action="store_true",
+                        help="Build and run with Docker Compose")
+    parser.add_argument("--install", action="store_true",
+                        help="Install all Python and Node.js dependencies")
+    parser.add_argument("--health", action="store_true",
+                        help="Run system health check")
+    parser.add_argument("--pipeline", action="store_true",
+                        help="Run the full data processing pipeline")
+
+    # Pipeline options
+    parser.add_argument("--force", action="store_true",
+                        help="Force re-processing of all stages")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Run with dry-run enabled for CRM stages")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="Limit number of orders to process per stage")
+    parser.add_argument("--stage", type=str,
+                        help="Run only a specific stage (tasks, orders, search, update, close)")
+
+    # Port options
+    parser.add_argument("--frontend-port", type=int, default=DEFAULT_FRONTEND_PORT,
+                        help=f"Frontend port (default: {DEFAULT_FRONTEND_PORT})")
+    parser.add_argument("--backend-port", type=int, default=DEFAULT_BACKEND_PORT,
+                        help=f"Backend port (default: {DEFAULT_BACKEND_PORT})")
+
+    args = parser.parse_args()
+
+    # Load environment
+    load_dotenv(ROOT / ".env")
+
+    # No arguments → interactive menu
+    if len(sys.argv) == 1:
+        interactive_menu()
+        return
+
+    # Direct action flags
     if args.ui:
-        return launch_ui()
+        launch_ui(frontend_port=args.frontend_port, backend_port=args.backend_port)
+        return
 
-    return launch_ui()
+    if args.docker:
+        run_with_docker()
+        return
+
+    if args.install:
+        list_and_install_dependencies()
+        return
+
+    if args.health:
+        system_health_check()
+        return
+
+    if args.pipeline or args.stage or args.force or args.dry_run:
+        success = run_pipeline(
+            force=args.force,
+            dry_run=args.dry_run,
+            limit=args.limit,
+            stage=args.stage,
+        )
+        sys.exit(0 if success else 1)
+
+    # Fallback to interactive menu
+    interactive_menu()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

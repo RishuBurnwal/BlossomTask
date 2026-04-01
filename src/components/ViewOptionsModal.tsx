@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
-<<<<<<< HEAD
-=======
-import { Button } from "@/components/ui/button";
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
 import { api } from "@/lib/api";
 
 interface ViewOptionsModalProps {
@@ -19,19 +15,13 @@ type ViewMode = "human" | "json" | "raw";
 export function ViewOptionsModal({ open, onClose, scriptName, sourcePath = "Funeral_Finder/Funeral_data.csv" }: ViewOptionsModalProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("human");
   const { data } = useQuery({
-<<<<<<< HEAD
     queryKey: ["file-content", sourcePath, "view-modal"],
     queryFn: () => api.fileContent(sourcePath, 1000),
-=======
-    queryKey: ["file-content", sourcePath],
-    queryFn: () => api.fileContent(sourcePath, 100),
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
     enabled: open,
   });
 
   if (!open) return null;
 
-<<<<<<< HEAD
   const normalizedRows = Array.isArray(data?.parsed)
     ? data.parsed
     : data?.parsed && typeof data.parsed === "object"
@@ -43,10 +33,6 @@ export function ViewOptionsModal({ open, onClose, scriptName, sourcePath = "Fune
       return acc;
     }, new Set<string>()),
   );
-=======
-  const parsedRows = Array.isArray(data?.parsed) ? data.parsed : [];
-  const sample = parsedRows.slice(0, 10);
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
   const raw = data?.raw ?? "";
 
   return (
@@ -81,7 +67,6 @@ export function ViewOptionsModal({ open, onClose, scriptName, sourcePath = "Fune
         {/* Content */}
         <div className="max-h-[60vh] overflow-auto p-5">
           {viewMode === "human" && (
-<<<<<<< HEAD
             <div className="rounded-lg border bg-background">
               <div className="max-h-[52vh] overflow-auto">
                 <table className="w-full text-xs">
@@ -114,34 +99,12 @@ export function ViewOptionsModal({ open, onClose, scriptName, sourcePath = "Fune
                   </tbody>
                 </table>
               </div>
-=======
-            <div className="space-y-3">
-              {sample.map((row, index) => (
-                <div key={String(row.ord_id ?? row.orderId ?? index)} className="rounded-lg border bg-background p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-semibold">{String(row.ord_id ?? row.orderId ?? "N/A")}</span>
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-secondary text-secondary-foreground">
-                      {String(row.pplx_status ?? row.status ?? "unknown")}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {String(row.ship_name ?? row.customer ?? "")} · {String(row.ship_city ?? row.product ?? "")} · {String(
-                      row.ship_state ?? row.status ?? "",
-                    )}
-                  </p>
-                </div>
-              ))}
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
             </div>
           )}
 
           {viewMode === "json" && (
             <pre className="rounded-lg border bg-background p-4 text-xs font-mono overflow-x-auto">
-<<<<<<< HEAD
               {JSON.stringify(data?.parsed ?? null, null, 2)}
-=======
-              {JSON.stringify(sample, null, 2)}
->>>>>>> ac78c6fd6892d49e2932651256c992372a8fedeb
             </pre>
           )}
 

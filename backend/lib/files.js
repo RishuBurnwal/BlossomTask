@@ -198,9 +198,12 @@ function summarizeRows(rows = []) {
 
     const processed = row?.processed_at_utc || row?.processedAtUtc || row?.processedAt;
     if (processed) {
-      const ts = new Date(processed).toISOString();
-      if (!lastProcessedAt || ts > lastProcessedAt) {
-        lastProcessedAt = ts;
+      const parsedDate = new Date(processed);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        const ts = parsedDate.toISOString();
+        if (!lastProcessedAt || ts > lastProcessedAt) {
+          lastProcessedAt = ts;
+        }
       }
     }
   });
@@ -216,7 +219,7 @@ function summarizeRows(rows = []) {
 
 export function getDefaultDatasets(limit = 200) {
   // Single-file output expectation
-  const mainPath = "Funeral_Finder/Funeral_data.csv";
+  const mainPath = "master/master_records.csv";
   let mainRows = [];
   try {
     mainRows = readFileContent(mainPath, limit).parsed;

@@ -125,4 +125,24 @@
   .glass-panel {
     @apply bg-card/80 backdrop-blur-md border border-border;
   }
+
+  /* Terminal log line colors */
+  .terminal-line-success {
+    @apply text-emerald-400;
+  }
+  .terminal-line-error {
+    @apply text-red-400;
+  }
+  .terminal-line-warn {
+    @apply text-amber-400;
+  }
+  .terminal-line-skip {
+    @apply text-zinc-500;
+  }
+  .terminal-line-border {
+    @apply text-zinc-600;
+  }
+  .terminal-line-summary {
+    @apply text-cyan-400 font-semibold;
+  }
 }

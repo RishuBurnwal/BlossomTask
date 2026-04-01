@@ -95,3 +95,11 @@ export interface PreflightReport {
   checkedAt: string;
   checks: PreflightCheck[];
 }
+
+export interface PipelineStatus {
+  state: "idle" | "running" | "disabled";
+  runningPipelines: number;
+  runningScripts: number;
+  enabledSchedules: number;
+  totalSchedules: number;
+}
