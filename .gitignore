@@ -38,3 +38,6 @@ backend/data/run_history_logs.jsonl
 __pycache__/
 Scripts/__pycache__/
 *.pyc
+
+backend/data/run_history_logs.jsonl
+*.jsonl
