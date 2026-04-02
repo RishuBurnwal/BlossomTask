@@ -53,6 +53,7 @@ The system is designed to be **resumable and safe**: every stage tracks progress
 | 🤖 **AI-Powered Enrichment** | Uses Perplexity AI (`sonar-pro`) for high-accuracy funeral/obituary data lookup and classification. |
 | 🖥️ **Full-Stack Dashboard** | React + TypeScript frontend with real-time script execution monitoring, log streaming, and data comparison. |
 | ⏰ **Cron Scheduling** | Built-in cron scheduler for automated pipeline execution at configurable intervals. |
+| 🧭 **Terminal Pipeline Runner** | Interactive terminal mode with start/resume choices, retry policy, structured logs, checkpointing, and countdown-based scheduled loops. |
 | 🐳 **Docker Ready** | One-command deployment with Docker Compose — includes Python, Node.js, and all dependencies. |
 | 📊 **Data Explorer** | Browse output files (CSV, JSON, XLSX) directly from the dashboard UI with searchable tables. |
 | 🔍 **Order Comparison** | Compare the same order across all pipeline stages to track data transformations. |
@@ -214,6 +215,7 @@ This opens the professional interactive menu with options:
 | `[6]` Install Dependencies | List and install Python + Node.js deps |
 | `[7]` System Health Check | Verify all prerequisites and configuration |
 | `[8]` View Output Files | Browse pipeline output directory |
+| `[9]` Terminal Pipeline Runner | Interactive terminal orchestration with checkpoint/resume + schedule mode |
 
 ### CLI Flags
 
@@ -244,7 +246,27 @@ python main.py --install
 
 # System health check
 python main.py --health
+
+# Launch terminal pipeline runner
+python main.py --terminal-runner
 ```
+
+### Terminal Runner Flow
+
+When running `python main.py --terminal-runner` (or menu option `[9]`), the terminal runner asks for:
+
+- Start mode: `fresh` or `continue from last checkpoint`
+- Run type: `single run` or `scheduled`
+- Execution mode: `complete pipeline` or `manual script-by-script debug`
+- Updater mode (when Updater is selected): `complete`, `found_only`, `not_found`, `review`
+- Schedule value (scheduled mode): minute interval (for example `30`), cron-style minute interval (for example `*/15 * * * *`), or daily local time (for example `23:15`)
+
+Runtime artifacts generated at project root:
+
+- `pipeline_checkpoint.json`: last successful script and completed script list
+- `pipeline_state.json`: latest run lifecycle state and context
+- `pipeline_last_summary.json`: most recent run summary including per-script status and total duration
+- `pipeline_logs.jsonl`: structured event stream for debugging and audit trails
 
 ### Manual Server Start
 

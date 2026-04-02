@@ -691,6 +691,7 @@ def interactive_menu():
         print(f"    {C.CYAN}[6]{C.RESET}  📦  Install Dependencies          {C.DIM}(Python + Node.js){C.RESET}")
         print(f"    {C.CYAN}[7]{C.RESET}  🩺  System Health Check           {C.DIM}(Verify Setup){C.RESET}")
         print(f"    {C.CYAN}[8]{C.RESET}  📁  View Output Files             {C.DIM}(Browse Results){C.RESET}")
+        print(f"    {C.CYAN}[9]{C.RESET}  🧭  Terminal Pipeline Runner      {C.DIM}(Interactive/Resume/Cron){C.RESET}")
         print()
         print(f"    {C.RED}[0]{C.RESET}  🚪  Exit")
         print()
@@ -719,6 +720,17 @@ def interactive_menu():
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice == "8":
             view_outputs()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "9":
+            from terminal_runner import run_terminal_pipeline
+
+            code = run_terminal_pipeline()
+            if code == 0:
+                print_success("Terminal pipeline runner finished successfully")
+            elif code == 130:
+                print_warn("Terminal pipeline runner interrupted")
+            else:
+                print_error("Terminal pipeline runner ended with failure")
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice in ["0", "q", "quit", "exit"]:
             print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
@@ -758,6 +770,8 @@ Examples:
                         help="Run system health check")
     parser.add_argument("--pipeline", action="store_true",
                         help="Run the full data processing pipeline")
+    parser.add_argument("--terminal-runner", action="store_true",
+                        help="Run interactive terminal pipeline runner")
 
     # Pipeline options
     parser.add_argument("--force", action="store_true",
@@ -810,6 +824,11 @@ Examples:
             stage=args.stage,
         )
         sys.exit(0 if success else 1)
+
+    if args.terminal_runner:
+        from terminal_runner import run_terminal_pipeline
+
+        sys.exit(run_terminal_pipeline())
 
     # Fallback to interactive menu
     interactive_menu()
