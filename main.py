@@ -11,7 +11,7 @@ Usage:
   python main.py --stage search   # Run a specific pipeline stage
   python main.py --help           # Show all CLI options
 """
-  
+
 import argparse
 import subprocess
 import sys
