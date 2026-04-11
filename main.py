@@ -11,7 +11,7 @@ Usage:
   python main.py --stage search   # Run a specific pipeline stage
   python main.py --help           # Show all CLI options
 """
-  
+
 import argparse
 import subprocess
 import sys
@@ -208,6 +208,7 @@ PIPELINE_STAGES = [
     ("GetTask",          "Fetch open tasks from CRM",               "📥"),
     ("GetOrderInquiry",  "Enrich tasks with order details",         "📋"),
     ("Funeral_Finder",   "AI-powered funeral/obituary lookup",      "🔍"),
+    ("reverify",         "Re-verify NotFound and Review records",   "♻️"),
     ("Updater",          "Prepare and upload results to CRM",       "📤"),
     ("ClosingTask",      "Close processed CRM tasks",               "✅"),
 ]
@@ -618,7 +619,7 @@ def configure_pipeline():
     print()
     print(f"  {C.BOLD}Run Options:{C.RESET}")
     print(f"    {C.CYAN}[A]{C.RESET} Run ALL stages (full pipeline)")
-    print(f"    {C.CYAN}[1-5]{C.RESET} Run a specific stage only")
+    print(f"    {C.CYAN}[1-6]{C.RESET} Run a specific stage only")
     print(f"    {C.CYAN}[D]{C.RESET} Dry-run (simulate without CRM updates)")
     print(f"    {C.CYAN}[F]{C.RESET} Force re-process all records")
     print(f"    {C.CYAN}[0]{C.RESET} Back to main menu")
@@ -636,7 +637,7 @@ def configure_pipeline():
         run_pipeline(dry_run=True, limit=int(limit_str))
     elif choice == "F":
         run_pipeline(force=True)
-    elif choice in ["1", "2", "3", "4", "5"]:
+    elif choice in ["1", "2", "3", "4", "5", "6"]:
         stage_name = PIPELINE_STAGES[int(choice) - 1][0]
         print_info(f"Running single stage: {stage_name}")
         run_pipeline(stage=stage_name)
@@ -684,7 +685,7 @@ def interactive_menu():
         print(f"  {C.DIM}{'─' * 50}{C.RESET}")
         print()
         print(f"    {C.CYAN}[1]{C.RESET}  🖥️   Launch Dashboard UI         {C.DIM}(Frontend + Backend){C.RESET}")
-        print(f"    {C.CYAN}[2]{C.RESET}  🚀  Run Full Pipeline            {C.DIM}(All 5 Stages){C.RESET}")
+        print(f"    {C.CYAN}[2]{C.RESET}  🚀  Run Full Pipeline            {C.DIM}(All 6 Stages){C.RESET}")
         print(f"    {C.CYAN}[3]{C.RESET}  ⚙️   Configure & Run Pipeline     {C.DIM}(Custom Options){C.RESET}")
         print(f"    {C.CYAN}[4]{C.RESET}  🔌  Port Configuration           {C.DIM}(Custom Ports / Single Server){C.RESET}")
         print(f"    {C.CYAN}[5]{C.RESET}  🐳  Run with Docker              {C.DIM}(docker-compose up){C.RESET}")

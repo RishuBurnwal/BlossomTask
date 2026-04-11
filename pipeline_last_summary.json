@@ -1,0 +1,68 @@
+{
+  "status": "success",
+  "message": "Pipeline completed successfully",
+  "script_results": [
+    {
+      "script_id": "get-task",
+      "status": "success",
+      "exit_code": 0,
+      "processed_count": null,
+      "attempts": 1,
+      "error_reason": null,
+      "duration_sec": 3
+    },
+    {
+      "script_id": "get-order-inquiry",
+      "status": "success",
+      "exit_code": 0,
+      "processed_count": null,
+      "attempts": 1,
+      "error_reason": null,
+      "duration_sec": 186
+    },
+    {
+      "script_id": "funeral-finder",
+      "status": "success",
+      "exit_code": 0,
+      "processed_count": 133,
+      "attempts": 1,
+      "error_reason": null,
+      "duration_sec": 718
+    },
+    {
+      "script_id": "updater",
+      "status": "success",
+      "exit_code": 0,
+      "processed_count": 133,
+      "attempts": 1,
+      "error_reason": null,
+      "duration_sec": 198
+    },
+    {
+      "script_id": "closing-task",
+      "status": "success",
+      "exit_code": 0,
+      "processed_count": 133,
+      "attempts": 1,
+      "error_reason": null,
+      "duration_sec": 188
+    }
+  ],
+  "run_context": {
+    "run_mode": "scheduled",
+    "execution_mode": "complete",
+    "start_mode": "fresh",
+    "updater_mode": "complete",
+    "cycle": 1,
+    "sequence": [
+      "get-task",
+      "get-order-inquiry",
+      "funeral-finder",
+      "updater",
+      "closing-task"
+    ],
+    "start_index": 0
+  },
+  "next_scheduled_time": null,
+  "total_duration_sec": 1293
+}
