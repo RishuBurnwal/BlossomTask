@@ -472,7 +472,7 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
     return ai_text, parsed, api_payload
 
 
-def process_record(api_key: str, record: dict, max_attempts: int = 3) -> dict:
+def process_record(api_key: str, record: dict, max_attempts: int = 2) -> dict:
     strategies = get_strategy_order(record)
     attempts = []
     best = None
@@ -549,15 +549,15 @@ def main():
                         help="Ignore reverify_logs.txt and reprocess all order IDs")
     parser.add_argument("--limit", type=int, default=0,
                         help="Cap how many records to process (0 = unlimited)")
-    parser.add_argument("--attempts", type=int, default=3,
+    parser.add_argument("--attempts", type=int, default=2,
                         help="Max API attempts per record (recommended: 2 or 3)")
     args = parser.parse_args()
 
     if args.attempts < 2:
-        raise SystemExit(f"[{SCRIPT_NAME}] --attempts must be in range 2..3")
-    if args.attempts > 3:
-        print(f"[{SCRIPT_NAME}] --attempts capped at 3 to avoid excessive retries")
-        args.attempts = 3
+        raise SystemExit(f"[{SCRIPT_NAME}] --attempts must be in range 2..2 to ensure enough retry strategies")
+    if args.attempts > 2:
+        print(f"[{SCRIPT_NAME}] --attempts capped at 2 to avoid excessive retries")
+        args.attempts = 2
 
     load_dotenv_file()
     api_key = _required_env("PERPLEXITY_API_KEY")
@@ -565,6 +565,11 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     logged_ids = set() if args.force else load_logged_ids()
     processed = 0
+    skipped_logged = 0
+    found_count = 0
+    review_count = 0
+    not_found_count = 0
+    updated_main_count = 0
 
     source_order = ["not_found", "review"] if args.source == "both" else [args.source]
     source_rows = {name: load_records(path) for name, path in SOURCE_FILES.items()}
@@ -582,6 +587,7 @@ def main():
                 continue
             if order_id in logged_ids and not args.force:
                 print(f"[{SCRIPT_NAME}] SKIP {order_id} (already logged)")
+                skipped_logged += 1
                 continue
             if args.limit > 0 and processed >= args.limit:
                 print(f"[{SCRIPT_NAME}] Reached --limit={args.limit}; stopping early.")
@@ -594,6 +600,7 @@ def main():
 
             # Keep the main file as the canonical superset of all processed records.
             append_main_record(updated)
+            updated_main_count += 1
 
             payload_entry = {
                 "source": source_name,
@@ -617,14 +624,17 @@ def main():
                 remove_record(source_path, order_id)
                 other_source = "review" if source_name == "not_found" else "not_found"
                 remove_record(SOURCE_FILES[other_source], order_id)
+                found_count += 1
                 print(f"[{SCRIPT_NAME}] FOUND {order_id} -> moved to main CSV")
             elif status == "Review":
                 remove_record(SOURCE_FILES["not_found"], order_id)
                 upsert_record(SOURCE_FILES["review"], updated)
+                review_count += 1
                 print(f"[{SCRIPT_NAME}] REVIEW {order_id} -> moved to review CSV")
             else:
                 remove_record(SOURCE_FILES["review"], order_id)
                 upsert_record(SOURCE_FILES["not_found"], updated)
+                not_found_count += 1
                 print(f"[{SCRIPT_NAME}] NOT FOUND {order_id} -> moved to not_found CSV")
 
             append_logged_id(order_id)
@@ -632,6 +642,11 @@ def main():
             processed += 1
 
     print(f"[{SCRIPT_NAME}] Completed. Processed {processed} record(s).")
+    print(
+        f"[{SCRIPT_NAME}] RUN SUMMARY | "
+        f"Found={found_count} | Review={review_count} | NotFound={not_found_count} | "
+        f"UpdatedMain={updated_main_count} | SkippedLogged={skipped_logged}"
+    )
 
 
 if __name__ == "__main__":

@@ -426,7 +426,8 @@ async function runScriptJob({ jobId, scriptId, option }) {
     BLOSSOM_CANCEL_FLAG: cancelFlagPath,
   };
 
-  const child = spawn(PYTHON_BIN, [script.file], {
+  const scriptArgs = scriptId === "reverify" ? ["--force"] : [];
+  const child = spawn(PYTHON_BIN, [script.file, ...scriptArgs], {
     cwd: path.dirname(script.file),
     env,
     stdio: ["pipe", "pipe", "pipe"],
