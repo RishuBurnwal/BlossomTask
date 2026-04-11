@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import XLSX from "xlsx";
 
 const outputsRoot = path.resolve(process.cwd(), "Scripts", "outputs");
 
@@ -128,7 +129,10 @@ function parseCsv(content, limit = 200) {
     return cleaned || `column_${index + 1}`;
   });
 
-  const dataRows = rows.slice(1, 1 + limit);
+  const boundedLimit = Number(limit);
+  const dataRows = Number.isFinite(boundedLimit) && boundedLimit > 0
+    ? rows.slice(1, 1 + boundedLimit)
+    : rows.slice(1);
   return dataRows.map((cells) => {
     const rowObject = {};
     headers.forEach((header, index) => {
@@ -143,6 +147,21 @@ function parseCsv(content, limit = 200) {
   });
 }
 
+function parseXlsx(buffer, limit = 200) {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  const firstSheet = workbook.SheetNames?.[0];
+  if (!firstSheet) {
+    return [];
+  }
+
+  const worksheet = workbook.Sheets[firstSheet];
+  const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
+  const boundedLimit = Number(limit);
+  return Number.isFinite(boundedLimit) && boundedLimit > 0
+    ? rows.slice(0, boundedLimit)
+    : rows;
+}
+
 export function readFileContent(inputPath, limit = 200) {
   const targetPath = resolveOutputPath(inputPath);
   if (!fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
@@ -150,6 +169,22 @@ export function readFileContent(inputPath, limit = 200) {
   }
 
   const ext = path.extname(targetPath).toLowerCase();
+
+  if (ext === ".xlsx") {
+    try {
+      const xlsxBuffer = fs.readFileSync(targetPath);
+      const parsed = parseXlsx(xlsxBuffer, limit);
+      return { type: "xlsx", raw: `[xlsx:${path.basename(targetPath)}]`, parsed };
+    } catch {
+      // Fallback to sibling CSV if xlsx parsing fails.
+      const csvFallbackPath = targetPath.replace(/\.xlsx$/i, ".csv");
+      if (fs.existsSync(csvFallbackPath) && fs.statSync(csvFallbackPath).isFile()) {
+        const csvRaw = fs.readFileSync(csvFallbackPath, "utf-8");
+        return { type: "csv", raw: csvRaw, parsed: parseCsv(csvRaw, limit) };
+      }
+    }
+  }
+
   const raw = fs.readFileSync(targetPath, "utf-8");
 
   if (ext === ".json") {
