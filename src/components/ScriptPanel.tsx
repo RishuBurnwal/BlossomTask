@@ -457,6 +457,8 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
               ? "GetOrderInquiry/data.csv"
               : script.id === "funeral-finder"
                 ? "Funeral_Finder/Funeral_data.csv"
+                : script.id === "reverify"
+                  ? "Funeral_Finder/Funeral_data.csv"
                 : script.id === "updater"
                   ? "Updater/data.csv"
                   : script.id === "closing-task"

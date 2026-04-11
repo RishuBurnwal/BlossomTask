@@ -32,6 +32,7 @@ PIPELINE_SEQUENCE = [
     "get-task",
     "get-order-inquiry",
     "funeral-finder",
+    "reverify",
     "updater",
     "closing-task",
 ]
@@ -40,6 +41,7 @@ SCRIPT_CONFIG: Dict[str, Dict[str, str]] = {
     "get-task": {"name": "GetTask", "file": str(SCRIPTS_DIR / "GetTask.py")},
     "get-order-inquiry": {"name": "GetOrderInquiry", "file": str(SCRIPTS_DIR / "GetOrderInquiry.py")},
     "funeral-finder": {"name": "Funeral_Finder", "file": str(SCRIPTS_DIR / "Funeral_Finder.py")},
+    "reverify": {"name": "Reverify", "file": str(SCRIPTS_DIR / "reverify.py")},
     "updater": {"name": "Updater", "file": str(SCRIPTS_DIR / "Updater.py")},
     "closing-task": {"name": "ClosingTask", "file": str(SCRIPTS_DIR / "ClosingTask.py")},
 }
@@ -218,12 +220,13 @@ class TerminalPipelineRunner:
 
         sequence = self._resolve_sequence(execution_mode)
         updater_mode = self._ask_updater_mode(sequence)
+        reverify_source = self._ask_reverify_source(sequence)
 
         schedule_plan = None
         if run_mode == "scheduled":
             schedule_plan = self._ask_schedule_plan()
 
-        return self._run_loop(start_mode, run_mode, sequence, updater_mode, schedule_plan)
+        return self._run_loop(start_mode, run_mode, sequence, updater_mode, reverify_source, schedule_plan)
 
     def _ask_start_mode(self) -> str:
         while True:
@@ -299,6 +302,20 @@ class TerminalPipelineRunner:
                 return UPDATER_MODES[int(choice) - 1]
             print("Please select a valid option 1-4.")
 
+    def _ask_reverify_source(self, sequence: List[str]) -> str:
+        if "reverify" not in sequence:
+            return "both"
+
+        print("\nReverify source preference:")
+        choices = ["both", "not_found", "review"]
+        for idx, source in enumerate(choices, start=1):
+            print(f"  [{idx}] {source}")
+        while True:
+            choice = self.input("Select reverify source [1-3]: ").strip()
+            if choice in {"1", "2", "3"}:
+                return choices[int(choice) - 1]
+            print("Please select a valid option 1-3.")
+
     def _ask_schedule_plan(self) -> dict:
         print("\nSchedule input examples:")
         print("  30                -> every 30 minutes")
@@ -317,16 +334,17 @@ class TerminalPipelineRunner:
         run_mode: str,
         sequence: List[str],
         updater_mode: str,
+        reverify_source: str,
         schedule_plan: Optional[dict],
     ) -> int:
         cycle = 0
         while True:
             cycle += 1
             if self.stop_requested:
-                self._flush_interrupt_state(run_mode, sequence, updater_mode, cycle)
+                self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
                 return 130
 
-            result = self._execute_once(start_mode, run_mode, sequence, updater_mode, cycle)
+            result = self._execute_once(start_mode, run_mode, sequence, updater_mode, reverify_source, cycle)
             result_total_duration = total_duration_seconds(result.get("script_results", []))
             result["total_duration_sec"] = result_total_duration
             self.store.save_summary(result)
@@ -364,6 +382,7 @@ class TerminalPipelineRunner:
         run_mode: str,
         sequence: List[str],
         updater_mode: str,
+        reverify_source: str,
         cycle: int,
     ) -> dict:
         checkpoint = self.store.load_checkpoint()
@@ -379,6 +398,7 @@ class TerminalPipelineRunner:
             "execution_mode": "complete" if sequence == PIPELINE_SEQUENCE else "manual",
             "start_mode": start_mode,
             "updater_mode": updater_mode,
+            "reverify_source": reverify_source,
             "cycle": cycle,
             "sequence": sequence,
             "start_index": start_index,
@@ -403,7 +423,7 @@ class TerminalPipelineRunner:
 
         for script_id in sequence[start_index:]:
             if self.stop_requested:
-                self._flush_interrupt_state(run_mode, sequence, updater_mode, cycle)
+                self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
                 return {
                     "status": "interrupted",
                     "message": "Interrupted by user",
@@ -424,6 +444,7 @@ class TerminalPipelineRunner:
             success_result = self._run_script_with_retry(
                 script_id=script_id,
                 updater_mode=updater_mode,
+                reverify_source=reverify_source,
                 force=(start_mode == "fresh"),
                 run_context=run_context,
             )
@@ -439,7 +460,7 @@ class TerminalPipelineRunner:
 
             if not success_result.success:
                 if success_result.interrupted:
-                    self._flush_interrupt_state(run_mode, sequence, updater_mode, cycle)
+                    self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
                     return {
                         "status": "interrupted",
                         "message": "Interrupted by user",
@@ -496,10 +517,10 @@ class TerminalPipelineRunner:
             "next_scheduled_time": None,
         }
 
-    def _run_script_with_retry(self, script_id: str, updater_mode: str, force: bool, run_context: dict) -> ScriptRunResult:
+    def _run_script_with_retry(self, script_id: str, updater_mode: str, reverify_source: str, force: bool, run_context: dict) -> ScriptRunResult:
         last_error: Optional[str] = None
         for attempt in range(1, MAX_RETRIES + 1):
-            result = self._run_single_script(script_id, updater_mode, force)
+            result = self._run_single_script(script_id, updater_mode, reverify_source, force)
             if result.interrupted:
                 result.attempts = attempt
                 return result
@@ -526,7 +547,7 @@ class TerminalPipelineRunner:
             error_reason=last_error or "Unknown failure",
         )
 
-    def _run_single_script(self, script_id: str, updater_mode: str, force: bool) -> ScriptRunResult:
+    def _run_single_script(self, script_id: str, updater_mode: str, reverify_source: str, force: bool) -> ScriptRunResult:
         config = SCRIPT_CONFIG[script_id]
         cmd = [sys.executable, config["file"]]
 
@@ -534,10 +555,14 @@ class TerminalPipelineRunner:
             cmd.append("--force")
         if script_id == "updater":
             cmd.extend(["--mode", updater_mode])
+        if script_id == "reverify":
+            cmd.extend(["--source", reverify_source])
 
         env = os.environ.copy()
         if script_id == "updater":
             env["RUN_MODE"] = updater_mode
+        if script_id == "reverify":
+            env["RUN_MODE"] = reverify_source
 
         started = time.monotonic()
 
@@ -546,6 +571,7 @@ class TerminalPipelineRunner:
             process = subprocess.Popen(
                 cmd,
                 cwd=str(ROOT),
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -651,7 +677,7 @@ class TerminalPipelineRunner:
                 f"duration={format_duration_label(item.get('duration_sec'))}"
             )
 
-    def _flush_interrupt_state(self, run_mode: str, sequence: List[str], updater_mode: str, cycle: int) -> None:
+    def _flush_interrupt_state(self, run_mode: str, sequence: List[str], updater_mode: str, reverify_source: str, cycle: int) -> None:
         message = self.interruption_reason or "Interrupted by user"
         self.store.save_state(
             {
@@ -660,6 +686,7 @@ class TerminalPipelineRunner:
                 "run_mode": run_mode,
                 "sequence": sequence,
                 "updater_mode": updater_mode,
+                "reverify_source": reverify_source,
                 "cycle": cycle,
             }
         )
@@ -670,6 +697,7 @@ class TerminalPipelineRunner:
                 "run_mode": run_mode,
                 "sequence": sequence,
                 "updater_mode": updater_mode,
+                "reverify_source": reverify_source,
                 "cycle": cycle,
             }
         )
@@ -683,7 +711,7 @@ def run_terminal_pipeline() -> int:
     except KeyboardInterrupt:
         runner.stop_requested = True
         runner.interruption_reason = "Interrupted by user"
-        runner._flush_interrupt_state("unknown", PIPELINE_SEQUENCE, "complete", 0)
+        runner._flush_interrupt_state("unknown", PIPELINE_SEQUENCE, "complete", "both", 0)
         return 130
 
 

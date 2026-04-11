@@ -28,6 +28,14 @@ export const scriptCatalog = [
     options: ["batch", "interactive"],
   },
   {
+    id: "reverify",
+    name: "Reverify",
+    description: "Re-verify NotFound and Review records using multi-strategy Perplexity queries",
+    file: path.join(scriptsRoot, "reverify.py"),
+    hasOptions: true,
+    options: ["both", "not_found", "review"],
+  },
+  {
     id: "updater",
     name: "Updater",
     description: "Update workflow data and checkpoints",

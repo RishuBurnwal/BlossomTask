@@ -73,6 +73,7 @@ export function DashboardHeader() {
         { scriptId: "get-task" },
         { scriptId: "get-order-inquiry" },
         { scriptId: "funeral-finder", option: "batch" },
+        { scriptId: "reverify", option: "both" },
         { scriptId: "updater", option: pipelineUpdaterMode },
         { scriptId: "closing-task" },
       ];

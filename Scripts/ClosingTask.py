@@ -117,7 +117,9 @@ def load_updater_data() -> list:
     """
     Read processed records from Updater/data.csv.
     De-duplicates by order_id (keeps first occurrence).
-    Only includes orders with upload_status == SUCCESS.
+    Only includes orders with:
+    - upload_status == SUCCESS
+    - status/trResult == Found (case-insensitive)
     """
     if not INPUT_CSV.exists():
         print(f"[{SCRIPT_NAME}] ERROR: Input CSV not found: {INPUT_CSV}")
@@ -136,6 +138,13 @@ def load_updater_data() -> list:
 
             upload_status = _safe_str(row.get("upload_status"))
             if upload_status != "SUCCESS":
+                continue
+
+            # CloseTask should run only for orders that are explicitly Found.
+            # Accept Found from either `status` or `trResult` to handle schema variations.
+            status_value = _safe_str(row.get("status")).lower()
+            tr_result_value = _safe_str(row.get("trResult")).lower()
+            if "found" not in {status_value, tr_result_value}:
                 continue
 
             seen_ids.add(oid)
@@ -281,7 +290,19 @@ def main():
         order_id  = _safe_str(order.get("order_id"))
         task_id   = _safe_str(order.get("task_id"))
         ship_name = _safe_str(order.get("ship_name"))
-        tr_result = _safe_str(order.get("trResult"))
+
+        # Defense-in-depth: even if upstream data changes, never close non-Found rows.
+        status_value = _safe_str(order.get("status")).lower()
+        tr_result_value = _safe_str(order.get("trResult")).lower()
+        if "found" not in {status_value, tr_result_value}:
+            print(f"[{idx}/{total}] {'─'*45}")
+            print(f"  Order ID : {order_id}")
+            raw_status = _safe_str(order.get("status")) or "empty"
+            raw_tr_result = _safe_str(order.get("trResult")) or "empty"
+            print(f"  ⏭  SKIP – status/trResult is not Found (status={raw_status}, trResult={raw_tr_result})")
+            skipped_count += 1
+            continue
+        tr_result = "Found"
 
         # Determine close reason
         if tr_result == "Found":
