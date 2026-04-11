@@ -93,102 +93,14 @@ def get_now_iso() -> str:
 
 
 def _extract_json_from_text(text: str) -> dict:
-    """Robust JSON extractor — 3 strategies, returns largest valid object."""
-    if not text:
-        return {}
-
-    # Strategy 1: largest valid JSON object
-    best = {}
-    for match in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}", text, re.DOTALL):
+    """Extract the first JSON object from AI response text."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
         try:
-            candidate = json.loads(match.group(0))
-            if len(candidate) > len(best):
-                best = candidate
+            return json.loads(match.group(0))
         except (json.JSONDecodeError, ValueError):
             pass
-    if best:
-        return best
-
-    # Strategy 2: first { to last }
-    start = text.find("{")
-    end   = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            return json.loads(text[start:end + 1])
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-    # Strategy 3: markdown code blocks
-    for pattern in [r"```json\s*(.*?)```", r"```\s*(.*?)```"]:
-        m = re.search(pattern, text, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(1).strip())
-            except (json.JSONDecodeError, ValueError):
-                pass
-
     return {}
-
-
-def _extract_structured_fields_from_text(text: str) -> dict:
-    """Fallback parser for colon-formatted responses when JSON is missing."""
-    if not text:
-        return {}
-
-    key_aliases = {
-        "funeral home name (optional)": "funeral_home_name",
-        "funeral home name": "funeral_home_name",
-        "funeral_home_name": "funeral_home_name",
-        "service location": "funeral_address",
-        "funeral_address": "funeral_address",
-        "phone number": "funeral_phone",
-        "funeral_phone": "funeral_phone",
-        "venue type": "service_type",
-        "service_type": "service_type",
-        "funeral date": "funeral_date",
-        "service_date": "service_date",
-        "funeral time": "funeral_time",
-        "service_time": "service_time",
-        "visitation date": "visitation_date",
-        "visitation time": "visitation_time",
-        "optimal delivery date": "delivery_recommendation_date",
-        "optimal delivery time": "delivery_recommendation_time",
-        "deliver to": "delivery_recommendation_location",
-        "special instructions": "special_instructions",
-        "status": "status",
-        "ai accuracy score": "AI Accuracy Score",
-        "notes": "notes",
-        "summary": "Summary",
-        "status justification": "Status Justification",
-    }
-
-    extracted = {}
-    source_urls = []
-
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-
-        if re.match(r"^[-*]\s+https?://", line, re.IGNORECASE):
-            source_urls.append(re.sub(r"^[-*]\s+", "", line))
-            continue
-        if re.match(r"^https?://", line, re.IGNORECASE):
-            source_urls.append(line)
-            continue
-
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        normalized_key = key.strip().lower()
-        mapped_key = key_aliases.get(normalized_key)
-        if mapped_key:
-            extracted[mapped_key] = value.strip()
-
-    if source_urls:
-        extracted["source_urls"] = source_urls
-
-    return extracted
 
 
 def _safe_str(val) -> str:
@@ -369,57 +281,23 @@ def append_to_payload_json(order_id: str, payload: dict):
 def parse_ai_response(ai_text: str) -> dict:
     """Parse Perplexity AI response text into structured fields."""
     ai_data = _extract_json_from_text(ai_text)
-    if not ai_data:
-        ai_data = _extract_structured_fields_from_text(ai_text)
 
-    # Status — check all key name variants AI might return
-    raw_status = _safe_str(
-        ai_data.get("status")       or ai_data.get("Status")      or
-        ai_data.get("STATUS")       or ai_data.get("match_status") or
-        ai_data.get("Match Status") or ai_data.get("result")      or ""
-    )
-    status_lower = raw_status.lower().strip()
-    if status_lower in ("found", "matched", "yes", "confirmed"):
+    # Normalize status
+    raw_status = _safe_str(ai_data.get("status") or ai_data.get("Status") or "Review")
+    status_lower = raw_status.lower()
+    if status_lower in ("found", "matched"):
         match_status = "Found"
-    elif status_lower in ("notfound", "not_found", "not found", "mismatched", "no", "none"):
+    elif status_lower in ("notfound", "not_found", "not found", "mismatched"):
         match_status = "NotFound"
-    elif status_lower in ("review", "needs_review", "needs review", "uncertain", "unverified"):
-        match_status = "Review"
     else:
-        # Unknown status should stay review-first to avoid false NotFound.
-        has_data = bool(
-            ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)") or
-            ai_data.get("funeral_date")      or ai_data.get("Funeral date") or
-            ai_data.get("service_date")
-        )
         match_status = "Review"
 
-    # Score — check all key name variants
-    score = (
-        ai_data.get("AI Accuracy Score")  or ai_data.get("ai_accuracy_score") or
-        ai_data.get("Accuracy Score")     or ai_data.get("accuracy_score")    or
-        ai_data.get("confidence_score")   or ai_data.get("Confidence Score")  or
-        ai_data.get("score")              or ai_data.get("Score")             or 0
-    )
+    # Accuracy score
+    score = ai_data.get("AI Accuracy Score") or ai_data.get("ai_accuracy_score") or ai_data.get("confidence_score") or 0
     try:
         score = float(str(score).replace("%", "").strip())
     except (ValueError, TypeError):
         score = 0
-
-    evidence_count = sum(
-        bool(_safe_str(v))
-        for v in [
-            ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)"),
-            ai_data.get("funeral_date") or ai_data.get("Funeral date") or ai_data.get("service_date"),
-            ai_data.get("funeral_time") or ai_data.get("Funeral time") or ai_data.get("service_time"),
-            ai_data.get("funeral_address") or ai_data.get("Service location"),
-        ]
-    )
-    has_sources = bool(source_urls)
-
-    # Score-based correction for strong, source-backed review records.
-    if match_status == "Review" and score >= 80 and evidence_count >= 2 and has_sources:
-        match_status = "Found"
 
     # Source URLs
     urls = ai_data.get("source_urls") or ai_data.get("Source URLs") or []

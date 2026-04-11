@@ -1,0 +1,15 @@
+{
+  "status": "interrupted",
+  "reason": "Signal interrupt (2)",
+  "run_mode": "scheduled",
+  "sequence": [
+    "get-task",
+    "get-order-inquiry",
+    "funeral-finder",
+    "updater",
+    "closing-task"
+  ],
+  "updater_mode": "complete",
+  "cycle": 2,
+  "updated_at": "2026-04-02T13:26:16.941643+05:30"
+}

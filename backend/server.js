@@ -3,6 +3,7 @@ import cors from "cors";
 import cron from "node-cron";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { execFile, execSync, spawn } from "node:child_process";
 import { compareByOrderId } from "./lib/compare.js";
 import { getDefaultDatasets, listTree, readFileContent, resolveOutputPath } from "./lib/files.js";
@@ -19,7 +20,7 @@ const schedulesFile = "schedules.json";
 const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
 const runningProcesses = new Map();
 const scheduleTasks = new Map();
-const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "updater", "closing-task"];
+const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "reverify", "updater", "closing-task"];
 
 // Platform-aware Python binary detection
 let PYTHON_BIN = "python3";
@@ -122,6 +123,7 @@ function defaultPipelineSequence() {
     { scriptId: "get-task" },
     { scriptId: "get-order-inquiry" },
     { scriptId: "funeral-finder", option: "batch" },
+    { scriptId: "reverify", option: "both" },
     { scriptId: "updater" },
     { scriptId: "closing-task" },
   ];
@@ -142,6 +144,8 @@ function normalizeSequence(inputSequence) {
       const step = { scriptId };
       if (scriptId === "funeral-finder") {
         step.option = fromInput.option || "batch";
+      } else if (scriptId === "reverify") {
+        step.option = fromInput.option || "both";
       } else if (fromInput.option) {
         step.option = fromInput.option;
       }
@@ -151,6 +155,8 @@ function normalizeSequence(inputSequence) {
 
     if (scriptId === "funeral-finder") {
       normalized.push({ scriptId, option: "batch" });
+    } else if (scriptId === "reverify") {
+      normalized.push({ scriptId, option: "both" });
     } else {
       normalized.push({ scriptId });
     }
@@ -272,6 +278,40 @@ function saveJobs(jobs) {
   writeJson(jobsFile, jobs);
 }
 
+function reconcileOrphanedJobs() {
+  const jobs = loadJobs();
+  const now = new Date().toISOString();
+  let changed = false;
+
+  const updated = jobs.map((job) => {
+    if (job.status !== "running" && job.status !== "queued") {
+      return job;
+    }
+
+    const nextStatus = job.status === "running" ? "failed" : "cancelled";
+    const reason = job.status === "running"
+      ? "Recovered after backend restart: orphaned running job marked as failed"
+      : "Recovered after backend restart: queued job marked as cancelled";
+    const logLine = `[${now}] ${reason}`;
+
+    changed = true;
+    return {
+      ...job,
+      status: nextStatus,
+      finishedAt: job.finishedAt || now,
+      updatedAt: now,
+      progress: 100,
+      exitCode: nextStatus === "failed" ? 1 : job.exitCode,
+      logs: [...(job.logs || []), logLine].slice(-500),
+    };
+  });
+
+  if (changed) {
+    saveJobs(updated);
+    console.warn("Recovered orphaned queued/running jobs after backend restart");
+  }
+}
+
 function upsertJob(jobId, patch) {
   const jobs = loadJobs();
   const index = jobs.findIndex((entry) => entry.id === jobId);
@@ -368,9 +408,11 @@ async function runScriptJob({ jobId, scriptId, option }) {
 
   const effectiveOption = scriptId === "funeral-finder"
     ? (option || "batch")
-    : scriptId === "closing-task"
-      ? (option || "live")
-      : option;
+    : scriptId === "reverify"
+      ? (option || "both")
+      : scriptId === "closing-task"
+        ? (option || "live")
+        : option;
 
   if (effectiveOption) {
     appendLog(jobId, `Run mode: ${effectiveOption}`);
@@ -572,6 +614,7 @@ function resetSchedules() {
 }
 
 resetSchedules();
+reconcileOrphanedJobs();
 seedRunHistoryFromExistingJobs();
 
 app.get("/api/health", (_req, res) => {
@@ -842,6 +885,18 @@ app.get("/api/pipeline/status", (_req, res) => {
     totalSchedules: schedules.length,
   });
 });
+
+const serverDir = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.resolve(serverDir, "../dist");
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+  app.get("*", (req, res, next) => {
+    if (req.path === "/api" || req.path.startsWith("/api/")) {
+      return next();
+    }
+    return res.sendFile(path.join(distDir, "index.html"));
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Backend running at http://localhost:${PORT}`);
