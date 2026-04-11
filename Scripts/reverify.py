@@ -12,6 +12,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -183,6 +184,19 @@ def parse_ai_response(ai_text: str) -> dict:
     if not ai_data:
         ai_data = _extract_structured_fields_from_text(ai_text)
 
+    funeral_home_name = _safe_str(ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)"))
+    funeral_address = _safe_str(ai_data.get("funeral_address") or ai_data.get("Service location"))
+    funeral_phone = _safe_str(ai_data.get("funeral_phone") or ai_data.get("Phone number"))
+    service_type = _safe_str(ai_data.get("service_type") or ai_data.get("Venue type"))
+    service_date = _safe_str(ai_data.get("funeral_date") or ai_data.get("Funeral date") or ai_data.get("service_date"))
+    service_time = _safe_str(ai_data.get("funeral_time") or ai_data.get("Funeral time") or ai_data.get("service_time"))
+    visitation_date = _safe_str(ai_data.get("visitation_date") or ai_data.get("Visitation date"))
+    visitation_time = _safe_str(ai_data.get("visitation_time") or ai_data.get("Visitation time"))
+    delivery_recommendation_date = _safe_str(ai_data.get("delivery_recommendation_date") or ai_data.get("OPTIMAL DELIVERY DATE"))
+    delivery_recommendation_time = _safe_str(ai_data.get("delivery_recommendation_time") or ai_data.get("OPTIMAL DELIVERY TIME"))
+    delivery_recommendation_location = _safe_str(ai_data.get("delivery_recommendation_location") or ai_data.get("DELIVER TO"))
+    special_instructions = _safe_str(ai_data.get("special_instructions") or ai_data.get("SPECIAL INSTRUCTIONS"))
+
     raw_status = _safe_str(
         ai_data.get("status")       or ai_data.get("Status")      or
         ai_data.get("STATUS")       or ai_data.get("match_status") or
@@ -198,11 +212,8 @@ def parse_ai_response(ai_text: str) -> dict:
     else:
         # Unknown status should stay review-first to avoid false NotFound.
         has_data = bool(
-            ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)") or
-            ai_data.get("funeral_date") or ai_data.get("Funeral date") or
-            ai_data.get("service_date") or
-            ai_data.get("funeral_time") or ai_data.get("Funeral time") or ai_data.get("service_time") or
-            ai_data.get("funeral_address") or ai_data.get("Service location") or
+            funeral_home_name or service_date or service_time or funeral_address or
+            funeral_phone or service_type or visitation_date or visitation_time or
             ai_data.get("source_urls") or ai_data.get("Source URLs")
         )
         match_status = "Review" if has_data else "NotFound"
@@ -217,38 +228,76 @@ def parse_ai_response(ai_text: str) -> dict:
         score = float(str(score).replace("%", "").strip())
     except (ValueError, TypeError):
         score = 0
+    score = max(0.0, min(100.0, score))
 
     urls = ai_data.get("source_urls") or ai_data.get("Source URLs") or []
     if isinstance(urls, list):
-        source_urls = " | ".join(str(u) for u in urls if u)
+        raw_url_text = " | ".join(str(u) for u in urls if u)
     else:
-        source_urls = _safe_str(urls)
+        raw_url_text = _safe_str(urls)
 
-    # Final status override based on required score thresholds.
-    if score > 70:
-        match_status = "Found"
-    elif 50 <= score <= 70:
-        has_any_data = bool(
-            ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)") or
-            ai_data.get("funeral_date") or ai_data.get("Funeral date") or ai_data.get("service_date")
-        )
-        match_status = "Review" if has_any_data else "NotFound"
-    else:
-        match_status = "NotFound"
+    url_candidates = re.findall(r"https?://[^\s|]+", raw_url_text, re.IGNORECASE)
+    valid_urls = []
+    for candidate in url_candidates:
+        normalized = candidate.rstrip(".,;:!?)\"]'")
+        parsed = urlparse(normalized)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            valid_urls.append(normalized)
+    source_urls = " | ".join(valid_urls)
+
+    has_sources = bool(valid_urls)
+    if not has_sources and score > 50:
+        score = 50.0
+
+    evidence_values = [
+        funeral_home_name,
+        funeral_address,
+        funeral_phone,
+        service_type,
+        service_date,
+        service_time,
+        visitation_date,
+        visitation_time,
+    ]
+    invalid_markers = {"", "unknown", "na", "none", "null", "notfound"}
+
+    def _normalized_marker(value: str) -> str:
+        raw = _safe_str(value).lower().strip()
+        return re.sub(r"[^a-z0-9]+", "", raw)
+
+    evidence_count = sum(1 for value in evidence_values if _normalized_marker(value) not in invalid_markers)
+
+    # Primary decision comes from AI status; score only gates ambiguous transitions.
+    if match_status == "Found":
+        if not (score >= 70 and evidence_count >= 2 and has_sources):
+            if evidence_count >= 2:
+                match_status = "Review"
+            else:
+                match_status = "NotFound"
+    elif match_status == "Review":
+        if score >= 85 and evidence_count >= 3 and has_sources:
+            match_status = "Found"
+        elif evidence_count >= 1 or has_sources:
+            match_status = "Review"
+        else:
+            match_status = "NotFound"
+    elif match_status == "NotFound":
+        if evidence_count >= 2 and score >= 50:
+            match_status = "Review"
 
     return {
-        "funeral_home_name": _safe_str(ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)")),
-        "funeral_address": _safe_str(ai_data.get("funeral_address") or ai_data.get("Service location")),
-        "funeral_phone": _safe_str(ai_data.get("funeral_phone") or ai_data.get("Phone number")),
-        "service_type": _safe_str(ai_data.get("service_type") or ai_data.get("Venue type")),
-        "service_date": _safe_str(ai_data.get("funeral_date") or ai_data.get("Funeral date")),
-        "service_time": _safe_str(ai_data.get("funeral_time") or ai_data.get("Funeral time")),
-        "visitation_date": _safe_str(ai_data.get("visitation_date") or ai_data.get("Visitation date")),
-        "visitation_time": _safe_str(ai_data.get("visitation_time") or ai_data.get("Visitation time")),
-        "delivery_recommendation_date": _safe_str(ai_data.get("delivery_recommendation_date") or ai_data.get("OPTIMAL DELIVERY DATE")),
-        "delivery_recommendation_time": _safe_str(ai_data.get("delivery_recommendation_time") or ai_data.get("OPTIMAL DELIVERY TIME")),
-        "delivery_recommendation_location": _safe_str(ai_data.get("delivery_recommendation_location") or ai_data.get("DELIVER TO")),
-        "special_instructions": _safe_str(ai_data.get("special_instructions") or ai_data.get("SPECIAL INSTRUCTIONS")),
+        "funeral_home_name": funeral_home_name,
+        "funeral_address": funeral_address,
+        "funeral_phone": funeral_phone,
+        "service_type": service_type,
+        "service_date": service_date,
+        "service_time": service_time,
+        "visitation_date": visitation_date,
+        "visitation_time": visitation_time,
+        "delivery_recommendation_date": delivery_recommendation_date,
+        "delivery_recommendation_time": delivery_recommendation_time,
+        "delivery_recommendation_location": delivery_recommendation_location,
+        "special_instructions": special_instructions,
         "match_status": match_status,
         "ai_accuracy_score": score,
         "source_urls": source_urls,
@@ -407,7 +456,11 @@ def build_prompt(record: dict, strategy: str) -> str:
         "service_type, funeral_date, funeral_time, visitation_date, visitation_time, "
         "delivery_recommendation_date, delivery_recommendation_time, "
         "delivery_recommendation_location, special_instructions, "
-        "status (Found/NotFound/Review), AI Accuracy Score (0-100), source_urls (list), notes.\n\n"
+        "status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for that status), source_urls (list), notes. "
+        "Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; "
+        "50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. "
+        "For very common names without unique identifiers, keep score below 60. "
+        "Mark Found only when source-backed service details are present; if unsure use Review.\n\n"
         f"{context_block}"
     )
 
@@ -444,8 +497,12 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
                     "funeral_address, funeral_phone, service_type, funeral_date, funeral_time, "
                     "visitation_date, visitation_time, delivery_recommendation_date, "
                     "delivery_recommendation_time, delivery_recommendation_location, "
-                    "special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100), "
-                    "source_urls (list), notes."
+                    "special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), "
+                    "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
+                    "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
+                    "No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. "
+                    "Use Found only when source-backed service details are available; "
+                    "if evidence is partial or ambiguous, return Review."
                 ),
             },
             {"role": "user", "content": prompt},
@@ -554,10 +611,10 @@ def main():
     args = parser.parse_args()
 
     if args.attempts < 2:
-        raise SystemExit(f"[{SCRIPT_NAME}] --attempts must be in range 2..2 to ensure enough retry strategies")
-    if args.attempts > 2:
-        print(f"[{SCRIPT_NAME}] --attempts capped at 2 to avoid excessive retries")
-        args.attempts = 2
+        raise SystemExit(f"[{SCRIPT_NAME}] --attempts must be in range 2..3")
+    if args.attempts > 3:
+        print(f"[{SCRIPT_NAME}] --attempts capped at 3 to avoid excessive retries")
+        args.attempts = 3
 
     load_dotenv_file()
     api_key = _required_env("PERPLEXITY_API_KEY")
@@ -573,6 +630,7 @@ def main():
 
     source_order = ["not_found", "review"] if args.source == "both" else [args.source]
     source_rows = {name: load_records(path) for name, path in SOURCE_FILES.items()}
+    stop_due_to_limit = False
 
     for source_name in source_order:
         source_path = SOURCE_FILES[source_name]
@@ -591,7 +649,8 @@ def main():
                 continue
             if args.limit > 0 and processed >= args.limit:
                 print(f"[{SCRIPT_NAME}] Reached --limit={args.limit}; stopping early.")
-                return
+                stop_due_to_limit = True
+                break
 
             print(f"[{SCRIPT_NAME}] Checking {order_id} [{source_name}]")
             result = process_record(api_key, row, max_attempts=args.attempts)
@@ -640,6 +699,9 @@ def main():
             append_logged_id(order_id)
             logged_ids.add(order_id)
             processed += 1
+
+        if stop_due_to_limit:
+            break
 
     print(f"[{SCRIPT_NAME}] Completed. Processed {processed} record(s).")
     print(
