@@ -390,9 +390,12 @@ def parse_ai_response(ai_text: str) -> dict:
         has_data = bool(
             ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)") or
             ai_data.get("funeral_date")      or ai_data.get("Funeral date") or
-            ai_data.get("service_date")
+            ai_data.get("service_date")      or
+            ai_data.get("funeral_time")      or ai_data.get("Funeral time") or ai_data.get("service_time") or
+            ai_data.get("funeral_address")   or ai_data.get("Service location") or
+            ai_data.get("source_urls")       or ai_data.get("Source URLs")
         )
-        match_status = "Review"
+        match_status = "Review" if has_data else "NotFound"
 
     # Score — check all key name variants
     score = (
@@ -406,27 +409,24 @@ def parse_ai_response(ai_text: str) -> dict:
     except (ValueError, TypeError):
         score = 0
 
-    evidence_count = sum(
-        bool(_safe_str(v))
-        for v in [
-            ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)"),
-            ai_data.get("funeral_date") or ai_data.get("Funeral date") or ai_data.get("service_date"),
-            ai_data.get("funeral_time") or ai_data.get("Funeral time") or ai_data.get("service_time"),
-            ai_data.get("funeral_address") or ai_data.get("Service location"),
-        ]
-    )
-    has_sources = bool(source_urls)
-
-    # Score-based correction for strong, source-backed review records.
-    if match_status == "Review" and score >= 80 and evidence_count >= 2 and has_sources:
-        match_status = "Found"
-
     # Source URLs
     urls = ai_data.get("source_urls") or ai_data.get("Source URLs") or []
     if isinstance(urls, list):
         source_urls = " | ".join(str(u) for u in urls if u)
     else:
         source_urls = _safe_str(urls)
+
+    # Final status override based on required score thresholds.
+    if score > 70:
+        match_status = "Found"
+    elif 50 <= score <= 70:
+        has_any_data = bool(
+            ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)") or
+            ai_data.get("funeral_date") or ai_data.get("Funeral date") or ai_data.get("service_date")
+        )
+        match_status = "Review" if has_any_data else "NotFound"
+    else:
+        match_status = "NotFound"
 
     return {
         "funeral_home_name":              _safe_str(ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)")),
