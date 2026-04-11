@@ -493,6 +493,9 @@ def process_record(api_key: str, record: dict, max_attempts: int = 3) -> dict:
             candidate["_strategy"] = strategy_name
             if best is None or score_rank(candidate["match_status"], candidate["ai_accuracy_score"]) > score_rank(best["match_status"], best["ai_accuracy_score"]):
                 best = candidate
+            if candidate.get("match_status") == "Found":
+                # Stop retrying once we have a conclusive Found result.
+                break
         except Exception as exc:
             attempts.append({
                 "strategy": strategy_name,
