@@ -31,7 +31,19 @@ function extractDigits(value) {
 
 function extractOrderId(row) {
   if (!row || typeof row !== "object") return "";
-  const directKeys = ["ord_id", "orderId", "ord_ID", "order_id", "ordid", "order_id_value"];
+  const directKeys = [
+    "ord_id",
+    "orderId",
+    "ord_ID",
+    "order_id",
+    "ordid",
+    "order_id_value",
+    "Order ID",
+    "order id",
+    "OrderId",
+    "orderid",
+    "Order_ID",
+  ];
   for (const key of directKeys) {
     if (key in row) {
       const normalized = normalizeComparableValue(row[key]);
@@ -39,7 +51,10 @@ function extractOrderId(row) {
     }
   }
 
-  const fallbackKey = Object.keys(row).find((key) => key.toLowerCase().replace(/[^a-z0-9]/g, "") === "ordid");
+  const fallbackKey = Object.keys(row).find((key) => {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return normalized === "ordid" || normalized === "orderid";
+  });
   if (fallbackKey) {
     return normalizeComparableValue(row[fallbackKey]);
   }

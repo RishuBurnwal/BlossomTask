@@ -21,6 +21,12 @@ export function CompareSection() {
     enabled: Boolean(leftFile),
   });
 
+  const { data: rightFileData } = useQuery({
+    queryKey: ["compare-right-file", rightFile],
+    queryFn: () => api.fileContent(rightFile, 100),
+    enabled: Boolean(rightFile),
+  });
+
   const normalizeOrderIdInput = (value: string) => {
     const first = value
       .trim()
@@ -49,10 +55,33 @@ export function CompareSection() {
     ? differences
     : differences.filter((row) => row.category === categoryFilter);
 
-  const orderSuggestions = (leftFileData?.parsed ?? [])
-    .map((row) => String(row.ord_id ?? row.orderId ?? row.ord_ID ?? row.order_id ?? "").trim())
+  const extractOrderIdFromRow = (row: Record<string, unknown>) => {
+    const direct = row.ord_id
+      ?? row.orderId
+      ?? row.ord_ID
+      ?? row.order_id
+      ?? row["Order ID"]
+      ?? row["order id"]
+      ?? row.OrderId
+      ?? row.orderid
+      ?? "";
+    const fromDirect = String(direct ?? "").trim();
+    if (fromDirect) {
+      return fromDirect;
+    }
+
+    const fallbackKey = Object.keys(row).find((key) => {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      return normalized === "ordid" || normalized === "orderid";
+    });
+
+    return fallbackKey ? String(row[fallbackKey] ?? "").trim() : "";
+  };
+
+  const orderSuggestions = [...(leftFileData?.parsed ?? []), ...(rightFileData?.parsed ?? [])]
+    .map((row) => extractOrderIdFromRow(row as Record<string, unknown>))
     .filter((value, index, array) => Boolean(value) && array.indexOf(value) === index)
-    .slice(0, 12);
+    .slice(0, 16);
 
   const leftMatch = matches.find((entry) => entry.source === leftFile)?.row ?? null;
   const rightMatch = matches.find((entry) => entry.source === rightFile)?.row ?? null;

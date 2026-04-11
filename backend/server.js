@@ -841,7 +841,7 @@ app.post("/api/compare/order-id", (req, res) => {
     const files = Array.isArray(req.body?.files) ? req.body.files : [];
 
     const sources = files.map((filePath) => {
-      const content = readFileContent(filePath, 2000);
+      const content = readFileContent(filePath, 0);
       const rows = Array.isArray(content.parsed) ? content.parsed : [];
       return { source: filePath, rows };
     });
