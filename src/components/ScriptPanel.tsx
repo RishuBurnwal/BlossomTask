@@ -11,6 +11,7 @@ interface ScriptPanelProps {
   script: ScriptConfig;
   cronMode: "default" | "custom";
   liveJob?: Job;
+  executionLocked?: boolean;
 }
 
 const UPDATER_MODE_LABELS: Record<string, string> = {
@@ -39,7 +40,7 @@ function formatDuration(startedAt?: string | null, finishedAt?: string | null): 
   return `${min}m ${s}s`;
 }
 
-export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
+export function ScriptPanel({ script, cronMode, liveJob, executionLocked = false }: ScriptPanelProps) {
   const [status, setStatus] = useState<"idle" | "running" | "success" | "error">("idle");
   const [selectedOption, setSelectedOption] = useState(script.options?.[0] ?? "");
   const [showViewOptions, setShowViewOptions] = useState(false);
@@ -129,6 +130,10 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
   };
 
   const handleRun = () => {
+    if (executionLocked) {
+      toast.info("Another script/pipeline is running. Wait for completion before starting a new run.");
+      return;
+    }
     runScript();
   };
 
@@ -330,7 +335,7 @@ export function ScriptPanel({ script, cronMode, liveJob }: ScriptPanelProps) {
             <Button
               size="sm"
               onClick={handleRun}
-              disabled={runMutation.isPending}
+              disabled={runMutation.isPending || executionLocked}
               className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               <Play className="h-3 w-3" />

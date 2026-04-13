@@ -274,6 +274,17 @@ function loadJobs() {
   return readJson(jobsFile, []);
 }
 
+function getActiveWorkload() {
+  const jobs = loadJobs();
+  return (
+    jobs.find(
+      (job) =>
+        (job.kind === "script" || job.kind === "pipeline")
+        && (job.status === "running" || job.status === "queued"),
+    ) || null
+  );
+}
+
 function saveJobs(jobs) {
   writeJson(jobsFile, jobs);
 }
@@ -565,8 +576,8 @@ function getRunningPipelineForSchedule(scheduleId) {
 }
 
 function triggerSchedulePipeline(schedule, triggerPatch = {}) {
-  const running = getRunningPipelineForSchedule(schedule.id);
-  if (running) {
+  const activeWorkload = getActiveWorkload();
+  if (activeWorkload) {
     const skippedJob = createJob({
       kind: "pipeline",
       sequence: normalizeSequence(schedule.sequence),
@@ -575,8 +586,8 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}) {
         scheduleId: schedule.id,
         scheduleName: schedule.name,
         skipped: true,
-        skippedReason: "previous-run-active",
-        activeJobId: running.id,
+        skippedReason: "active-workload",
+        activeJobId: activeWorkload.id,
         ...triggerPatch,
       },
     });
@@ -588,8 +599,11 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}) {
       progress: 100,
       exitCode: null,
     });
-    appendLog(skippedJob.id, `Skipped: previous pipeline is still running (${running.id})`);
-    return { jobId: skippedJob.id, started: false, skipped: true, activeJobId: running.id };
+    appendLog(
+      skippedJob.id,
+      `Skipped: active workload in progress (${activeWorkload.kind}:${activeWorkload.id})`,
+    );
+    return { jobId: skippedJob.id, started: false, skipped: true, activeJobId: activeWorkload.id };
   }
 
   const sequence = normalizeSequence(schedule.sequence);
@@ -661,12 +675,24 @@ app.post("/api/jobs/run-script", async (req, res) => {
   if (!scriptId) {
     return res.status(400).json({ error: "scriptId is required" });
   }
+  const activeWorkload = getActiveWorkload();
+  if (activeWorkload) {
+    return res.status(409).json({
+      error: `Another workload is already running (${activeWorkload.kind}:${activeWorkload.id}). Wait until it finishes.`,
+    });
+  }
   const job = createJob({ kind: "script", scriptId, option: option || null });
   runScriptJob({ jobId: job.id, scriptId, option });
   return res.json({ jobId: job.id });
 });
 
 app.post("/api/jobs/run-pipeline", async (req, res) => {
+  const activeWorkload = getActiveWorkload();
+  if (activeWorkload) {
+    return res.status(409).json({
+      error: `Another workload is already running (${activeWorkload.kind}:${activeWorkload.id}). Wait until it finishes.`,
+    });
+  }
   const sequence = normalizeSequence(req.body?.sequence);
 
   const job = createJob({
@@ -869,10 +895,17 @@ app.get("/api/pipeline/status", (_req, res) => {
   const runningScripts = jobs.filter(
     (job) => job.kind === "script" && job.status === "running",
   );
+  const queuedPipelines = jobs.filter(
+    (job) => job.kind === "pipeline" && job.status === "queued",
+  );
+  const queuedScripts = jobs.filter(
+    (job) => job.kind === "script" && job.status === "queued",
+  );
+  const activeWorkloads = runningPipelines.length + runningScripts.length + queuedPipelines.length + queuedScripts.length;
   const anyEnabled = schedules.some((s) => s.enabled);
 
   let state = "idle";
-  if (runningPipelines.length > 0 || runningScripts.length > 0) {
+  if (activeWorkloads > 0) {
     state = "running";
   } else if (!anyEnabled) {
     state = "disabled";
@@ -882,6 +915,9 @@ app.get("/api/pipeline/status", (_req, res) => {
     state,
     runningPipelines: runningPipelines.length,
     runningScripts: runningScripts.length,
+    queuedPipelines: queuedPipelines.length,
+    queuedScripts: queuedScripts.length,
+    activeWorkloads,
     enabledSchedules: schedules.filter((s) => s.enabled).length,
     totalSchedules: schedules.length,
   });

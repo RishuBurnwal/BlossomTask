@@ -82,7 +82,7 @@ export const api = {
     }),
 
   triggerSchedule: (scheduleId: string) =>
-    request<{ jobId: string }>(`/schedules/${scheduleId}/trigger`, {
+    request<{ jobId: string; started: boolean; skipped: boolean; activeJobId?: string | null }>(`/schedules/${scheduleId}/trigger`, {
       method: "POST",
     }),
 
