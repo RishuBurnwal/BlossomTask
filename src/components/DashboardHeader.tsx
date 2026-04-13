@@ -178,6 +178,8 @@ export function DashboardHeader() {
     onError: (error) => toast.error(error.message || "Failed to run preflight"),
   });
 
+  const toggledScheduleId = toggleSchedule.variables?.id;
+
   return (
     <>
       {/* Compact sticky bar only — avoids covering Script Panels when scrolling */}
@@ -366,11 +368,12 @@ export function DashboardHeader() {
               </button>
               <button
                 onClick={() => toggleSchedule.mutate({ id: schedule.id, enabled: !schedule.enabled })}
-                className="rounded border px-1.5 py-0.5 hover:bg-accent"
+                disabled={toggleSchedule.isPending && toggledScheduleId === schedule.id}
+                className="rounded border px-1.5 py-0.5 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <div className="flex items-center gap-1">
                   <Power className="h-3 w-3" />
-                  <span>{schedule.enabled ? "Disable" : "Enable"}</span>
+                  <span>{schedule.enabled ? "Stop Cron" : "Start Cron Now"}</span>
                 </div>
               </button>
               <button
