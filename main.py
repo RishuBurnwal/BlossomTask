@@ -6,10 +6,11 @@ Interactive menu-driven interface for managing the BlossomTask
 funeral order automation pipeline.
 
 Usage:
-  python main.py                  # Interactive menu (default)
-  python main.py --ui             # Launch full-stack UI directly
-  python main.py --stage search   # Run a specific pipeline stage
-  python main.py --help           # Show all CLI options
+    python main.py                   # Interactive menu (default)
+    python main.py --ui              # Launch full-stack UI directly
+    python main.py --ui --background # Launch UI servers detached
+    python main.py --stage search    # Run a specific pipeline stage
+    python main.py --help            # Show all CLI options
 """
 
 import argparse
@@ -43,6 +44,7 @@ TAGLINE = "Funeral Order Automation Pipeline"
 # ── Default Ports ────────────────────────────────────────────────────────────
 DEFAULT_FRONTEND_PORT = 8080
 DEFAULT_BACKEND_PORT = 8787
+LOGS_DIR = ROOT / "outputs" / "logs"
 
 # ── Colors (ANSI) ───────────────────────────────────────────────────────────
 class C:
@@ -268,47 +270,154 @@ def run_pipeline(force=False, dry_run=False, limit=0, stage=None):
 
 # ── Server Launch Functions ──────────────────────────────────────────────────
 
-def launch_backend(port=DEFAULT_BACKEND_PORT):
-    """Launch the Node.js backend server."""
-    node_bin = shutil.which("node") or "node"
-    env = os.environ.copy()
-    env["BACKEND_PORT"] = str(port)
 
-    print_info(f"Starting backend server on port {port}...")
-    backend = subprocess.Popen(
-        [node_bin, "backend/server.js"],
-        cwd=str(ROOT),
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        env=env,
-    )
-    return backend
+def _launch_process(cmd, cwd, env, log_path=None, shell=False, background=False):
+    """Launch a process in foreground or detached background mode."""
+    if not background:
+        return subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            shell=shell,
+            env=env,
+        )
+
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    stdout_handle = None
+    stderr_handle = None
+    try:
+        if log_path is not None:
+            stdout_handle = open(log_path, "a", encoding="utf-8")
+            stderr_handle = subprocess.STDOUT
+
+        popen_kwargs = {
+            "cwd": cwd,
+            "env": env,
+            "shell": shell,
+            "stdout": stdout_handle,
+            "stderr": stderr_handle,
+        }
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            )
+        else:
+            popen_kwargs["start_new_session"] = True
+
+        proc = subprocess.Popen(cmd, **popen_kwargs)
+        return proc
+    finally:
+        if stdout_handle is not None:
+            stdout_handle.close()
 
 
-def launch_frontend(port=DEFAULT_FRONTEND_PORT):
+def _stop_process(proc):
+    """Best-effort stop for child processes across platforms."""
+    if proc is None or proc.poll() is not None:
+        return
+
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+        return
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=False)
+    else:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def launch_frontend(port=DEFAULT_FRONTEND_PORT, background=False):
     """Launch the Vite frontend dev server."""
     npm_bin = shutil.which("npm") or "npm"
     use_shell = sys.platform == "win32"
     env = os.environ.copy()
 
     print_info(f"Starting frontend dev server on port {port}...")
-    frontend = subprocess.Popen(
+    frontend = _launch_process(
         [npm_bin, "run", "dev", "--", "--port", str(port)],
         cwd=str(ROOT),
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        shell=use_shell,
         env=env,
+        shell=use_shell,
+        background=background,
+        log_path=LOGS_DIR / "frontend.log",
     )
     return frontend
 
 
-def launch_ui(frontend_port=DEFAULT_FRONTEND_PORT, backend_port=DEFAULT_BACKEND_PORT):
+def launch_backend(port=DEFAULT_BACKEND_PORT, background=False):
+    """Launch the Node.js backend server."""
+    node_bin = shutil.which("node") or "node"
+    env = os.environ.copy()
+    env["BACKEND_PORT"] = str(port)
+
+    print_info(f"Starting backend server on port {port}...")
+    backend = _launch_process(
+        [node_bin, "backend/server.js"],
+        cwd=str(ROOT),
+        env=env,
+        background=background,
+        log_path=LOGS_DIR / "backend.log",
+    )
+    return backend
+
+
+def launch_ui(frontend_port=DEFAULT_FRONTEND_PORT, backend_port=DEFAULT_BACKEND_PORT, background=False):
     """Launch both backend and frontend servers."""
     is_docker = os.path.exists("/.dockerenv")
 
-    backend = launch_backend(backend_port)
-    frontend = launch_frontend(frontend_port)
+    if background:
+        occupied_ports = []
+        if is_port_in_use(backend_port):
+            occupied_ports.append(f"backend:{backend_port}")
+        if is_port_in_use(frontend_port):
+            occupied_ports.append(f"frontend:{frontend_port}")
+        if occupied_ports:
+            print_error(
+                "Cannot start in background because ports are already in use: "
+                + ", ".join(occupied_ports)
+            )
+            return False
+
+    backend = launch_backend(backend_port, background=background)
+    try:
+        frontend = launch_frontend(frontend_port, background=background)
+    except Exception as exc:
+        _stop_process(backend)
+        print_error(f"Failed to start frontend: {exc}")
+        return False
+
+    if background:
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if backend.poll() is not None:
+                _stop_process(frontend)
+                print_error("Backend process exited during startup")
+                return False
+            if frontend.poll() is not None:
+                _stop_process(backend)
+                print_error("Frontend process exited during startup")
+                return False
+            if is_port_in_use(backend_port) and is_port_in_use(frontend_port):
+                print_success(
+                    f"Servers started in background (backend PID: {backend.pid}, frontend PID: {frontend.pid})"
+                )
+                print_info(f"Dashboard UI: http://localhost:{frontend_port}")
+                print_info(f"Backend logs: {LOGS_DIR / 'backend.log'}")
+                print_info(f"Frontend logs: {LOGS_DIR / 'frontend.log'}")
+                return True
+            time.sleep(0.5)
+
+        _stop_process(backend)
+        _stop_process(frontend)
+        print_error("Background startup timed out before servers became ready")
+        return False
 
     if not is_docker:
         time.sleep(5)
@@ -333,8 +442,10 @@ def launch_ui(frontend_port=DEFAULT_FRONTEND_PORT, backend_port=DEFAULT_BACKEND_
     except KeyboardInterrupt:
         print_info("Stopping servers...")
     finally:
-        backend.terminate()
-        frontend.terminate()
+        _stop_process(backend)
+        _stop_process(frontend)
+
+    return True
 
 
 # ── Docker Functions ─────────────────────────────────────────────────────────
@@ -751,6 +862,7 @@ def main():
 Examples:
   python main.py                   Interactive menu (default)
   python main.py --ui              Launch dashboard UI directly
+    python main.py --ui --background Launch dashboard UI in background
   python main.py --docker          Run with Docker Compose
   python main.py --install         Install all dependencies
   python main.py --health          System health check
@@ -763,6 +875,8 @@ Examples:
     # Action flags
     parser.add_argument("--ui", action="store_true",
                         help="Launch backend + frontend dashboard UI")
+    parser.add_argument("--background", action="store_true",
+                        help="Run UI servers in background (use with --ui)")
     parser.add_argument("--docker", action="store_true",
                         help="Build and run with Docker Compose")
     parser.add_argument("--install", action="store_true",
@@ -800,9 +914,18 @@ Examples:
         interactive_menu()
         return
 
+    if args.background and not args.ui:
+        parser.error("--background can only be used with --ui")
+
     # Direct action flags
     if args.ui:
-        launch_ui(frontend_port=args.frontend_port, backend_port=args.backend_port)
+        started = launch_ui(
+            frontend_port=args.frontend_port,
+            backend_port=args.backend_port,
+            background=args.background,
+        )
+        if started is False:
+            sys.exit(1)
         return
 
     if args.docker:

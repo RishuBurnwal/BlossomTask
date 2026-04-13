@@ -25,7 +25,9 @@ export function DashboardHeader() {
     refetchInterval: 3000,
   });
 
-  const pipelineState = (pipelineStatusData as PipelineStatus | undefined)?.state ?? "idle";
+  const pipelineStatus = pipelineStatusData as PipelineStatus | undefined;
+  const pipelineState = pipelineStatus?.state ?? "idle";
+  const executionLocked = (pipelineStatus?.activeWorkloads ?? 0) > 0;
   const { data: scheduleData } = useQuery({
     queryKey: ["schedules"],
     queryFn: api.schedules,
@@ -138,7 +140,15 @@ export function DashboardHeader() {
 
   const triggerSchedule = useMutation({
     mutationFn: (id: string) => api.triggerSchedule(id),
-    onSuccess: ({ jobId }) => {
+    onSuccess: ({ jobId, started, skipped, activeJobId }) => {
+      if (!started || skipped) {
+        toast.info(
+          activeJobId
+            ? `Schedule skipped because another workload is active (${activeJobId})`
+            : `Schedule skipped because another workload is active (${jobId})`,
+        );
+        return;
+      }
       toast.success(`Schedule triggered (${jobId})`);
     },
     onError: (error) => toast.error(error.message || "Failed to trigger schedule"),
@@ -249,12 +259,12 @@ export function DashboardHeader() {
 
           <Button
             onClick={() => runPipeline.mutate()}
-            disabled={runPipeline.isPending}
+            disabled={runPipeline.isPending || executionLocked}
             className="gap-2"
             size="sm"
           >
             <Play className="h-3.5 w-3.5" />
-            {runPipeline.isPending ? "Running..." : "Run Full Pipeline"}
+            {runPipeline.isPending ? "Starting..." : executionLocked ? "Pipeline Busy" : "Run Full Pipeline"}
           </Button>
 
           {/* Pipeline Updater Mode */}

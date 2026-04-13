@@ -21,8 +21,15 @@ const Index = () => {
     refetchInterval: 2000,
   });
 
+  const { data: pipelineStatusData } = useQuery({
+    queryKey: ["pipeline-status"],
+    queryFn: api.pipelineStatus,
+    refetchInterval: 2000,
+  });
+
   const scripts = scriptsData?.scripts ?? [];
   const jobs = jobsData?.jobs ?? [];
+  const executionLocked = (pipelineStatusData?.activeWorkloads ?? 0) > 0;
 
   const latestScriptJobById = jobs.reduce<Record<string, Job>>((acc, job) => {
     if (job.kind !== "script" || !job.scriptId) {
@@ -49,6 +56,7 @@ const Index = () => {
                 script={s}
                 cronMode={cronMode}
                 liveJob={latestScriptJobById[s.id]}
+                executionLocked={executionLocked}
               />
             ))}
           </div>

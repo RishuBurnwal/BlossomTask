@@ -100,6 +100,9 @@ export interface PipelineStatus {
   state: "idle" | "running" | "disabled";
   runningPipelines: number;
   runningScripts: number;
+  queuedPipelines: number;
+  queuedScripts: number;
+  activeWorkloads: number;
   enabledSchedules: number;
   totalSchedules: number;
 }
