@@ -47,6 +47,18 @@ FIELDNAMES = [
     "last_processed_at",
 ]
 
+ROW_IDENTITY_FIELDS = [
+    "ship_name",
+    "ship_city",
+    "ship_state",
+    "ship_zip",
+    "ship_care_of",
+    "ship_address",
+    "ship_address_unit",
+    "ship_country",
+    "ord_instruct",
+]
+
 
 def load_dotenv_file(path=None):
     if path is None:
@@ -330,12 +342,14 @@ def load_records(csv_path: Path) -> list:
         reader = csv.DictReader(f)
         rows = []
         seen = set()
-        for row in reader:
+        for row_index, row in enumerate(reader, start=1):
             order_id = _safe_str(row.get("order_id"))
             if not order_id or order_id in seen:
                 continue
             seen.add(order_id)
-            rows.append({field: _safe_str(row.get(field)) for field in FIELDNAMES})
+            normalized_row = {field: _safe_str(row.get(field)) for field in FIELDNAMES}
+            normalized_row["_source_row_number"] = row_index
+            rows.append(normalized_row)
         return rows
 
 
@@ -348,19 +362,64 @@ def write_records(csv_path: Path, rows: list):
             writer.writerow({field: _safe_str(row.get(field)) for field in FIELDNAMES})
 
 
-def upsert_record(csv_path: Path, record: dict):
+def _coerce_row_number(value) -> int | None:
+    try:
+        row_number = int(str(value).strip())
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return row_number if row_number > 0 else None
+
+
+def _rows_share_identity(existing_row: dict, record: dict) -> bool:
+    matched_fields = 0
+    compared_fields = 0
+    for field in ROW_IDENTITY_FIELDS:
+        existing_value = _safe_str(existing_row.get(field))
+        incoming_value = _safe_str(record.get(field))
+        if not existing_value or not incoming_value:
+            continue
+        compared_fields += 1
+        if existing_value != incoming_value:
+            return False
+        matched_fields += 1
+    return matched_fields >= 2
+
+
+def upsert_record(csv_path: Path, record: dict, row_number: int | None = None):
     rows = load_records(csv_path)
     order_id = _safe_str(record.get("order_id"))
-    replaced = False
-    next_rows = []
-    for row in rows:
-        if _safe_str(row.get("order_id")) == order_id:
-            next_rows.append({**row, **record})
-            replaced = True
+    target_row_number = _coerce_row_number(row_number if row_number is not None else record.get("_source_row_number"))
+    row_index_by_number = None
+    row_index_by_order_id = None
+
+    for index, row in enumerate(rows):
+        current_row_number = _coerce_row_number(row.get("_source_row_number"))
+        current_order_id = _safe_str(row.get("order_id"))
+        if target_row_number is not None and current_row_number == target_row_number and row_index_by_number is None:
+            row_index_by_number = index
+        if current_order_id == order_id and row_index_by_order_id is None:
+            row_index_by_order_id = index
+
+    replacement_index = None
+    if row_index_by_number is not None:
+        candidate_row = rows[row_index_by_number]
+        if (
+            row_index_by_order_id is None
+            and _rows_share_identity(candidate_row, record)
+        ) or row_index_by_order_id == row_index_by_number:
+            replacement_index = row_index_by_number
         else:
-            next_rows.append(row)
-    if not replaced:
-        next_rows.append(record)
+            replacement_index = row_index_by_order_id
+    elif row_index_by_order_id is not None:
+        replacement_index = row_index_by_order_id
+
+    cleaned_record = {field: _safe_str(record.get(field)) for field in FIELDNAMES}
+    if replacement_index is not None:
+        next_rows = list(rows)
+        next_rows[replacement_index] = {**next_rows[replacement_index], **cleaned_record}
+    else:
+        next_rows = [*rows, cleaned_record]
+
     write_records(csv_path, next_rows)
 
 
@@ -370,8 +429,8 @@ def remove_record(csv_path: Path, order_id: str):
     write_records(csv_path, filtered)
 
 
-def append_main_record(record: dict):
-    upsert_record(MAIN_CSV_PATH, record)
+def append_main_record(record: dict, row_number: int | None = None):
+    upsert_record(MAIN_CSV_PATH, record, row_number=row_number)
 
 
 def append_note(existing: str, note: str) -> str:
@@ -656,9 +715,10 @@ def main():
             result = process_record(api_key, row, max_attempts=args.attempts)
             status = result.get("match_status", "NotFound")
             updated = update_record_for_result(row, result, source_name)
+            source_row_number = _coerce_row_number(row.get("_source_row_number"))
 
             # Keep the main file as the canonical superset of all processed records.
-            append_main_record(updated)
+            append_main_record(updated, row_number=source_row_number)
             updated_main_count += 1
 
             payload_entry = {

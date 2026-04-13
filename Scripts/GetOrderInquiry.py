@@ -121,7 +121,7 @@ def load_order_ids_from_gettask() -> list:
     if not GETTASK_CSV.exists():
         print(f"[{SCRIPT_NAME}] ERROR: GetTask output not found: {GETTASK_CSV}")
         print(f"[{SCRIPT_NAME}]   → Run GetTask.py first.")
-        return []
+        return None
     rows = []
     with open(GETTASK_CSV, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -230,7 +230,10 @@ def main():
 
     # -- 1. Load order IDs from GetTask output --------------------------------
     order_rows = load_order_ids_from_gettask()
+    if order_rows is None:
+        raise SystemExit(f"[{SCRIPT_NAME}] Cannot continue without GetTask output.")
     if not order_rows:
+        print(f"[{SCRIPT_NAME}] No order IDs found in {GETTASK_CSV.name}; nothing to process.")
         return
 
     print(f"[{SCRIPT_NAME}] API base : {api_base}")

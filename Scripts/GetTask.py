@@ -109,6 +109,17 @@ def append_logged_id(order_id: str):
         f.write(order_id + "\n")
 
 
+def _extract_order_id(item: dict) -> str:
+    return str(
+        item.get("ord_ID") or
+        item.get("ordid") or
+        item.get("ord_id") or
+        item.get("orderId") or
+        item.get("order_id") or
+        ""
+    ).strip()
+
+
 # ── Output writers ───────────────────────────────────────────────────────────
 
 FIELDNAMES = [
@@ -240,7 +251,7 @@ def rebuild_excel_from_csv():
 
 # ── Core fetch ───────────────────────────────────────────────────────────────
 
-def fetch_all_tasks(request_url: str, params: dict, headers: dict):
+def fetch_all_tasks(request_url: str, params: dict, headers: dict, max_items: int = 0):
     """
     Fetch tasks from the server. Handles both paginated and non-paginated responses.
     Returns (all_items, actual_url_used, final_params_used).
@@ -251,11 +262,17 @@ def fetch_all_tasks(request_url: str, params: dict, headers: dict):
     """
     all_items      = []
     page           = 1
+    max_pages      = 500
     page_size_hint = 100    # Tell server we want up to 100 per page if it supports it
     actual_url     = request_url   # will be updated after first real request
     final_params   = dict(params)
+    previous_page_ids = None
 
     while True:
+        if page > max_pages:
+            print(f"[GetTask] Safety stop: reached max pages ({max_pages}).")
+            break
+
         paged_params = dict(params)
         paged_params["page"]     = page
         paged_params["pageSize"] = page_size_hint
@@ -299,8 +316,20 @@ def fetch_all_tasks(request_url: str, params: dict, headers: dict):
         if not items:
             break
 
+        current_page_ids = tuple(_extract_order_id(item) for item in items if isinstance(item, dict))
+        if previous_page_ids is not None and current_page_ids and current_page_ids == previous_page_ids:
+            print("[GetTask] Safety stop: detected repeated page payload; pagination likely ignored by API.")
+            break
+
+        previous_page_ids = current_page_ids if current_page_ids else previous_page_ids
+
         all_items.extend(items)
         print(f"[GetTask] Page {page}: received {len(items)} items  (total so far: {len(all_items)})")
+
+        if max_items > 0 and len(all_items) >= max_items:
+            all_items = all_items[:max_items]
+            print(f"[GetTask] Reached fetch cap ({max_items}) — stopping pagination.")
+            break
 
         if len(items) < page_size_hint:
             break
@@ -319,7 +348,9 @@ def main():
     parser.add_argument("--force",  action="store_true",
                         help="Ignore logs.txt and reprocess all order IDs")
     parser.add_argument("--limit",  type=int, default=0,
-                        help="Cap how many NEW records to process (0 = unlimited)")
+                        help="Cap how many NEW records to save (0 = unlimited)")
+    parser.add_argument("--fetch-limit", type=int, default=100,
+                        help="Cap how many records to fetch from server (default: 100, 0 = unlimited)")
     args = parser.parse_args()
 
     load_dotenv_file()
@@ -337,7 +368,8 @@ def main():
     print(f"[GetTask] Subject filter: {task_subject}")
 
     # ── 1. Fetch ALL items from server ───────────────────────────────────────
-    raw_payload, actual_url, final_params = fetch_all_tasks(request_url, params, headers)
+    fetch_cap = args.fetch_limit if args.fetch_limit > 0 else 0
+    raw_payload, actual_url, final_params = fetch_all_tasks(request_url, params, headers, max_items=fetch_cap)
 
     print(f"")
     print(f"┌─────────────────────────────────────────────────────────┐")
@@ -379,14 +411,7 @@ def main():
             continue
 
         # Resolve order_id from known field names
-        order_id = str(
-            item.get("ord_ID") or
-            item.get("ordid")  or
-            item.get("ord_id") or
-            item.get("orderId") or
-            item.get("order_id") or
-            ""
-        ).strip()
+        order_id = _extract_order_id(item)
 
         task_id = str(item.get("trID") or item.get("task_id") or "").strip()
 
