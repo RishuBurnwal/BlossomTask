@@ -95,6 +95,30 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _normalize_service_datetime(
+    service_date: str,
+    service_time: str,
+    visitation_date: str,
+    visitation_time: str,
+    delivery_date: str,
+    delivery_time: str,
+) -> tuple[str, str, str]:
+    """Ensure service datetime is always populated using visitation/delivery fallback."""
+    if service_date and service_time:
+        return service_date, service_time, "service"
+    if visitation_date and visitation_time:
+        return visitation_date, visitation_time, "visitation"
+    if delivery_date and delivery_time:
+        return delivery_date, delivery_time, "delivery"
+    if service_date:
+        return service_date, service_time, "service_date_only"
+    if visitation_date:
+        return visitation_date, visitation_time, "visitation_date_only"
+    if delivery_date:
+        return delivery_date, delivery_time, "delivery_date_only"
+    return service_date, service_time, "none"
+
+
 def _extract_json_from_text(text: str) -> dict:
     """Robust JSON extractor — 3 strategies, returns largest valid object."""
     if not text:
@@ -209,6 +233,15 @@ def parse_ai_response(ai_text: str) -> dict:
     delivery_recommendation_location = _safe_str(ai_data.get("delivery_recommendation_location") or ai_data.get("DELIVER TO"))
     special_instructions = _safe_str(ai_data.get("special_instructions") or ai_data.get("SPECIAL INSTRUCTIONS"))
 
+    service_date, service_time, fallback_source = _normalize_service_datetime(
+        service_date,
+        service_time,
+        visitation_date,
+        visitation_time,
+        delivery_recommendation_date,
+        delivery_recommendation_time,
+    )
+
     raw_status = _safe_str(
         ai_data.get("status")       or ai_data.get("Status")      or
         ai_data.get("STATUS")       or ai_data.get("match_status") or
@@ -297,6 +330,10 @@ def parse_ai_response(ai_text: str) -> dict:
         if evidence_count >= 2 and score >= 50:
             match_status = "Review"
 
+    notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
+    if fallback_source in {"visitation", "delivery"}:
+        notes_value = f"{notes_value} | service datetime fallback={fallback_source}".strip(" |")
+
     return {
         "funeral_home_name": funeral_home_name,
         "funeral_address": funeral_address,
@@ -313,7 +350,7 @@ def parse_ai_response(ai_text: str) -> dict:
         "match_status": match_status,
         "ai_accuracy_score": score,
         "source_urls": source_urls,
-        "notes": _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification")),
+        "notes": notes_value,
     }
 
 
@@ -519,6 +556,8 @@ def build_prompt(record: dict, strategy: str) -> str:
         "Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; "
         "50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. "
         "For very common names without unique identifiers, keep score below 60. "
+        "If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time, "
+        "and return those values in funeral_date and funeral_time. "
         "Mark Found only when source-backed service details are present; if unsure use Review.\n\n"
         f"{context_block}"
     )
@@ -560,6 +599,8 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
                     "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
                     "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
                     "No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. "
+                    "If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time, "
+                    "and return those values in funeral_date and funeral_time. "
                     "Use Found only when source-backed service details are available; "
                     "if evidence is partial or ambiguous, return Review."
                 ),
@@ -689,6 +730,20 @@ def main():
 
     source_order = ["not_found", "review"] if args.source == "both" else [args.source]
     source_rows = {name: load_records(path) for name, path in SOURCE_FILES.items()}
+
+    if not args.force:
+        for source_name in source_order:
+            rows = source_rows.get(source_name, [])
+            original = len(rows)
+            filtered_rows = [
+                row for row in rows if _safe_str(row.get("order_id")) not in logged_ids
+            ]
+            source_rows[source_name] = filtered_rows
+            skipped_here = original - len(filtered_rows)
+            if skipped_here:
+                skipped_logged += skipped_here
+                print(f"[{SCRIPT_NAME}] Pre-filtered {skipped_here} already-processed IDs from {source_name}")
+
     stop_due_to_limit = False
 
     for source_name in source_order:

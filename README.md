@@ -216,7 +216,7 @@ This opens the professional interactive menu with options:
 | `[7]` System Health Check | Verify all prerequisites and configuration |
 | `[8]` View Output Files | Browse pipeline output directory |
 | `[9]` Terminal Pipeline Runner | Interactive terminal orchestration with checkpoint/resume + schedule mode |
-| `[10]` Background Dashboard Mode | Start frontend/backend in detached mode and return terminal control |
+| `[10]` One-Click Server Setup | Install dependencies, build frontend, sync `dist`, restart backend, verify health |
 | `[11]` Program Killer | Kill tracked dashboard processes and clear selected ports |
 
 ### CLI Flags
@@ -287,19 +287,19 @@ npm run dev:full
 
 ## Pipeline Workflow
 
-The pipeline consists of 5 sequential stages that process funeral orders from task creation to completion:
+The pipeline consists of 6 sequential stages that process funeral orders from task creation to completion:
 
 ```
-Stage 1          Stage 2           Stage 3           Stage 4         Stage 5
-┌──────────┐    ┌──────────────┐  ┌───────────────┐  ┌──────────┐  ┌────────────┐
-│ GetTask  │ ─► │GetOrderInq.  │─►│Funeral_Finder │─►│ Updater  │─►│ClosingTask │
-│          │    │              │  │               │  │          │  │            │
-│ Fetch    │    │ Enrich with  │  │ AI-powered    │  │ Upload   │  │ Close CRM  │
-│ open     │    │ shipping &   │  │ obituary      │  │ results  │  │ tasks with │
-│ CRM tasks│    │ customer     │  │ lookup &      │  │ to CRM   │  │ detailed   │
-│          │    │ details      │  │ classification│  │          │  │ notes      │
-└──────────┘    └──────────────┘  └───────────────┘  └──────────┘  └────────────┘
-  📥 Fetch        📋 Enrich         🔍 Search          📤 Upload     ✅ Close
+Stage 1          Stage 2           Stage 3             Stage 4         Stage 5         Stage 6
+┌──────────┐    ┌──────────────┐  ┌───────────────┐   ┌──────────┐    ┌──────────┐    ┌────────────┐
+│ GetTask  │ ─► │GetOrderInq.  │─►│Funeral_Finder │─► │ Reverify │ ─► │ Updater  │ ─► │ClosingTask │
+│          │    │              │  │               │   │          │    │          │    │            │
+│ Fetch    │    │ Enrich with  │  │ AI-powered    │   │ Re-check │    │ Upload   │    │ Close CRM  │
+│ open     │    │ shipping &   │  │ obituary      │   │ NotFound │    │ results  │    │ tasks with │
+│ CRM tasks│    │ customer     │  │ lookup &      │   │ + Review │    │ to CRM   │    │ detailed   │
+│          │    │ details      │  │ classification│   │ records  │    │          │    │ notes      │
+└──────────┘    └──────────────┘  └───────────────┘   └──────────┘    └──────────┘    └────────────┘
+  📥 Fetch        📋 Enrich         🔍 Search            🔁 Recheck      📤 Upload       ✅ Close
 ```
 
 ### Stage Details
@@ -322,16 +322,50 @@ Stage 1          Stage 2           Stage 3           Stage 4         Stage 5
 - **Modes**: `batch` (automatic) or `interactive` (manual confirmation)
 - **Classification**: Routes results to `Found`, `NotFound`, or `Review`
 
-#### 4. Updater (`Updater.py`)
+#### 4. Reverify (`reverify.py`)
+- **Input**: `Funeral_Finder/Funeral_data_not_found.csv` and `Funeral_Finder/Funeral_data_review.csv`
+- **Output**: Updated source files and status-normalized rows
+- **Purpose**: Rechecks uncertain records before CRM update
+- **Modes**: `--source both|not_found|review`, retries via `--attempts`
+
+#### 5. Updater (`Updater.py`)
 - **Input**: `Funeral_Finder/Funeral_data.csv`
 - **Output**: `Scripts/outputs/Updater/data.csv`
 - **Purpose**: Builds structured CRM payloads and uploads via `/api/createcomm`
 - **File Modes**: `complete`, `found_only`, `not_found`, `review`
+- **trEndDate fallback**: `service_date/service_time` → `visitation_date/visitation_time` → `delivery_recommendation_date/delivery_recommendation_time`
+- **trText**: Includes notes and source URLs when available
 
-#### 5. ClosingTask (`ClosingTask.py`)
+#### 6. ClosingTask (`ClosingTask.py`)
 - **Input**: `Updater/data.csv` (or pipeline payloads)
 - **Output**: `Scripts/outputs/ClosingTask/data.csv`
 - **Purpose**: Closes processed CRM tasks with detailed notes
+
+### Script Flags and Reprocess Controls
+
+All pipeline scripts are idempotent and use stage-specific `logs.txt` files to skip already-processed order IDs by default.
+
+| Script | Reprocess Flag | Limit Flag | Other Key Flags |
+|--------|----------------|------------|-----------------|
+| `GetTask.py` | `--force` | `--limit` | `--fetch-limit` |
+| `GetOrderInquiry.py` | `--force` | `--limit` | — |
+| `Funeral_Finder.py` | `--force` | `--limit` | `--mode batch|interactive` |
+| `reverify.py` | `--force` | `--limit` | `--source both|not_found|review`, `--attempts` |
+| `Updater.py` | `--force` | `--limit` | `--mode complete|found_only|not_found|review`, `--dry-run`, `--no-delay` |
+| `ClosingTask.py` | `--force` | `--limit` | `--dry-run`, `--no-delay` |
+
+Examples:
+
+```bash
+# Reverify only review records, max 50
+python Scripts/reverify.py --source review --limit 50
+
+# Reprocess all Updater records regardless of logs.txt
+python Scripts/Updater.py --mode complete --force
+
+# Close only first 25 eligible tasks in dry-run
+python Scripts/ClosingTask.py --limit 25 --dry-run
+```
 
 ---
 
@@ -343,9 +377,10 @@ Stage 1          Stage 2           Stage 3           Stage 4         Stage 5
 |------|------|-------------|
 | `GetTask.py` | ~16 KB | CRM task fetcher with pagination, deduplication, and immediate output |
 | `GetOrderInquiry.py` | ~14 KB | Order detail enrichment from CRM API |
-| `Funeral_Finder.py` | ~25 KB | AI-powered funeral data lookup with batch/interactive modes |
+| `Funeral_Finder.py` | ~34 KB | AI-powered funeral data lookup with batch/interactive modes |
+| `reverify.py` | ~33 KB | Secondary AI verification for `NotFound` and `Review` records |
 | `Updater.py` | ~22 KB | Payload builder and CRM uploader with 4 file mode options |
-| `ClosingTask.py` | ~17 KB | Task closure with detailed CRM notes |
+| `ClosingTask.py` | ~19 KB | Task closure with detailed CRM notes |
 | `.env` | ~2.5 KB | Script-specific environment configuration |
 
 ### Backend (`backend/`)
@@ -353,7 +388,7 @@ Stage 1          Stage 2           Stage 3           Stage 4         Stage 5
 | File | Description |
 |------|-------------|
 | `server.js` | Express.js API server — job management, pipeline orchestration, cron scheduling, file browsing |
-| `lib/scripts.js` | Script catalog — defines all 5 pipeline scripts with IDs, options, and file paths |
+| `lib/scripts.js` | Script catalog — defines all 6 pipeline scripts with IDs, options, and file paths |
 | `lib/files.js` | File operations — directory tree listing, CSV/JSON parsing, output path resolution |
 | `lib/compare.js` | Data comparison — cross-reference order data across pipeline stage outputs |
 | `lib/storage.js` | JSON persistence — `jobs.json` and `schedules.json` management |
@@ -551,6 +586,12 @@ Scripts/outputs/
 │   ├── Funeral_data_error.csv         # Error records
 │   └── Funeral_checkpoint.json        # Resume checkpoint
 │
+├── reverify/
+│   ├── data.csv         # Reverified rows
+│   ├── data.xlsx
+│   ├── payload.json
+│   └── logs.txt
+│
 ├── Updater/
 │   ├── data.csv         # Upload results + response codes
 │   ├── data.xlsx
@@ -578,7 +619,7 @@ backend/data/
 ## Dashboard UI Guide
 
 ### Script Panels
-Each of the 5 pipeline scripts has a dedicated card showing:
+Each of the 6 pipeline scripts has a dedicated card showing:
 - **Status badge**: Idle / Running / Done / Failed
 - **Run/Stop button**: Execute or cancel the script
 - **Terminal viewer**: Real-time log output with syntax colorization
@@ -589,7 +630,7 @@ Each of the 5 pipeline scripts has a dedicated card showing:
 ### Header Controls
 - **Pipeline Status**: Real-time indicator — Running (blue pulse), Idle (green), All Disabled (gray)
 - **Cron Mode**: Default (30-min) or Custom interval
-- **Run Full Pipeline**: One-click execution of all 5 stages
+- **Run Full Pipeline**: One-click execution of all 6 stages
 - **Updater Mode**: Select which file source the Updater uses in the pipeline
 - **Preflight Check**: Verify environment before running
 - **Theme Controls**: Dark/Light mode with darkness level slider
