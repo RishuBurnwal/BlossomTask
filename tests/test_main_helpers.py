@@ -50,6 +50,21 @@ class MainHelperTests(unittest.TestCase):
                 pids = main._get_pids_on_port(8787)
         self.assertEqual(pids, {777})
 
+    def test_kill_ports_for_server_restart_counts_results(self):
+        with patch.object(main, "_get_pids_on_port", side_effect=[{101, 202}, {202, 303}]):
+            with patch.object(main, "_kill_pid", side_effect=lambda pid: pid != 303):
+                killed, failed = main._kill_ports_for_server_restart([8787, 8080])
+        self.assertEqual(killed, 2)
+        self.assertEqual(failed, 1)
+
+    def test_wait_for_http_health_success_with_curl(self):
+        fake_result = SimpleNamespace(returncode=0, stdout='{"ok":true}')
+        with patch.object(main.shutil, "which", return_value="curl"):
+            with patch.object(main.subprocess, "run", return_value=fake_result):
+                ok, body = main._wait_for_http_health("http://localhost:8787/api/health", timeout_seconds=1)
+        self.assertTrue(ok)
+        self.assertEqual(body, '{"ok":true}')
+
     def test_kill_pid_rejects_non_positive_pid(self):
         self.assertFalse(main._kill_pid(0))
         self.assertFalse(main._kill_pid(-10))

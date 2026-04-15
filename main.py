@@ -24,6 +24,8 @@ import signal
 import shutil
 import platform
 import socket
+from urllib.parse import urlparse
+from urllib.request import urlopen
 from pathlib import Path
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -311,6 +313,171 @@ def _background_start_menu():
         print_success("Terminal control returned. Servers are running in background.")
     else:
         print_error("Could not start background servers.")
+
+
+def _run_shell_command(cmd, *, cwd=None, shell=False):
+    """Run a command and return True when it exits with code 0."""
+    result = subprocess.run(cmd, cwd=cwd or str(ROOT), shell=shell)
+    return result.returncode == 0
+
+
+def _wait_for_http_health(url, timeout_seconds=30):
+    """Poll a local HTTP endpoint until it responds successfully or times out."""
+    curl_bin = shutil.which("curl")
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            if curl_bin:
+                result = subprocess.run(
+                    [curl_bin, "-fsS", url],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    return True, result.stdout.strip()
+            else:
+                parsed = urlparse(url)
+                host = parsed.hostname or "127.0.0.1"
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                path = parsed.path or "/"
+                query = f"?{parsed.query}" if parsed.query else ""
+                target = f"{parsed.scheme or 'http'}://{host}:{port}{path}{query}"
+                with urlopen(target, timeout=5) as response:
+                    if response.status < 400:
+                        return True, response.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            pass
+        time.sleep(1)
+    return False, "health check timeout"
+
+
+def _sync_dist_to_root():
+    """Copy built frontend artifacts from dist/ into project root for static serving."""
+    dist_dir = ROOT / "dist"
+    if not dist_dir.exists():
+        return False, "dist directory not found"
+
+    copied = 0
+    for item in dist_dir.iterdir():
+        target = ROOT / item.name
+        try:
+            if item.is_dir():
+                if target.exists():
+                    shutil.rmtree(target)
+                shutil.copytree(item, target)
+            else:
+                shutil.copy2(item, target)
+            copied += 1
+        except Exception as exc:
+            return False, f"Failed to copy {item.name}: {exc}"
+
+    if copied == 0:
+        return False, "dist is empty"
+    return True, f"Copied {copied} artifact(s)"
+
+
+def _kill_ports_for_server_restart(ports):
+    """Kill listener PIDs for selected ports and return summary counts."""
+    killed = 0
+    failed = 0
+    seen = set()
+    for port in ports:
+        pids = _get_pids_on_port(port)
+        for pid in sorted(pids):
+            if pid in seen:
+                continue
+            seen.add(pid)
+            if _kill_pid(pid):
+                killed += 1
+            else:
+                failed += 1
+    return killed, failed
+
+
+def _wait_for_pid_on_port(port, pid, timeout_seconds=15):
+    """Wait until a specific PID is observed listening on a target port."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if pid in _get_pids_on_port(port):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def _one_click_server_setup_menu():
+    """Install, build, and run backend with conflict-safe startup for server use."""
+    print_section("One-Click Server Setup", "🚀")
+    print_info("This will install dependencies, build frontend, sync dist, and start backend.")
+
+    confirm = input(f"  {C.YELLOW}Proceed with one-click setup? (y/N): {C.RESET}").strip().lower()
+    if confirm not in ["y", "yes"]:
+        print_info("Cancelled")
+        return
+
+    # On Linux servers, keep 8080 reserved for Apache/Nginx stack and only recycle backend port.
+    ports_to_kill = [DEFAULT_BACKEND_PORT] if os.name != "nt" else [DEFAULT_FRONTEND_PORT, DEFAULT_BACKEND_PORT]
+    print_info(f"Clearing required ports: {', '.join(str(p) for p in ports_to_kill)}")
+    killed, failed = _kill_ports_for_server_restart(ports_to_kill)
+    print_info(f"Port cleanup summary: killed={killed}, failed={failed}")
+    if DEFAULT_BACKEND_PORT in ports_to_kill and is_port_in_use(DEFAULT_BACKEND_PORT):
+        print_error(
+            f"Port {DEFAULT_BACKEND_PORT} is still in use after cleanup; refusing to continue to avoid false success."
+        )
+        return
+
+    print_step(1, "Installing Python dependencies")
+    if REQUIREMENTS_TXT.exists():
+        if not _run_shell_command([find_python(), "-m", "pip", "install", "-r", str(REQUIREMENTS_TXT)]):
+            print_error("Python dependency installation failed")
+            return
+    else:
+        print_warn("requirements.txt not found, skipping Python install")
+
+    print_step(2, "Installing Node.js dependencies")
+    npm_bin = shutil.which("npm") or "npm"
+    use_shell = sys.platform == "win32"
+    if not _run_shell_command([npm_bin, "install"], shell=use_shell):
+        print_error("Node.js dependency installation failed")
+        return
+
+    print_step(3, "Building frontend production bundle")
+    if not _run_shell_command([npm_bin, "run", "build"], shell=use_shell):
+        print_error("Frontend build failed")
+        return
+
+    print_step(4, "Syncing dist artifacts for static serving")
+    copied_ok, copied_message = _sync_dist_to_root()
+    if not copied_ok:
+        print_error(copied_message)
+        return
+    print_success(copied_message)
+
+    print_step(5, "Starting backend in background")
+    backend = launch_backend(DEFAULT_BACKEND_PORT, background=True)
+    if backend is None or backend.poll() is not None:
+        print_error("Backend failed to start")
+        return
+
+    if not _wait_for_pid_on_port(DEFAULT_BACKEND_PORT, backend.pid, timeout_seconds=15):
+        _stop_process(backend)
+        print_error(
+            f"Backend PID {backend.pid} did not take ownership of port {DEFAULT_BACKEND_PORT}; another process may be active."
+        )
+        return
+
+    print_step(6, "Verifying backend health")
+    health_ok, health_response = _wait_for_http_health(f"http://localhost:{DEFAULT_BACKEND_PORT}/api/health")
+    if not health_ok:
+        _stop_process(backend)
+        print_error(f"Backend health check failed: {health_response}")
+        return
+
+    print_success("One-click server setup completed")
+    print_info(f"Backend health: {health_response}")
+    print_info(f"Backend URL: http://localhost:{DEFAULT_BACKEND_PORT}/api/health")
+    print_info("Frontend static root ready from built dist artifacts")
 
 
 def _program_killer_menu():
@@ -1019,7 +1186,7 @@ def interactive_menu():
         print(f"    {C.CYAN}[7]{C.RESET}  🩺  System Health Check           {C.DIM}(Verify Setup){C.RESET}")
         print(f"    {C.CYAN}[8]{C.RESET}  📁  View Output Files             {C.DIM}(Browse Results){C.RESET}")
         print(f"    {C.CYAN}[9]{C.RESET}  🧭  Terminal Pipeline Runner      {C.DIM}(Interactive/Resume/Cron){C.RESET}")
-        print(f"    {C.CYAN}[10]{C.RESET} 🧵  Background Dashboard Mode    {C.DIM}(Start servers, return terminal){C.RESET}")
+        print(f"    {C.CYAN}[10]{C.RESET} 🚀  One-Click Server Setup      {C.DIM}(Install + Build + Run backend){C.RESET}")
         print(f"    {C.CYAN}[11]{C.RESET} ☠️  Program Killer               {C.DIM}(Kill ports + programs){C.RESET}")
         print()
         print(f"    {C.RED}[0]{C.RESET}  🚪  Exit")
@@ -1062,7 +1229,7 @@ def interactive_menu():
                 print_error("Terminal pipeline runner ended with failure")
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice == "10":
-            _background_start_menu()
+            _one_click_server_setup_menu()
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice == "11":
             _program_killer_menu()
