@@ -270,6 +270,8 @@ Runtime artifacts generated at project root:
 - `pipeline_last_summary.json`: most recent run summary including per-script status and total duration
 - `pipeline_logs.jsonl`: structured event stream for debugging and audit trails
 
+When a run is stopped from the UI, the current script is terminated first and then the cron loop stops with status `stopped`.
+
 ### Manual Server Start
 
 ```bash
@@ -326,7 +328,7 @@ Stage 1          Stage 2           Stage 3             Stage 4         Stage 5  
 - **Input**: `Funeral_Finder/Funeral_data_not_found.csv` and `Funeral_Finder/Funeral_data_review.csv`
 - **Output**: Updated source files and status-normalized rows
 - **Purpose**: Rechecks uncertain records before CRM update
-- **Modes**: `--source both|not_found|review`, retries via `--attempts`
+- **Modes**: `--source both|not_found|review`, retries via `--attempts 2|3`, `--force` bypasses `reverify_logs.txt`
 
 #### 5. Updater (`Updater.py`)
 - **Input**: `Funeral_Finder/Funeral_data.csv`
@@ -334,12 +336,14 @@ Stage 1          Stage 2           Stage 3             Stage 4         Stage 5  
 - **Purpose**: Builds structured CRM payloads and uploads via `/api/createcomm`
 - **File Modes**: `complete`, `found_only`, `not_found`, `review`
 - **trEndDate fallback**: `service_date/service_time` → `visitation_date/visitation_time` → `delivery_recommendation_date/delivery_recommendation_time`
-- **trText**: Includes notes and source URLs when available
+- **trText**: Includes ship name, funeral home, service/delivery details, notes, and source URLs when available
+- **Logs**: `logs.txt` is read before run so already-uploaded order IDs are skipped unless `--force` is set
 
 #### 6. ClosingTask (`ClosingTask.py`)
 - **Input**: `Updater/data.csv` (or pipeline payloads)
 - **Output**: `Scripts/outputs/ClosingTask/data.csv`
 - **Purpose**: Closes processed CRM tasks with detailed notes
+- **Logs**: `logs.txt` is read before run so already-closed order IDs are skipped unless `--force` is set
 
 ### Script Flags and Reprocess Controls
 
@@ -353,6 +357,17 @@ All pipeline scripts are idempotent and use stage-specific `logs.txt` files to s
 | `reverify.py` | `--force` | `--limit` | `--source both|not_found|review`, `--attempts` |
 | `Updater.py` | `--force` | `--limit` | `--mode complete|found_only|not_found|review`, `--dry-run`, `--no-delay` |
 | `ClosingTask.py` | `--force` | `--limit` | `--dry-run`, `--no-delay` |
+
+Flag behavior summary:
+
+- `--force` ignores the stage log file and reprocesses every eligible record.
+- `--limit` caps how many new records the script processes after log filtering.
+- `reverify.py --attempts` controls Perplexity retry attempts per record and is capped at 3.
+- `reverify.py --source` selects which source CSVs to recheck: `both`, `not_found`, or `review`.
+- `service_date/service_time` remain the canonical CRM fields; when they are missing, the scripts promote visitation or delivery datetime into those fields before upload.
+- `Updater.py --mode` selects which Funeral Finder rows feed CRM uploads.
+- `--dry-run` keeps the pipeline read-only and skips CRM writes.
+- `--no-delay` disables the default rate-limit pause between API calls.
 
 Examples:
 

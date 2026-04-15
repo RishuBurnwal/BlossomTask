@@ -47,6 +47,27 @@ class UpdaterPayloadTests(unittest.TestCase):
         self.assertIn("Sources: https://example.com/obit | https://example.com/fh", payload["trText"])
         self.assertIn("Service datetime fallback used: visitation", payload["trText"])
 
+    def test_build_payload_uses_delivery_datetime_when_service_and_visitation_missing(self):
+        order = {
+            "order_id": "1002",
+            "match_status": "Found",
+            "service_date": "",
+            "service_time": "",
+            "visitation_date": "",
+            "visitation_time": "",
+            "delivery_recommendation_date": "2026-04-22",
+            "delivery_recommendation_time": "02:15 PM",
+            "ship_name": "Jane Doe",
+            "notes": "delivery fallback",
+            "source_urls": "https://example.com/delivery",
+        }
+
+        payload = Updater.build_payload(order)
+
+        self.assertEqual(payload["trEndDate"], "2026-04-22 02:15 PM")
+        self.assertIn("Deliver By: 2026-04-22 02:15 PM", payload["trText"])
+        self.assertIn("Sources: https://example.com/delivery", payload["trText"])
+
 
 if __name__ == "__main__":
     unittest.main()

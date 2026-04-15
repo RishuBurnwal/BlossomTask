@@ -16,8 +16,26 @@ from urllib.parse import urlparse
 
 import requests
 
-if os.name == "nt":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
+def _configure_windows_stdout_utf8() -> None:
+    if os.name != "nt":
+        return
+    stdout = getattr(sys, "stdout", None)
+    if stdout is None or getattr(stdout, "closed", False):
+        return
+    try:
+        if hasattr(stdout, "reconfigure"):
+            stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+            return
+        buffer = getattr(stdout, "buffer", None)
+        if buffer is None or getattr(buffer, "closed", False):
+            return
+        sys.stdout = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        # Keep original stdout if wrapping is unsupported in this environment.
+        return
+
+
+_configure_windows_stdout_utf8()
 
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 TIMEOUT_SECONDS = 120
@@ -390,6 +408,18 @@ def load_records(csv_path: Path) -> list:
         return rows
 
 
+def filter_records_by_logged_ids(rows: list, logged_ids: set[str]) -> tuple[list, int]:
+    filtered_rows = []
+    skipped_count = 0
+    for row in rows:
+        order_id = _safe_str(row.get("order_id"))
+        if order_id and order_id in logged_ids:
+            skipped_count += 1
+            continue
+        filtered_rows.append(row)
+    return filtered_rows, skipped_count
+
+
 def write_records(csv_path: Path, rows: list):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -557,7 +587,7 @@ def build_prompt(record: dict, strategy: str) -> str:
         "50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. "
         "For very common names without unique identifiers, keep score below 60. "
         "If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time, "
-        "and return those values in funeral_date and funeral_time. "
+        "and return those values in funeral_date and funeral_time. Treat the selected fallback as the canonical service_date/service_time for downstream CRM fields. "
         "Mark Found only when source-backed service details are present; if unsure use Review.\n\n"
         f"{context_block}"
     )
@@ -600,7 +630,7 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
                     "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
                     "No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. "
                     "If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time, "
-                    "and return those values in funeral_date and funeral_time. "
+                    "and return those values in funeral_date and funeral_time. Treat the selected fallback as the canonical service_date/service_time for downstream CRM fields. "
                     "Use Found only when source-backed service details are available; "
                     "if evidence is partial or ambiguous, return Review."
                 ),
