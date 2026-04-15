@@ -9,22 +9,26 @@ export function CompareSection() {
   const [rightFile, setRightFile] = useState("Funeral_Finder/Funeral_data_error.csv");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [layoutMode, setLayoutMode] = useState<"horizontal" | "vertical">("horizontal");
+  const [liveRefresh, setLiveRefresh] = useState(true);
 
-  const { data: treeData } = useQuery({
+  const { data: treeData, refetch: refetchTree } = useQuery({
     queryKey: ["files-tree", "compare"],
     queryFn: () => api.fileTree("", true),
+    refetchInterval: liveRefresh ? 5000 : false,
   });
 
-  const { data: leftFileData } = useQuery({
+  const { data: leftFileData, refetch: refetchLeftFile } = useQuery({
     queryKey: ["compare-left-file", leftFile],
     queryFn: () => api.fileContent(leftFile, 100),
     enabled: Boolean(leftFile),
+    refetchInterval: liveRefresh ? 5000 : false,
   });
 
-  const { data: rightFileData } = useQuery({
+  const { data: rightFileData, refetch: refetchRightFile } = useQuery({
     queryKey: ["compare-right-file", rightFile],
     queryFn: () => api.fileContent(rightFile, 100),
     enabled: Boolean(rightFile),
+    refetchInterval: liveRefresh ? 5000 : false,
   });
 
   const normalizeOrderIdInput = (value: string) => {
@@ -72,7 +76,13 @@ export function CompareSection() {
 
     const fallbackKey = Object.keys(row).find((key) => {
       const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-      return normalized === "ordid" || normalized === "orderid";
+      return (
+        normalized.includes("ordid")
+        || normalized.includes("orderid")
+        || normalized.includes("orderno")
+        || normalized.includes("ordernumber")
+        || normalized.includes("ordernum")
+      );
     });
 
     return fallbackKey ? String(row[fallbackKey] ?? "").trim() : "";
@@ -103,6 +113,13 @@ export function CompareSection() {
     }
   }, [files, leftFile, rightFile]);
 
+  const refreshNow = async () => {
+    await Promise.all([refetchTree(), refetchLeftFile(), refetchRightFile()]);
+    if (activeOrderId) {
+      await compareMutation.mutateAsync();
+    }
+  };
+
   return (
     <div className="rounded-xl border bg-card p-4 card-shadow animate-fade-in">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -130,6 +147,13 @@ export function CompareSection() {
           >
             Compare
           </button>
+          <button
+            onClick={refreshNow}
+            disabled={compareMutation.isPending}
+            className="h-8 rounded-lg border bg-background px-3 text-xs font-medium hover:bg-accent disabled:opacity-50"
+          >
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -154,6 +178,14 @@ export function CompareSection() {
             </option>
           ))}
         </select>
+        <label className="col-span-full flex items-center gap-2 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={liveRefresh}
+            onChange={(event) => setLiveRefresh(event.target.checked)}
+          />
+          Auto refresh files (5s)
+        </label>
       </div>
 
       {orderSuggestions.length > 0 && (

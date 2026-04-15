@@ -29,6 +29,16 @@ function extractDigits(value) {
   return String(value ?? "").replace(/\D+/g, "");
 }
 
+function isOrderIdLikeKey(normalizedKey) {
+  return (
+    normalizedKey.includes("ordid")
+    || normalizedKey.includes("orderid")
+    || normalizedKey.includes("orderno")
+    || normalizedKey.includes("ordernumber")
+    || normalizedKey.includes("ordernum")
+  );
+}
+
 function extractOrderId(row) {
   if (!row || typeof row !== "object") return "";
   const directKeys = [
@@ -53,7 +63,7 @@ function extractOrderId(row) {
 
   const fallbackKey = Object.keys(row).find((key) => {
     const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-    return normalized === "ordid" || normalized === "orderid";
+    return isOrderIdLikeKey(normalized);
   });
   if (fallbackKey) {
     return normalizeComparableValue(row[fallbackKey]);
