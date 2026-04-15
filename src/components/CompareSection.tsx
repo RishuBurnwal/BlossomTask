@@ -5,8 +5,8 @@ import { api } from "@/lib/api";
 
 export function CompareSection() {
   const [search, setSearch] = useState("");
-  const [leftFile, setLeftFile] = useState("Funeral_Finder/Funeral_data.csv");
-  const [rightFile, setRightFile] = useState("Funeral_Finder/Funeral_data_error.csv");
+  const [leftFile, setLeftFile] = useState("");
+  const [rightFile, setRightFile] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [layoutMode, setLayoutMode] = useState<"horizontal" | "vertical">("horizontal");
   const [liveRefresh, setLiveRefresh] = useState(true);
@@ -45,6 +45,8 @@ export function CompareSection() {
   const compareMutation = useMutation({
     mutationFn: () => api.compareOrder(activeOrderId, [leftFile, rightFile]),
   });
+
+  const canCompare = Boolean(activeOrderId && leftFile && rightFile);
 
   const files = useMemo(
     () => treeData?.entries?.filter((entry) => entry.type === "file") ?? [],
@@ -115,7 +117,7 @@ export function CompareSection() {
 
   const refreshNow = async () => {
     await Promise.all([refetchTree(), refetchLeftFile(), refetchRightFile()]);
-    if (activeOrderId) {
+    if (canCompare) {
       await compareMutation.mutateAsync();
     }
   };
@@ -133,7 +135,7 @@ export function CompareSection() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && activeOrderId) {
+                if (event.key === "Enter" && canCompare) {
                   compareMutation.mutate();
                 }
               }}
@@ -142,7 +144,7 @@ export function CompareSection() {
           </div>
           <button
             onClick={() => compareMutation.mutate()}
-            disabled={!activeOrderId || compareMutation.isPending}
+            disabled={!canCompare || compareMutation.isPending}
             className="h-8 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             Compare
