@@ -147,6 +147,17 @@ class PipelineRequirementTests(unittest.TestCase):
         self.assertEqual(skipped, 2)
         self.assertEqual([row["order_id"] for row in filtered_rows], ["B"])
 
+    def test_reverify_filters_logged_ids_when_order_id_has_trailing_decimal(self):
+        rows = [
+            {"order_id": "12345.0", "match_status": "NotFound"},
+            {"order_id": "12346", "match_status": "Review"},
+        ]
+
+        filtered_rows, skipped = reverify.filter_records_by_logged_ids(rows, {"12345"})
+
+        self.assertEqual(skipped, 1)
+        self.assertEqual([row["order_id"] for row in filtered_rows], ["12346"])
+
     def test_reverify_normalize_service_datetime_prefers_service_then_visitation_then_delivery(self):
         self.assertEqual(
             reverify._normalize_service_datetime("2026-04-20", "10:00 AM", "2026-04-21", "11:00 AM", "2026-04-22", "02:00 PM"),
