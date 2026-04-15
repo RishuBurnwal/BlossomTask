@@ -22,6 +22,7 @@ class _FakeStore:
         self.last_state = None
         self.last_log = None
         self.summary = None
+        self.control = {"stop_requested": False, "reason": None}
 
     def load_checkpoint(self):
         return dict(self.checkpoint)
@@ -48,6 +49,15 @@ class _FakeStore:
 
     def log_event(self, event):
         self.last_log = dict(event)
+
+    def load_control(self):
+        return dict(self.control)
+
+    def save_control(self, payload):
+        self.control = dict(payload)
+
+    def clear_stop_request(self):
+        self.control["stop_requested"] = False
 
 
 class TerminalRunnerTests(unittest.TestCase):
@@ -115,7 +125,7 @@ class TerminalRunnerTests(unittest.TestCase):
 
         calls = {"count": 0}
 
-        def _always_fail(_script_id, _updater_mode, _force):
+        def _always_fail(_script_id, _updater_mode, _reverify_source, _force):
             calls["count"] += 1
             return ScriptRunResult(
                 script_id="get-task",
@@ -127,7 +137,7 @@ class TerminalRunnerTests(unittest.TestCase):
             )
 
         runner._run_single_script = _always_fail
-        result = runner._run_script_with_retry("get-task", "complete", False, {"run_mode": "single"})
+        result = runner._run_script_with_retry("get-task", "complete", "both", False, {"run_mode": "single"})
         self.assertFalse(result.success)
         self.assertEqual(result.attempts, 3)
         self.assertEqual(calls["count"], 3)
@@ -136,7 +146,7 @@ class TerminalRunnerTests(unittest.TestCase):
         runner = TerminalPipelineRunner(input_fn=lambda _x: "1", sleep_fn=lambda _x: None)
         runner.store = _FakeStore()
 
-        def _interrupt_result(_script_id, _updater_mode, _force):
+        def _interrupt_result(_script_id, _updater_mode, _reverify_source, _force):
             return ScriptRunResult(
                 script_id="get-task",
                 success=False,
@@ -153,9 +163,10 @@ class TerminalRunnerTests(unittest.TestCase):
             run_mode="single",
             sequence=["get-task"],
             updater_mode="complete",
+            reverify_source="both",
             cycle=1,
         )
-        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(result["status"], "stopped")
 
     def test_execute_once_noop_checkpoint_sets_success_state(self):
         checkpoint = {
@@ -172,11 +183,23 @@ class TerminalRunnerTests(unittest.TestCase):
             run_mode="single",
             sequence=["get-task", "get-order-inquiry", "funeral-finder", "updater", "closing-task"],
             updater_mode="complete",
+            reverify_source="both",
             cycle=2,
         )
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(fake_store.last_state.get("status"), "success")
+
+    def test_external_stop_request_marks_runner_stopped(self):
+        runner = TerminalPipelineRunner(input_fn=lambda _x: "1", sleep_fn=lambda _x: None)
+        fake_store = _FakeStore()
+        fake_store.control = {"stop_requested": True, "reason": "UI stop"}
+        runner.store = fake_store
+
+        runner._sync_external_stop_request()
+
+        self.assertTrue(runner.stop_requested)
+        self.assertEqual(runner.interruption_reason, "UI stop")
 
 
 if __name__ == "__main__":

@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from dataclasses import dataclass
@@ -27,6 +29,8 @@ CHECKPOINT_FILE = ROOT / "pipeline_checkpoint.json"
 STATE_FILE = ROOT / "pipeline_state.json"
 SUMMARY_FILE = ROOT / "pipeline_last_summary.json"
 LOG_FILE = ROOT / "pipeline_logs.jsonl"
+LOCK_DIR = ROOT / "pipeline_locks"
+CONTROL_FILE = ROOT / "pipeline_control.json"
 
 PIPELINE_SEQUENCE = [
     "get-task",
@@ -108,6 +112,19 @@ class RuntimeStore:
         entry = {"timestamp": now_iso(), **event}
         with LOG_FILE.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=True) + "\n")
+
+    def load_control(self) -> dict:
+        return self._safe_read_json(CONTROL_FILE, {"stop_requested": False, "reason": None})
+
+    def save_control(self, payload: dict) -> None:
+        content = dict(payload)
+        content["updated_at"] = now_iso()
+        self._write_json(CONTROL_FILE, content)
+
+    def clear_stop_request(self) -> None:
+        control = self.load_control()
+        control["stop_requested"] = False
+        self.save_control(control)
 
 
 def now_iso() -> str:
@@ -201,6 +218,10 @@ class TerminalPipelineRunner:
         self.store = RuntimeStore()
         self.stop_requested = False
         self.interruption_reason: Optional[str] = None
+        self.current_process: Optional[subprocess.Popen] = None
+        self.current_script_id: Optional[str] = None
+        self.run_id = f"{os.getpid()}-{int(time.time() * 1000)}"
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
         self._install_signal_handlers()
 
     def _install_signal_handlers(self) -> None:
@@ -328,6 +349,105 @@ class TerminalPipelineRunner:
             except ValueError as exc:
                 print(f"Invalid schedule: {exc}")
 
+    def _sync_external_stop_request(self) -> None:
+        """Read UI control channel and convert stop requests into runner stop state."""
+        control = self.store.load_control()
+        if not bool(control.get("stop_requested")):
+            return
+        if self.stop_requested:
+            return
+
+        self.stop_requested = True
+        self.interruption_reason = str(control.get("reason") or "Stop requested by UI")
+        if self.current_process is not None and self.current_process.poll() is None:
+            try:
+                self.current_process.terminate()
+            except Exception:
+                pass
+
+    def _is_process_alive(self, pid: Optional[int]) -> bool:
+        if pid is None:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            return False
+
+    def _read_lock(self, script_id: str) -> Optional[dict]:
+        lock_path = LOCK_DIR / f"{script_id}.lock"
+        if not lock_path.exists():
+            return None
+        try:
+            return json.loads(lock_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    def _acquire_script_lock(self, script_id: str) -> bool:
+        lock_path = LOCK_DIR / f"{script_id}.lock"
+        payload = {
+            "script_id": script_id,
+            "status": "running",
+            "updated_at": now_iso(),
+            "owner_run_id": self.run_id,
+            "owner_pid": os.getpid(),
+        }
+
+        try:
+            with lock_path.open("x", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, indent=2))
+            return True
+        except FileExistsError:
+            existing = self._read_lock(script_id) or {}
+            existing_owner = existing.get("owner_run_id")
+            existing_status = str(existing.get("status") or "").lower()
+            existing_pid = existing.get("owner_pid")
+
+            if existing_owner == self.run_id:
+                lock_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                return True
+
+            # Reclaim stale non-running locks or dead-owner running locks.
+            if existing_status != "running" or not self._is_process_alive(existing_pid):
+                try:
+                    lock_path.unlink()
+                except Exception:
+                    return False
+                try:
+                    with lock_path.open("x", encoding="utf-8") as fh:
+                        fh.write(json.dumps(payload, indent=2))
+                    return True
+                except Exception:
+                    return False
+
+            return False
+
+    def _set_script_lock(self, script_id: str, status: str) -> None:
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        existing = self._read_lock(script_id) or {}
+        owner_run_id = existing.get("owner_run_id", self.run_id)
+        owner_pid = existing.get("owner_pid", os.getpid())
+        payload = {
+            "script_id": script_id,
+            "status": status,
+            "updated_at": now_iso(),
+            "owner_run_id": owner_run_id,
+            "owner_pid": owner_pid,
+        }
+        lock_path = LOCK_DIR / f"{script_id}.lock"
+        lock_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _clear_cycle_locks(self) -> None:
+        if not LOCK_DIR.exists():
+            return
+        for lock_file in LOCK_DIR.glob("*.lock"):
+            try:
+                payload = json.loads(lock_file.read_text(encoding="utf-8"))
+                if payload.get("owner_run_id") == self.run_id:
+                    lock_file.unlink()
+            except Exception:
+                pass
+
     def _run_loop(
         self,
         start_mode: str,
@@ -338,11 +458,17 @@ class TerminalPipelineRunner:
         schedule_plan: Optional[dict],
     ) -> int:
         cycle = 0
+        self.store.clear_stop_request()
         while True:
             cycle += 1
+            self._sync_external_stop_request()
             if self.stop_requested:
                 self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
                 return 130
+
+            if run_mode == "scheduled" and cycle > 1:
+                # Scheduled runs should execute a fresh full cycle, not remain stuck at checkpoint end.
+                start_mode = "fresh"
 
             result = self._execute_once(start_mode, run_mode, sequence, updater_mode, reverify_source, cycle)
             result_total_duration = total_duration_seconds(result.get("script_results", []))
@@ -359,7 +485,7 @@ class TerminalPipelineRunner:
             )
             self._print_run_summary(result)
 
-            if result["status"] == "interrupted":
+            if result["status"] == "stopped":
                 return 130
 
             if result["status"] != "success":
@@ -372,9 +498,10 @@ class TerminalPipelineRunner:
             print("Waiting for next run")
             next_time = next_run_at(schedule_plan)
             self._countdown_until(next_time)
-
-            # After first cycle, continue mode is more useful than forcing reset.
-            start_mode = "continue"
+            self._sync_external_stop_request()
+            if self.stop_requested:
+                self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
+                return 130
 
     def _execute_once(
         self,
@@ -389,6 +516,7 @@ class TerminalPipelineRunner:
         if start_mode == "fresh":
             self.store.reset_checkpoint()
             checkpoint = self.store.load_checkpoint()
+            self._clear_cycle_locks()
 
         start_index = determine_start_index(sequence, checkpoint.get("last_successful_script"), start_mode)
         completed = list(checkpoint.get("completed_scripts") or [])
@@ -402,6 +530,7 @@ class TerminalPipelineRunner:
             "cycle": cycle,
             "sequence": sequence,
             "start_index": start_index,
+            "ui_stop_instruction": "Set pipeline_control.json stop_requested=true (optional reason) to stop current script and cron.",
         }
         self.store.save_state({"status": "running", **run_context})
         self.store.log_event({"event": "run_started", **run_context})
@@ -422,10 +551,11 @@ class TerminalPipelineRunner:
             }
 
         for script_id in sequence[start_index:]:
+            self._sync_external_stop_request()
             if self.stop_requested:
                 self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
                 return {
-                    "status": "interrupted",
+                    "status": "stopped",
                     "message": "Interrupted by user",
                     "script_results": script_results,
                     "run_context": run_context,
@@ -433,6 +563,17 @@ class TerminalPipelineRunner:
                 }
 
             print(f"Executing script {script_id}")
+            if not self._acquire_script_lock(script_id):
+                message = f"Script lock active for {script_id}; another runner is executing it"
+                self.store.save_state({"status": "failed", "reason": message, **run_context})
+                self.store.log_event({"event": "lock_conflict", "script": script_id, **run_context})
+                return {
+                    "status": "failed",
+                    "message": message,
+                    "script_results": script_results,
+                    "run_context": run_context,
+                    "next_scheduled_time": None,
+                }
             self.store.log_event({
                 "event": "script_started",
                 "script": script_id,
@@ -460,9 +601,10 @@ class TerminalPipelineRunner:
 
             if not success_result.success:
                 if success_result.interrupted:
+                    self._set_script_lock(script_id, "stopped")
                     self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
                     return {
-                        "status": "interrupted",
+                        "status": "stopped",
                         "message": "Interrupted by user",
                         "script_results": script_results,
                         "run_context": run_context,
@@ -483,6 +625,7 @@ class TerminalPipelineRunner:
                     "last_successful_script": completed[-1] if completed else None,
                     **run_context,
                 })
+                self._set_script_lock(script_id, "failed")
                 return {
                     "status": "failed",
                     "message": message,
@@ -492,6 +635,7 @@ class TerminalPipelineRunner:
                 }
 
             completed.append(script_id)
+            self._set_script_lock(script_id, "completed")
             self.store.save_checkpoint(script_id, completed)
             self.store.log_event({
                 "event": "script_completed",
@@ -579,15 +723,25 @@ class TerminalPipelineRunner:
                 errors="replace",
                 bufsize=1,
             )
+            self.current_process = process
+            self.current_script_id = script_id
 
             assert process.stdout is not None
-            for raw_line in process.stdout:
-                line = raw_line.rstrip("\n")
-                if line:
-                    print(f"[{config['name']}] {line}")
-                    parsed = parse_processed_count(line)
-                    if parsed is not None:
-                        processed_count = parsed
+            line_queue: queue.Queue[Optional[str]] = queue.Queue()
+
+            def _reader() -> None:
+                try:
+                    for raw_line in process.stdout:
+                        line_queue.put(raw_line.rstrip("\n"))
+                finally:
+                    line_queue.put(None)
+
+            reader_thread = threading.Thread(target=_reader, daemon=True)
+            reader_thread.start()
+
+            while True:
+                self._sync_external_stop_request()
+
                 if self.stop_requested and process.poll() is None:
                     process.terminate()
                     try:
@@ -596,6 +750,24 @@ class TerminalPipelineRunner:
                         process.kill()
                         process.wait(timeout=5)
                     break
+
+                try:
+                    line = line_queue.get(timeout=0.5)
+                except queue.Empty:
+                    if process.poll() is not None:
+                        break
+                    continue
+
+                if line is None:
+                    if process.poll() is not None:
+                        break
+                    continue
+
+                if line:
+                    print(f"[{config['name']}] {line}")
+                    parsed = parse_processed_count(line)
+                    if parsed is not None:
+                        processed_count = parsed
 
             exit_code = process.wait()
             if self.stop_requested:
@@ -642,9 +814,13 @@ class TerminalPipelineRunner:
                 error_reason=f"{exc}: {traceback.format_exc(limit=2)}",
                 duration_sec=elapsed,
             )
+        finally:
+            self.current_process = None
+            self.current_script_id = None
 
     def _countdown_until(self, target_time: datetime) -> None:
         while True:
+            self._sync_external_stop_request()
             if self.stop_requested:
                 return
             now = datetime.now().astimezone()
@@ -681,18 +857,19 @@ class TerminalPipelineRunner:
         message = self.interruption_reason or "Interrupted by user"
         self.store.save_state(
             {
-                "status": "interrupted",
+                "status": "stopped",
                 "reason": message,
                 "run_mode": run_mode,
                 "sequence": sequence,
                 "updater_mode": updater_mode,
                 "reverify_source": reverify_source,
                 "cycle": cycle,
+                "ui_stop_instruction": "Set pipeline_control.json stop_requested=true to stop current script and cron loop.",
             }
         )
         self.store.log_event(
             {
-                "event": "interrupted",
+                "event": "stopped",
                 "reason": message,
                 "run_mode": run_mode,
                 "sequence": sequence,
@@ -701,6 +878,7 @@ class TerminalPipelineRunner:
                 "cycle": cycle,
             }
         )
+        self.store.clear_stop_request()
         print(f"\n{message}")
 
 
@@ -713,6 +891,12 @@ def run_terminal_pipeline() -> int:
         runner.interruption_reason = "Interrupted by user"
         runner._flush_interrupt_state("unknown", PIPELINE_SEQUENCE, "complete", "both", 0)
         return 130
+
+
+def request_runner_stop(reason: str = "Stop requested by UI") -> None:
+    """Public helper for UI/controllers to request stop of current script and cron loop."""
+    store = RuntimeStore()
+    store.save_control({"stop_requested": True, "reason": reason})
 
 
 if __name__ == "__main__":
