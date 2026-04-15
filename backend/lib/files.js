@@ -174,6 +174,20 @@ export function readFileContent(inputPath, limit = 200) {
     try {
       const xlsxBuffer = fs.readFileSync(targetPath);
       const parsed = parseXlsx(xlsxBuffer, limit);
+      if (parsed.length > 0) {
+        return { type: "xlsx", raw: `[xlsx:${path.basename(targetPath)}]`, parsed };
+      }
+
+      // Fallback to sibling CSV when xlsx exists but contains no usable rows.
+      const csvFallbackPath = targetPath.replace(/\.xlsx$/i, ".csv");
+      if (fs.existsSync(csvFallbackPath) && fs.statSync(csvFallbackPath).isFile()) {
+        const csvRaw = fs.readFileSync(csvFallbackPath, "utf-8");
+        const csvParsed = parseCsv(csvRaw, limit);
+        if (csvParsed.length > 0) {
+          return { type: "csv", raw: csvRaw, parsed: csvParsed };
+        }
+      }
+
       return { type: "xlsx", raw: `[xlsx:${path.basename(targetPath)}]`, parsed };
     } catch {
       // Fallback to sibling CSV if xlsx parsing fails.
@@ -208,7 +222,26 @@ export function readFileContent(inputPath, limit = 200) {
   }
 
   if (ext === ".csv") {
-    return { type: "csv", raw, parsed: parseCsv(raw, limit) };
+    const parsed = parseCsv(raw, limit);
+    if (parsed.length > 0) {
+      return { type: "csv", raw, parsed };
+    }
+
+    // Fallback to sibling XLSX when csv exists but contains no usable rows.
+    const xlsxFallbackPath = targetPath.replace(/\.csv$/i, ".xlsx");
+    if (fs.existsSync(xlsxFallbackPath) && fs.statSync(xlsxFallbackPath).isFile()) {
+      try {
+        const xlsxBuffer = fs.readFileSync(xlsxFallbackPath);
+        const xlsxParsed = parseXlsx(xlsxBuffer, limit);
+        if (xlsxParsed.length > 0) {
+          return { type: "xlsx", raw: `[xlsx:${path.basename(xlsxFallbackPath)}]`, parsed: xlsxParsed };
+        }
+      } catch {
+        // Keep csv parse result when xlsx fallback parsing fails.
+      }
+    }
+
+    return { type: "csv", raw, parsed };
   }
 
   return { type: "text", raw, parsed: raw.split(/\r?\n/).slice(0, limit) };

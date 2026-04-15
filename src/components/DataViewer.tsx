@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileSpreadsheet, FolderOpen, ChevronRight, ChevronLeft, BadgeCheck } from "lucide-react";
 import { api } from "@/lib/api";
@@ -12,10 +12,11 @@ export function DataViewer() {
   const [selectedFile, setSelectedFile] = useState<string>("");
   const [viewMode, setViewMode] = useState<"table" | "json" | "raw" | "terminal">("table");
   const [searchQuery, setSearchQuery] = useState("");
-  const [liveRefresh, setLiveRefresh] = useState(false);
+  const [liveRefresh, setLiveRefresh] = useState(true);
   const [terminalSource, setTerminalSource] = useState<"file" | "runtime">("file");
   const [selectedRuntimeJobId, setSelectedRuntimeJobId] = useState<string>("");
   const [hasInitializedFileSelection, setHasInitializedFileSelection] = useState(false);
+  const previousRuntimeStatusesRef = useRef<Record<string, string>>({});
 
   const { data: datasetsData } = useQuery({
     queryKey: ["datasets"],
@@ -26,20 +27,20 @@ export function DataViewer() {
   const { data: treeData } = useQuery({
     queryKey: ["files-tree", activePath],
     queryFn: () => api.fileTree(activePath),
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   const { data: recursiveTreeData, refetch: refetchRecursiveTree } = useQuery({
     queryKey: ["files-tree", "recursive-picker"],
     queryFn: () => api.fileTree("", true),
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   const { data: selectedFileData } = useQuery({
     queryKey: ["file-content", selectedFile],
     queryFn: () => api.fileContent(selectedFile, 300),
     enabled: activeTab === "all" && Boolean(selectedFile),
-    refetchInterval: activeTab === "all" && liveRefresh ? 3000 : false,
+    refetchInterval: activeTab === "all" && liveRefresh ? 2000 : false,
   });
 
   const { data: jobsData } = useQuery({
@@ -161,7 +162,7 @@ export function DataViewer() {
   const rawContent = selectedFileData?.raw ?? "";
   const runtimeJobs = (jobsData?.jobs ?? []).filter((job) => job.kind === "script" || job.kind === "pipeline");
 
-  const refreshNow = async () => {
+  const refreshNow = useCallback(async () => {
     await Promise.all([
       refetchDatasets(),
       refetchTree(),
@@ -170,7 +171,42 @@ export function DataViewer() {
       selectedFile ? refetchSelectedFile() : Promise.resolve(),
       selectedRuntimeJobId ? refetchRuntimeJob() : Promise.resolve(),
     ]);
-  };
+  }, [
+    refetchDatasets,
+    refetchTree,
+    refetchRecursiveTree,
+    refetchJobs,
+    selectedFile,
+    refetchSelectedFile,
+    selectedRuntimeJobId,
+    refetchRuntimeJob,
+  ]);
+
+  useEffect(() => {
+    const previousById = previousRuntimeStatusesRef.current;
+    const runningStates = new Set(["running", "pending", "queued", "in_progress", "processing"]);
+    const terminalStates = new Set(["completed", "failed", "cancelled", "canceled", "success", "error"]);
+    let shouldRefresh = false;
+
+    runtimeJobs.forEach((job) => {
+      const nextStatus = String(job.status ?? "").toLowerCase();
+      const previousStatus = String(previousById[job.id] ?? "").toLowerCase();
+      if (previousStatus && previousStatus !== nextStatus && runningStates.has(previousStatus) && terminalStates.has(nextStatus)) {
+        shouldRefresh = true;
+      }
+      previousById[job.id] = nextStatus;
+    });
+
+    Object.keys(previousById).forEach((jobId) => {
+      if (!runtimeJobs.some((job) => job.id === jobId)) {
+        delete previousById[jobId];
+      }
+    });
+
+    if (shouldRefresh) {
+      void refreshNow();
+    }
+  }, [refreshNow, runtimeJobs]);
 
   useEffect(() => {
     if (runtimeJobs.length === 0) {
@@ -410,7 +446,7 @@ export function DataViewer() {
                 checked={liveRefresh}
                 onChange={(event) => setLiveRefresh(event.target.checked)}
               />
-              Live refresh (3s)
+              Live refresh (2s)
             </label>
           </>
         )}
