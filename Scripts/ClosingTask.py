@@ -275,12 +275,26 @@ def main():
     if args.force:
         print(f"[{SCRIPT_NAME}] --force enabled – reprocessing ALL orders")
 
+    pre_skipped = 0
+    if not args.force:
+        filtered_orders = []
+        for order in orders:
+            order_id = _safe_str(order.get("order_id"))
+            if order_id and order_id in logged_ids:
+                pre_skipped += 1
+                continue
+            filtered_orders.append(order)
+        orders = filtered_orders
+        if pre_skipped:
+            print(f"[{SCRIPT_NAME}] Pre-filtered {pre_skipped} already-processed order IDs from logs.txt")
+
     # ── 3. Process each order ────────────────────────────────────────────────
     new_count     = 0
     skipped_count = 0
     success_count = 0
     error_count   = 0
     total         = len(orders)
+    skipped_count += pre_skipped
 
     print(f"\n{'═'*60}")
     print(f"  🔒 LIVE PROCESSING  –  {total} tasks to close")
@@ -319,12 +333,6 @@ def main():
         print(f"  Task  ID : {task_id or '(none)'}")
         print(f"  Name     : {ship_name}")
         print(f"  Reason   : {status_icon} {close_reason}")
-
-        # Skip check
-        if order_id in logged_ids and not args.force:
-            print(f"  ⏭  SKIP – already in logs.txt")
-            skipped_count += 1
-            continue
 
         # Limit check
         if args.limit > 0 and new_count >= args.limit:

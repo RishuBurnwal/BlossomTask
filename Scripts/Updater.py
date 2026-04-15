@@ -112,6 +112,36 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _choose_service_datetime(order: dict) -> tuple[str, str, str]:
+    """Pick service datetime, falling back to visitation then delivery when needed."""
+    service_date = _safe_str(order.get("service_date"))
+    service_time = _safe_str(order.get("service_time"))
+    visitation_date = _safe_str(order.get("visitation_date"))
+    visitation_time = _safe_str(order.get("visitation_time"))
+    delivery_date = _safe_str(order.get("delivery_recommendation_date"))
+    delivery_time = _safe_str(order.get("delivery_recommendation_time"))
+
+    if service_date and service_time:
+        return service_date, service_time, "service"
+
+    # If primary service datetime is incomplete, promote visitation as fallback.
+    if visitation_date and visitation_time:
+        return visitation_date, visitation_time, "visitation"
+
+    # Last fallback: delivery recommendation datetime.
+    if delivery_date and delivery_time:
+        return delivery_date, delivery_time, "delivery"
+
+    if service_date:
+        return service_date, service_time, "service_date_only"
+    if visitation_date:
+        return visitation_date, visitation_time, "visitation_date_only"
+    if delivery_date:
+        return delivery_date, delivery_time, "delivery_date_only"
+
+    return "", "", "none"
+
+
 # ── logs.txt helpers ─────────────────────────────────────────────────────────
 
 def load_logged_ids() -> set:
@@ -219,9 +249,8 @@ def build_payload(order: dict) -> dict:
     # trResult: Found / NotFound / Review
     tr_result = match_status if match_status in ("Found", "NotFound", "Review") else "Review"
 
-    # trEndDate: service date + time from Funeral_Finder output
-    service_date = _safe_str(order.get("service_date"))
-    service_time = _safe_str(order.get("service_time"))
+    # trEndDate: prefer service datetime, fallback to visitation then delivery.
+    service_date, service_time, datetime_source = _choose_service_datetime(order)
     if service_date and service_time:
         tr_end_date = f"{service_date} {service_time}"
     elif service_date:
@@ -234,6 +263,7 @@ def build_payload(order: dict) -> dict:
     ship_name = _safe_str(order.get("ship_name"))
     funeral_home = _safe_str(order.get("funeral_home_name"))
     notes = _safe_str(order.get("notes"))
+    source_urls = _safe_str(order.get("source_urls"))
     special = _safe_str(order.get("special_instructions"))
     delivery_date = _safe_str(order.get("delivery_recommendation_date"))
     delivery_time = _safe_str(order.get("delivery_recommendation_time"))
@@ -259,6 +289,10 @@ def build_payload(order: dict) -> dict:
         note_parts.append(f"Instructions: {special}")
     if notes:
         note_parts.append(f"Notes: {notes}")
+    if source_urls:
+        note_parts.append(f"Sources: {source_urls}")
+    if datetime_source in {"visitation", "delivery"}:
+        note_parts.append(f"Service datetime fallback used: {datetime_source}")
 
     tr_text = " | ".join(note_parts) if note_parts else ""
 
@@ -395,12 +429,26 @@ def main():
     if args.force:
         print(f"[{SCRIPT_NAME}] --force enabled – reprocessing ALL orders")
 
+    pre_skipped = 0
+    if not args.force:
+        filtered_orders = []
+        for order in orders:
+            order_id = _safe_str(order.get("order_id"))
+            if order_id and order_id in logged_ids:
+                pre_skipped += 1
+                continue
+            filtered_orders.append(order)
+        orders = filtered_orders
+        if pre_skipped:
+            print(f"[{SCRIPT_NAME}] Pre-filtered {pre_skipped} already-processed order IDs from logs.txt")
+
     # ── 3. Process each order ────────────────────────────────────────────────
     new_count     = 0
     skipped_count = 0
     success_count = 0
     error_count   = 0
     total         = len(orders)
+    skipped_count += pre_skipped
 
     print(f"\n{'═'*60}")
     print(f"  📤 LIVE PROCESSING  –  {total} orders")
@@ -417,12 +465,6 @@ def main():
         print(f"  Order ID : {order_id}")
         print(f"  Name     : {ship_name}")
         print(f"  Status   : {status_icon} {match_status}")
-
-        # Skip check
-        if order_id in logged_ids and not args.force:
-            print(f"  ⏭  SKIP – already in logs.txt")
-            skipped_count += 1
-            continue
 
         # Limit check
         if args.limit > 0 and new_count >= args.limit:

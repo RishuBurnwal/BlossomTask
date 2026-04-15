@@ -37,6 +37,9 @@ Decision rules:
 - If name is very common and unique identifiers are missing, keep score below 60.
 - If no valid source URL exists, score must be <= 50.
 - If uncertain, prefer lower score and "Review" over false certainty.
+- If funeral_date or funeral_time is missing, use visitation_date + visitation_time as fallback.
+- If visitation datetime is also missing, use delivery_recommendation_date + delivery_recommendation_time.
+- Always return the chosen fallback values inside funeral_date and funeral_time.
 
 Input context:
 [INSERT PROMPT/Details HERE]

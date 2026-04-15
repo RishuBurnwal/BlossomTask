@@ -199,6 +199,30 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _normalize_service_datetime(
+    service_date: str,
+    service_time: str,
+    visitation_date: str,
+    visitation_time: str,
+    delivery_date: str,
+    delivery_time: str,
+) -> tuple[str, str, str]:
+    """Ensure service datetime is always populated using visitation/delivery fallback."""
+    if service_date and service_time:
+        return service_date, service_time, "service"
+    if visitation_date and visitation_time:
+        return visitation_date, visitation_time, "visitation"
+    if delivery_date and delivery_time:
+        return delivery_date, delivery_time, "delivery"
+    if service_date:
+        return service_date, service_time, "service_date_only"
+    if visitation_date:
+        return visitation_date, visitation_time, "visitation_date_only"
+    if delivery_date:
+        return delivery_date, delivery_time, "delivery_date_only"
+    return service_date, service_time, "none"
+
+
 # ── logs.txt helpers ─────────────────────────────────────────────────────────
 
 def load_logged_ids() -> set:
@@ -307,6 +331,8 @@ def build_prompt(order: dict, template_text: str) -> str:
             "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
             "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
             "No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. "
+            "If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time, "
+            "and return those values in funeral_date and funeral_time. "
             "Mark Found only when source-backed service details are present; "
             "if unsure use Review.\n\n"
             f"{context_block}"
@@ -387,6 +413,15 @@ def parse_ai_response(ai_text: str) -> dict:
     delivery_recommendation_time = _safe_str(ai_data.get("delivery_recommendation_time") or ai_data.get("OPTIMAL DELIVERY TIME"))
     delivery_recommendation_location = _safe_str(ai_data.get("delivery_recommendation_location") or ai_data.get("DELIVER TO"))
     special_instructions = _safe_str(ai_data.get("special_instructions") or ai_data.get("SPECIAL INSTRUCTIONS"))
+
+    service_date, service_time, fallback_source = _normalize_service_datetime(
+        service_date,
+        service_time,
+        visitation_date,
+        visitation_time,
+        delivery_recommendation_date,
+        delivery_recommendation_time,
+    )
 
     raw_status = _safe_str(
         ai_data.get("status")       or ai_data.get("Status")      or
@@ -475,6 +510,10 @@ def parse_ai_response(ai_text: str) -> dict:
         if evidence_count >= 2 and score >= 50:
             match_status = "Review"
 
+    notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
+    if fallback_source in {"visitation", "delivery"}:
+        notes_value = f"{notes_value} | service datetime fallback={fallback_source}".strip(" |")
+
     return {
         "funeral_home_name": funeral_home_name,
         "funeral_address": funeral_address,
@@ -491,7 +530,7 @@ def parse_ai_response(ai_text: str) -> dict:
         "match_status": match_status,
         "ai_accuracy_score": score,
         "source_urls": source_urls,
-        "notes": _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification")),
+        "notes": notes_value,
     }
 
 
@@ -586,7 +625,7 @@ def main():
         api_payload = {
             "model": "sonar-pro",
             "messages": [
-                {"role": "system", "content": "You are an assistant that finds funeral and memorial service details. Return your findings in valid JSON format with these keys: funeral_home_name, funeral_address, funeral_phone, service_type, funeral_date, funeral_time, visitation_date, visitation_time, delivery_recommendation_date, delivery_recommendation_time, delivery_recommendation_location, special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. Use Found only when source-backed service details are available; if evidence is partial or ambiguous, return Review."},
+                {"role": "system", "content": "You are an assistant that finds funeral and memorial service details. Return your findings in valid JSON format with these keys: funeral_home_name, funeral_address, funeral_phone, service_type, funeral_date, funeral_time, visitation_date, visitation_time, delivery_recommendation_date, delivery_recommendation_time, delivery_recommendation_location, special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time and return those values in funeral_date/funeral_time. Use Found only when source-backed service details are available; if evidence is partial or ambiguous, return Review."},
                 {"role": "user", "content": prompt}
             ]
         }
