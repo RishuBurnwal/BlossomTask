@@ -113,6 +113,16 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _normalize_order_id(value) -> str:
+    order_id = _safe_str(value)
+    if not order_id:
+        return ""
+    # Some CSV writers coerce numeric IDs to floats (e.g., 12345.0).
+    if re.fullmatch(r"\d+\.0+", order_id):
+        return order_id.split(".", 1)[0]
+    return order_id
+
+
 def _normalize_service_datetime(
     service_date: str,
     service_time: str,
@@ -378,7 +388,7 @@ def load_logged_ids() -> set:
     ids = set()
     with open(LOGS_PATH, "r", encoding="utf-8") as f:
         for line in f:
-            oid = line.strip()
+            oid = _normalize_order_id(line)
             if oid:
                 ids.add(oid)
     return ids
@@ -386,8 +396,11 @@ def load_logged_ids() -> set:
 
 def append_logged_id(order_id: str):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    normalized_order_id = _normalize_order_id(order_id)
+    if not normalized_order_id:
+        return
     with open(LOGS_PATH, "a", encoding="utf-8") as f:
-        f.write(order_id + "\n")
+        f.write(normalized_order_id + "\n")
 
 
 def load_records(csv_path: Path) -> list:
@@ -398,11 +411,12 @@ def load_records(csv_path: Path) -> list:
         rows = []
         seen = set()
         for row_index, row in enumerate(reader, start=1):
-            order_id = _safe_str(row.get("order_id"))
+            order_id = _normalize_order_id(row.get("order_id"))
             if not order_id or order_id in seen:
                 continue
             seen.add(order_id)
             normalized_row = {field: _safe_str(row.get(field)) for field in FIELDNAMES}
+            normalized_row["order_id"] = order_id
             normalized_row["_source_row_number"] = row_index
             rows.append(normalized_row)
         return rows
@@ -412,7 +426,7 @@ def filter_records_by_logged_ids(rows: list, logged_ids: set[str]) -> tuple[list
     filtered_rows = []
     skipped_count = 0
     for row in rows:
-        order_id = _safe_str(row.get("order_id"))
+        order_id = _normalize_order_id(row.get("order_id"))
         if order_id and order_id in logged_ids:
             skipped_count += 1
             continue
@@ -454,14 +468,14 @@ def _rows_share_identity(existing_row: dict, record: dict) -> bool:
 
 def upsert_record(csv_path: Path, record: dict, row_number: int | None = None):
     rows = load_records(csv_path)
-    order_id = _safe_str(record.get("order_id"))
+    order_id = _normalize_order_id(record.get("order_id"))
     target_row_number = _coerce_row_number(row_number if row_number is not None else record.get("_source_row_number"))
     row_index_by_number = None
     row_index_by_order_id = None
 
     for index, row in enumerate(rows):
         current_row_number = _coerce_row_number(row.get("_source_row_number"))
-        current_order_id = _safe_str(row.get("order_id"))
+        current_order_id = _normalize_order_id(row.get("order_id"))
         if target_row_number is not None and current_row_number == target_row_number and row_index_by_number is None:
             row_index_by_number = index
         if current_order_id == order_id and row_index_by_order_id is None:
@@ -481,6 +495,7 @@ def upsert_record(csv_path: Path, record: dict, row_number: int | None = None):
         replacement_index = row_index_by_order_id
 
     cleaned_record = {field: _safe_str(record.get(field)) for field in FIELDNAMES}
+    cleaned_record["order_id"] = order_id
     if replacement_index is not None:
         next_rows = list(rows)
         next_rows[replacement_index] = {**next_rows[replacement_index], **cleaned_record}
@@ -492,7 +507,12 @@ def upsert_record(csv_path: Path, record: dict, row_number: int | None = None):
 
 def remove_record(csv_path: Path, order_id: str):
     rows = load_records(csv_path)
-    filtered = [row for row in rows if _safe_str(row.get("order_id")) != order_id]
+    normalized_target_order_id = _normalize_order_id(order_id)
+    filtered = [
+        row
+        for row in rows
+        if _normalize_order_id(row.get("order_id")) != normalized_target_order_id
+    ]
     write_records(csv_path, filtered)
 
 
@@ -765,11 +785,8 @@ def main():
         for source_name in source_order:
             rows = source_rows.get(source_name, [])
             original = len(rows)
-            filtered_rows = [
-                row for row in rows if _safe_str(row.get("order_id")) not in logged_ids
-            ]
+            filtered_rows, skipped_here = filter_records_by_logged_ids(rows, logged_ids)
             source_rows[source_name] = filtered_rows
-            skipped_here = original - len(filtered_rows)
             if skipped_here:
                 skipped_logged += skipped_here
                 print(f"[{SCRIPT_NAME}] Pre-filtered {skipped_here} already-processed IDs from {source_name}")
@@ -784,7 +801,7 @@ def main():
 
         print(f"[{SCRIPT_NAME}] Processing {source_name} records from {source_path.name}")
         for row in rows:
-            order_id = _safe_str(row.get("order_id"))
+            order_id = _normalize_order_id(row.get("order_id"))
             if not order_id:
                 continue
             if order_id in logged_ids and not args.force:
