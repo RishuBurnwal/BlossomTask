@@ -7,9 +7,28 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-# Ensure UTF-8 output for Windows terminals
-if os.name == 'nt':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+# Ensure UTF-8 output for Windows terminals.
+# Guard against test runners that may provide a closed or non-standard stdout.
+def _configure_windows_stdout_utf8() -> None:
+    if os.name != "nt":
+        return
+    stdout = getattr(sys, "stdout", None)
+    if stdout is None or getattr(stdout, "closed", False):
+        return
+    try:
+        if hasattr(stdout, "reconfigure"):
+            stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+            return
+        buffer = getattr(stdout, "buffer", None)
+        if buffer is None or getattr(buffer, "closed", False):
+            return
+        sys.stdout = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        # Keep original stdout if wrapping is unsupported in this environment.
+        return
+
+
+_configure_windows_stdout_utf8()
 
 import requests
 

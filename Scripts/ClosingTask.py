@@ -10,9 +10,28 @@ from datetime import datetime
 
 import requests
 
-# Ensure UTF-8 output for Windows terminals with line-buffered flushing
-if os.name == 'nt':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+# Ensure UTF-8 output for Windows terminals with line-buffered flushing.
+# Guard against test runners that may provide a closed or non-standard stdout.
+def _configure_windows_stdout_utf8() -> None:
+    if os.name != "nt":
+        return
+    stdout = getattr(sys, "stdout", None)
+    if stdout is None or getattr(stdout, "closed", False):
+        return
+    try:
+        if hasattr(stdout, "reconfigure"):
+            stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+            return
+        buffer = getattr(stdout, "buffer", None)
+        if buffer is None or getattr(buffer, "closed", False):
+            return
+        sys.stdout = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        # Keep original stdout if wrapping is unsupported in this environment.
+        return
+
+
+_configure_windows_stdout_utf8()
 
 # ── Optional openpyxl for Excel output ──────────────────────────────────────
 try:
@@ -151,6 +170,18 @@ def load_updater_data() -> list:
             orders.append(row)
 
     return orders
+
+
+def filter_orders_by_logged_ids(orders: list, logged_ids: set[str]) -> tuple[list, int]:
+    filtered_orders = []
+    skipped_count = 0
+    for order in orders:
+        order_id = _safe_str(order.get("order_id"))
+        if order_id and order_id in logged_ids:
+            skipped_count += 1
+            continue
+        filtered_orders.append(order)
+    return filtered_orders, skipped_count
 
 
 # ── Output writers ───────────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ Decision rules:
 - If funeral_date or funeral_time is missing, use visitation_date + visitation_time as fallback.
 - If visitation datetime is also missing, use delivery_recommendation_date + delivery_recommendation_time.
 - Always return the chosen fallback values inside funeral_date and funeral_time.
+- Treat the returned fallback as the canonical service_date/service_time for downstream CRM fields.
 
 Input context:
 [INSERT PROMPT/Details HERE]

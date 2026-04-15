@@ -1,0 +1,166 @@
+import csv
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = ROOT / "Scripts"
+for path in (ROOT, SCRIPTS_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import ClosingTask  # noqa: E402
+import Funeral_Finder  # noqa: E402
+import reverify  # noqa: E402
+import Updater  # noqa: E402
+
+
+def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    fieldnames = sorted({key for row in rows for key in row})
+    with open(path, "w", newline="", encoding="utf-8") as file_handle:
+        writer = csv.DictWriter(file_handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+class PipelineRequirementTests(unittest.TestCase):
+    def test_funeral_finder_parse_ai_response_uses_visitation_fallback(self):
+        ai_text = json.dumps(
+            {
+                "funeral_home_name": "Alpha Home",
+                "funeral_date": "",
+                "funeral_time": "",
+                "visitation_date": "2026-04-20",
+                "visitation_time": "11:00 AM",
+                "delivery_recommendation_date": "",
+                "delivery_recommendation_time": "",
+                "status": "Found",
+                "AI Accuracy Score": 91,
+                "source_urls": ["https://example.com/obit"],
+                "notes": "verified",
+            }
+        )
+
+        parsed = Funeral_Finder.parse_ai_response(ai_text)
+
+        self.assertEqual(parsed["service_date"], "2026-04-20")
+        self.assertEqual(parsed["service_time"], "11:00 AM")
+
+    def test_reverify_parse_ai_response_uses_delivery_fallback(self):
+        ai_text = json.dumps(
+            {
+                "funeral_home_name": "Beta Home",
+                "funeral_date": "",
+                "funeral_time": "",
+                "visitation_date": "",
+                "visitation_time": "",
+                "delivery_recommendation_date": "2026-04-22",
+                "delivery_recommendation_time": "02:15 PM",
+                "status": "Review",
+                "AI Accuracy Score": 72,
+                "source_urls": ["https://example.com/service"],
+                "notes": "fallback needed",
+            }
+        )
+
+        parsed = reverify.parse_ai_response(ai_text)
+
+        self.assertEqual(parsed["service_date"], "2026-04-22")
+        self.assertEqual(parsed["service_time"], "02:15 PM")
+        self.assertIn("service datetime fallback=delivery", parsed["notes"])
+
+    def test_updater_build_payload_uses_delivery_fallback(self):
+        order = {
+            "order_id": "5001",
+            "match_status": "Found",
+            "service_date": "",
+            "service_time": "",
+            "visitation_date": "",
+            "visitation_time": "",
+            "delivery_recommendation_date": "2026-04-22",
+            "delivery_recommendation_time": "02:15 PM",
+            "ship_name": "Gamma Doe",
+            "funeral_home_name": "Gamma Home",
+            "notes": "needs delivery fallback",
+            "source_urls": "https://example.com/obit",
+        }
+
+        payload = Updater.build_payload(order)
+
+        self.assertEqual(payload["trEndDate"], "2026-04-22 02:15 PM")
+        self.assertIn("Deliver By: 2026-04-22 02:15 PM", payload["trText"])
+        self.assertIn("Sources: https://example.com/obit", payload["trText"])
+
+    def test_closing_task_filters_logged_ids_after_loading(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            input_csv = temp_path / "updater_input.csv"
+            logs_file = temp_path / "closing_logs.txt"
+            _write_csv(
+                input_csv,
+                [
+                    {"order_id": "A", "upload_status": "SUCCESS", "status": "Found", "trResult": "Found"},
+                    {"order_id": "B", "upload_status": "SUCCESS", "status": "Review", "trResult": "Review"},
+                    {"order_id": "C", "upload_status": "FAILED", "status": "Found", "trResult": "Found"},
+                    {"order_id": "D", "upload_status": "SUCCESS", "status": "Found", "trResult": "Found"},
+                ],
+            )
+            logs_file.write_text("A\n", encoding="utf-8")
+
+            with patch.object(ClosingTask, "INPUT_CSV", input_csv):
+                with patch.object(ClosingTask, "LOGS_PATH", logs_file):
+                    orders = ClosingTask.load_updater_data()
+                    logged_ids = ClosingTask.load_logged_ids()
+                    filtered_orders, skipped = ClosingTask.filter_orders_by_logged_ids(orders, logged_ids)
+
+        self.assertEqual([order["order_id"] for order in orders], ["A", "D"])
+        self.assertEqual(logged_ids, {"A"})
+        self.assertEqual(skipped, 1)
+        self.assertEqual([order["order_id"] for order in filtered_orders], ["D"])
+
+    def test_updater_filters_logged_ids_after_loading(self):
+        orders = [
+            {"order_id": "A", "match_status": "Found"},
+            {"order_id": "B", "match_status": "Found"},
+            {"order_id": "C", "match_status": "Review"},
+        ]
+
+        filtered_orders, skipped = Updater.filter_orders_by_logged_ids(orders, {"B"})
+
+        self.assertEqual(skipped, 1)
+        self.assertEqual([order["order_id"] for order in filtered_orders], ["A", "C"])
+
+    def test_reverify_filters_logged_ids_after_loading(self):
+        rows = [
+            {"order_id": "A", "match_status": "NotFound"},
+            {"order_id": "B", "match_status": "Review"},
+            {"order_id": "C", "match_status": "NotFound"},
+        ]
+
+        filtered_rows, skipped = reverify.filter_records_by_logged_ids(rows, {"A", "C"})
+
+        self.assertEqual(skipped, 2)
+        self.assertEqual([row["order_id"] for row in filtered_rows], ["B"])
+
+    def test_reverify_normalize_service_datetime_prefers_service_then_visitation_then_delivery(self):
+        self.assertEqual(
+            reverify._normalize_service_datetime("2026-04-20", "10:00 AM", "2026-04-21", "11:00 AM", "2026-04-22", "02:00 PM"),
+            ("2026-04-20", "10:00 AM", "service"),
+        )
+        self.assertEqual(
+            reverify._normalize_service_datetime("", "", "2026-04-21", "11:00 AM", "2026-04-22", "02:00 PM"),
+            ("2026-04-21", "11:00 AM", "visitation"),
+        )
+        self.assertEqual(
+            reverify._normalize_service_datetime("", "", "", "", "2026-04-22", "02:00 PM"),
+            ("2026-04-22", "02:00 PM", "delivery"),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
