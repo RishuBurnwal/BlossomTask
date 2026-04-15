@@ -699,6 +699,28 @@ last_processed_at
 | Docker build fails | Ensure Docker Desktop is running. Check `docker --version`. |
 | Scripts hang or timeout | Check CRM API availability. Verify `.env` URLs include proper `/api/` path. |
 | Empty pipeline output | Run preflight check (`python main.py --health`) to verify `.env` configuration. |
+| Cloudways site shows `502 Bad Gateway` | Usually backend process is not running. Start backend in background on port `8787` and verify `/api/health` locally. |
+
+### Cloudways 502 Quick Fix
+
+If deployment succeeded but the domain still shows `502 Bad Gateway`, run these commands on the server:
+
+```bash
+cd ~/applications/<app-id>/public_html
+npm install --no-audit --no-fund
+nohup env BACKEND_PORT=8787 npm run backend > logs/backend.out.log 2> logs/backend.err.log < /dev/null &
+```
+
+Then verify backend and domain:
+
+```bash
+curl -sS http://127.0.0.1:8787/api/health
+curl -I https://<your-domain>/
+```
+
+Expected results:
+- Health endpoint returns JSON like `{ "ok": true, "service": "webui-backend" }`
+- Domain returns `HTTP/2 200` (or `HTTP/1.1 200`) instead of `502`
 
 ### Checking Logs
 
