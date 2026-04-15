@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import json
 import subprocess
 import sys
 import os
@@ -45,6 +46,7 @@ TAGLINE = "Funeral Order Automation Pipeline"
 DEFAULT_FRONTEND_PORT = 8080
 DEFAULT_BACKEND_PORT = 8787
 LOGS_DIR = ROOT / "outputs" / "logs"
+BG_STATE_FILE = LOGS_DIR / "background_servers.json"
 
 # ── Colors (ANSI) ───────────────────────────────────────────────────────────
 class C:
@@ -175,6 +177,212 @@ def is_port_in_use(port):
     """Check if a port is currently in use."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('localhost', port)) == 0
+
+
+def _record_background_servers(frontend_port, backend_port, frontend_pid, backend_pid):
+    """Persist background server PIDs so they can be stopped later."""
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "frontend_port": frontend_port,
+        "backend_port": backend_port,
+        "frontend_pid": frontend_pid,
+        "backend_pid": backend_pid,
+        "updated_at": int(time.time()),
+    }
+    with open(BG_STATE_FILE, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+def _load_background_servers():
+    """Load persisted background server metadata, if available."""
+    if not BG_STATE_FILE.exists():
+        return None
+    try:
+        with open(BG_STATE_FILE, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return None
+
+
+def _clear_background_servers():
+    """Remove persisted background server metadata."""
+    try:
+        BG_STATE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _parse_netstat_pids(netstat_output, port):
+    """Parse Windows netstat output and extract listening PIDs for a TCP port."""
+    pids = set()
+    for line in netstat_output.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        local_addr = parts[1]
+        state = parts[3]
+        pid_value = parts[4]
+
+        if ":" not in local_addr:
+            continue
+        local_port = local_addr.rsplit(":", 1)[-1]
+        if not local_port.isdigit() or int(local_port) != int(port):
+            continue
+        if state.upper() != "LISTENING":
+            continue
+        if pid_value.isdigit():
+            pids.add(int(pid_value))
+    return pids
+
+
+def _get_pids_on_port(port):
+    """Return a set of PIDs listening on the requested port."""
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+            return _parse_netstat_pids(result.stdout, port)
+        except Exception:
+            return set()
+
+    probes = [
+        ["lsof", "-ti", f"tcp:{port}"],
+        ["ss", "-ltnp"],
+    ]
+    for cmd in probes:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+        except Exception:
+            continue
+
+        if cmd[0] == "lsof":
+            lsof_pids = {int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()}
+            if lsof_pids:
+                return lsof_pids
+            continue
+
+        pids = set()
+        for line in result.stdout.splitlines():
+            if f":{port} " not in line and not line.rstrip().endswith(f":{port}"):
+                continue
+            if "pid=" not in line:
+                continue
+            pid_frag = line.split("pid=", 1)[1].split(",", 1)[0].strip()
+            if pid_frag.isdigit():
+                pids.add(int(pid_frag))
+        if pids:
+            return pids
+
+    return set()
+
+
+def _kill_pid(pid):
+    """Force kill a process tree for a PID."""
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            result = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False)
+            return result.returncode == 0
+
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except Exception:
+        return False
+
+
+def _background_start_menu():
+    """Start dashboard servers detached and return control immediately."""
+    print_section("Background Dashboard Mode", "🧵")
+    print_info("Starting frontend + backend in detached mode...")
+    success = launch_ui(background=True)
+    if success:
+        print_success("Terminal control returned. Servers are running in background.")
+    else:
+        print_error("Could not start background servers.")
+
+
+def _program_killer_menu():
+    """Stop tracked dashboard processes and clear selected ports."""
+    print_section("Program Killer", "☠️")
+
+    tracked = _load_background_servers()
+    tracked_fe = tracked.get("frontend_pid") if isinstance(tracked, dict) else None
+    tracked_be = tracked.get("backend_pid") if isinstance(tracked, dict) else None
+
+    print(f"  {C.BOLD}Tracked background PIDs:{C.RESET}")
+    print(f"    Frontend PID : {tracked_fe or 'n/a'}")
+    print(f"    Backend PID  : {tracked_be or 'n/a'}")
+    print()
+    print(f"  {C.BOLD}Options:{C.RESET}")
+    print(f"    {C.CYAN}[1]{C.RESET} Kill tracked dashboard programs + default ports ({DEFAULT_FRONTEND_PORT}, {DEFAULT_BACKEND_PORT})")
+    print(f"    {C.CYAN}[2]{C.RESET} Kill custom ports + tracked programs")
+    print(f"    {C.CYAN}[0]{C.RESET} Back to main menu")
+    print()
+
+    choice = input(f"  {C.BOLD}Select option: {C.RESET}").strip()
+    if choice == "0":
+        return
+
+    if choice == "1":
+        ports = [DEFAULT_FRONTEND_PORT, DEFAULT_BACKEND_PORT]
+    elif choice == "2":
+        raw_ports = input("  Enter ports (comma separated): ").strip()
+        try:
+            ports = [int(item.strip()) for item in raw_ports.split(",") if item.strip()]
+        except ValueError:
+            print_error("Invalid port list")
+            return
+        if not ports:
+            print_warn("No ports provided")
+            return
+    else:
+        print_error("Invalid option")
+        return
+
+    confirm = input(f"  {C.YELLOW}This will force kill processes. Continue? (y/N): {C.RESET}").strip().lower()
+    if confirm not in ["y", "yes"]:
+        print_info("Cancelled")
+        return
+
+    to_kill = set()
+    if isinstance(tracked_fe, int):
+        to_kill.add(tracked_fe)
+    if isinstance(tracked_be, int):
+        to_kill.add(tracked_be)
+
+    for port in ports:
+        to_kill.update(_get_pids_on_port(port))
+
+    if not to_kill:
+        print_warn("No matching processes found")
+        _clear_background_servers()
+        return
+
+    killed = 0
+    failed = 0
+    for pid in sorted(to_kill):
+        if _kill_pid(pid):
+            killed += 1
+            print_success(f"Killed PID {pid}")
+        else:
+            failed += 1
+            print_warn(f"Could not kill PID {pid}")
+
+    _clear_background_servers()
+    print_info(f"Requested ports: {', '.join(str(p) for p in ports)}")
+    print_info(f"Summary: killed={killed}, failed={failed}")
 
 
 def load_dotenv(path=".env"):
@@ -394,6 +602,7 @@ def launch_ui(frontend_port=DEFAULT_FRONTEND_PORT, backend_port=DEFAULT_BACKEND_
         return False
 
     if background:
+        _clear_background_servers()
         deadline = time.time() + 10
         while time.time() < deadline:
             if backend.poll() is not None:
@@ -405,6 +614,12 @@ def launch_ui(frontend_port=DEFAULT_FRONTEND_PORT, backend_port=DEFAULT_BACKEND_
                 print_error("Frontend process exited during startup")
                 return False
             if is_port_in_use(backend_port) and is_port_in_use(frontend_port):
+                _record_background_servers(
+                    frontend_port=frontend_port,
+                    backend_port=backend_port,
+                    frontend_pid=frontend.pid,
+                    backend_pid=backend.pid,
+                )
                 print_success(
                     f"Servers started in background (backend PID: {backend.pid}, frontend PID: {frontend.pid})"
                 )
@@ -804,6 +1019,8 @@ def interactive_menu():
         print(f"    {C.CYAN}[7]{C.RESET}  🩺  System Health Check           {C.DIM}(Verify Setup){C.RESET}")
         print(f"    {C.CYAN}[8]{C.RESET}  📁  View Output Files             {C.DIM}(Browse Results){C.RESET}")
         print(f"    {C.CYAN}[9]{C.RESET}  🧭  Terminal Pipeline Runner      {C.DIM}(Interactive/Resume/Cron){C.RESET}")
+        print(f"    {C.CYAN}[10]{C.RESET} 🧵  Background Dashboard Mode    {C.DIM}(Start servers, return terminal){C.RESET}")
+        print(f"    {C.CYAN}[11]{C.RESET} ☠️  Program Killer               {C.DIM}(Kill ports + programs){C.RESET}")
         print()
         print(f"    {C.RED}[0]{C.RESET}  🚪  Exit")
         print()
@@ -843,6 +1060,12 @@ def interactive_menu():
                 print_warn("Terminal pipeline runner interrupted")
             else:
                 print_error("Terminal pipeline runner ended with failure")
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "10":
+            _background_start_menu()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "11":
+            _program_killer_menu()
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice in ["0", "q", "quit", "exit"]:
             print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
