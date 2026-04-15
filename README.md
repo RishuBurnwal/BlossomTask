@@ -208,7 +208,7 @@ This opens the professional interactive menu with options:
 | Option | Description |
 |--------|-------------|
 | `[1]` Launch Dashboard UI | Start both frontend and backend, open browser |
-| `[2]` Run Full Pipeline | Execute all 5 stages sequentially |
+| `[2]` Run Full Pipeline | Execute all 6 stages sequentially |
 | `[3]` Configure & Run Pipeline | Choose stages, dry-run, force mode |
 | `[4]` Port Configuration | Custom ports, single-server mode |
 | `[5]` Run with Docker | Build and start Docker containers |
@@ -216,6 +216,8 @@ This opens the professional interactive menu with options:
 | `[7]` System Health Check | Verify all prerequisites and configuration |
 | `[8]` View Output Files | Browse pipeline output directory |
 | `[9]` Terminal Pipeline Runner | Interactive terminal orchestration with checkpoint/resume + schedule mode |
+| `[10]` Background Dashboard Mode | Start frontend/backend in detached mode and return terminal control |
+| `[11]` Program Killer | Kill tracked dashboard processes and clear selected ports |
 
 ### CLI Flags
 
