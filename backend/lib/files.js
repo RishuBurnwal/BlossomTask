@@ -147,6 +147,32 @@ function parseCsv(content, limit = 200) {
   });
 }
 
+function normalizeRowObject(row = {}) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) {
+    return row;
+  }
+
+  const normalized = { ...row };
+  const aliases = {
+    trresult: "trResult",
+    trtext: "trText",
+    trenddate: "trEndDate",
+    ord_id: "ord_id",
+    ordid: "ord_id",
+    order_id: "order_id",
+  };
+
+  Object.entries(row).forEach(([key, value]) => {
+    const canonicalKey = aliases[String(key).toLowerCase()] || key;
+    if (canonicalKey !== key) {
+      normalized[canonicalKey] = value;
+      delete normalized[key];
+    }
+  });
+
+  return normalized;
+}
+
 function parseXlsx(buffer, limit = 200) {
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
   const firstSheet = workbook.SheetNames?.[0];
@@ -157,9 +183,10 @@ function parseXlsx(buffer, limit = 200) {
   const worksheet = workbook.Sheets[firstSheet];
   const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
   const boundedLimit = Number(limit);
-  return Number.isFinite(boundedLimit) && boundedLimit > 0
+  const parsedRows = Number.isFinite(boundedLimit) && boundedLimit > 0
     ? rows.slice(0, boundedLimit)
     : rows;
+  return parsedRows.map((row) => normalizeRowObject(row));
 }
 
 export function readFileContent(inputPath, limit = 200) {
@@ -203,7 +230,11 @@ export function readFileContent(inputPath, limit = 200) {
 
   if (ext === ".json") {
     const json = JSON.parse(raw);
-    return { type: "json", raw, parsed: Array.isArray(json) ? json.slice(0, limit) : json };
+    return {
+      type: "json",
+      raw,
+      parsed: Array.isArray(json) ? json.slice(0, limit).map((row) => normalizeRowObject(row)) : normalizeRowObject(json),
+    };
   }
 
   if (ext === ".jsonl") {
@@ -213,7 +244,7 @@ export function readFileContent(inputPath, limit = 200) {
       .slice(0, limit)
       .map((line) => {
         try {
-          return JSON.parse(line);
+          return normalizeRowObject(JSON.parse(line));
         } catch {
           return { line };
         }
