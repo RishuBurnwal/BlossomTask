@@ -58,6 +58,10 @@ class PipelineRequirementTests(unittest.TestCase):
         parsed = {
             "match_status": "Found",
             "ai_accuracy_score": 91,
+            "service_date": "2026-04-20",
+            "service_time": "11:00 AM",
+            "visitation_date": "",
+            "visitation_time": "",
             "special_instructions": "Service: Apr 20 11:00 AM",
             "notes": "",
         }
@@ -164,7 +168,7 @@ class PipelineRequirementTests(unittest.TestCase):
         self.assertEqual(parsed["service_date"], "2026-04-20")
         self.assertEqual(parsed["service_time"], "11:00 AM")
 
-    def test_reverify_parse_ai_response_uses_delivery_fallback(self):
+    def test_reverify_parse_ai_response_without_datetime_pair_is_not_found(self):
         ai_text = json.dumps(
             {
                 "funeral_home_name": "Beta Home",
@@ -174,7 +178,7 @@ class PipelineRequirementTests(unittest.TestCase):
                 "visitation_time": "",
                 "delivery_recommendation_date": "2026-04-22",
                 "delivery_recommendation_time": "02:15 PM",
-                "status": "Review",
+                "status": "Found",
                 "AI Accuracy Score": 72,
                 "source_urls": ["https://example.com/service"],
                 "notes": "fallback needed",
@@ -183,11 +187,11 @@ class PipelineRequirementTests(unittest.TestCase):
 
         parsed = reverify.parse_ai_response(ai_text)
 
-        self.assertEqual(parsed["service_date"], "2026-04-22")
-        self.assertEqual(parsed["service_time"], "02:15 PM")
-        self.assertIn("service datetime fallback=delivery", parsed["notes"])
+        self.assertEqual(parsed["service_date"], "")
+        self.assertEqual(parsed["service_time"], "")
+        self.assertEqual(parsed["match_status"], "NotFound")
 
-    def test_updater_build_payload_uses_delivery_fallback(self):
+    def test_updater_build_payload_does_not_use_delivery_for_tr_end_date(self):
         order = {
             "order_id": "5001",
             "match_status": "Found",
@@ -205,9 +209,63 @@ class PipelineRequirementTests(unittest.TestCase):
 
         payload = Updater.build_payload(order)
 
-        self.assertEqual(payload["trEndDate"], "2026-04-22 02:15 PM")
+        self.assertEqual(payload["trEndDate"], "")
+        self.assertEqual(payload["trResult"], "NotFound")
         self.assertIn("Deliver By: 2026-04-22 02:15 PM", payload["trText"])
         self.assertIn("Sources: https://example.com/obit", payload["trText"])
+
+    def test_reverify_update_record_keeps_single_note_source(self):
+        record = {"notes": "main-note", "order_id": "100", "match_status": "Review"}
+        result = {"notes": "reverify-note", "match_status": "Found", "ai_accuracy_score": 88}
+
+        updated = reverify.update_record_for_result(record, result, "review")
+
+        self.assertEqual(updated["notes"], "reverify-note")
+        self.assertNotIn("main-note |", updated["notes"])
+
+    def test_reverify_apply_business_rules_forces_not_found_without_datetime_pair(self):
+        record = {
+            "ord_instruct": "",
+            "ship_care_of": "",
+            "ship_address": "",
+        }
+        parsed = {
+            "match_status": "Review",
+            "ai_accuracy_score": 80,
+            "service_date": "",
+            "service_time": "",
+            "visitation_date": "",
+            "visitation_time": "",
+            "special_instructions": "",
+            "notes": "",
+        }
+
+        adjusted = reverify.apply_business_rules(record, parsed)
+
+        self.assertEqual(adjusted["match_status"], "NotFound")
+
+    def test_reverify_parse_ai_response_keeps_ceremony_fields(self):
+        ai_text = json.dumps(
+            {
+                "funeral_home_name": "Ceremony Home",
+                "funeral_date": "",
+                "funeral_time": "",
+                "visitation_date": "",
+                "visitation_time": "",
+                "ceremony_date": "2026-05-01",
+                "ceremony_time": "03:00 PM",
+                "status": "Found",
+                "AI Accuracy Score": 88,
+                "source_urls": ["https://example.com/ceremony"],
+                "notes": "ceremony found",
+            }
+        )
+
+        parsed = reverify.parse_ai_response(ai_text)
+
+        self.assertEqual(parsed["ceremony_date"], "2026-05-01")
+        self.assertEqual(parsed["ceremony_time"], "03:00 PM")
+        self.assertEqual(parsed["match_status"], "Found")
 
     def test_closing_task_filters_logged_ids_after_loading(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -271,18 +329,18 @@ class PipelineRequirementTests(unittest.TestCase):
         self.assertEqual(skipped, 1)
         self.assertEqual([row["order_id"] for row in filtered_rows], ["12346"])
 
-    def test_reverify_normalize_service_datetime_prefers_service_then_visitation_then_delivery(self):
+    def test_reverify_normalize_service_datetime_prefers_service_then_visitation_then_ceremony(self):
         self.assertEqual(
-            reverify._normalize_service_datetime("2026-04-20", "10:00 AM", "2026-04-21", "11:00 AM", "2026-04-22", "02:00 PM"),
+            reverify._normalize_service_datetime("2026-04-20", "10:00 AM", "2026-04-21", "11:00 AM", "2026-04-23", "01:00 PM"),
             ("2026-04-20", "10:00 AM", "service"),
         )
         self.assertEqual(
-            reverify._normalize_service_datetime("", "", "2026-04-21", "11:00 AM", "2026-04-22", "02:00 PM"),
+            reverify._normalize_service_datetime("", "", "2026-04-21", "11:00 AM", "2026-04-23", "01:00 PM"),
             ("2026-04-21", "11:00 AM", "visitation"),
         )
         self.assertEqual(
-            reverify._normalize_service_datetime("", "", "", "", "2026-04-22", "02:00 PM"),
-            ("2026-04-22", "02:00 PM", "delivery"),
+            reverify._normalize_service_datetime("", "", "", "", "2026-04-23", "01:00 PM"),
+            ("2026-04-23", "01:00 PM", "ceremony"),
         )
 
 
