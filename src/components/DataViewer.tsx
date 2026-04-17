@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileSpreadsheet, FolderOpen, ChevronRight, ChevronLeft, BadgeCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import type { DataRow } from "@/lib/types";
@@ -7,6 +7,7 @@ import type { DataRow } from "@/lib/types";
 type FileTab = "main" | "all";
 
 export function DataViewer() {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<FileTab>("all");
   const [activePath, setActivePath] = useState("");
   const [selectedFile, setSelectedFile] = useState<string>("");
@@ -54,36 +55,6 @@ export function DataViewer() {
     queryFn: () => api.job(selectedRuntimeJobId),
     enabled: viewMode === "terminal" && terminalSource === "runtime" && Boolean(selectedRuntimeJobId),
     refetchInterval: 1500,
-  });
-
-  const { refetch: refetchDatasets } = useQuery({
-    queryKey: ["datasets-refresh-only"],
-    queryFn: api.datasets,
-    enabled: false,
-  });
-
-  const { refetch: refetchTree } = useQuery({
-    queryKey: ["files-tree-refresh-only", activePath],
-    queryFn: () => api.fileTree(activePath),
-    enabled: false,
-  });
-
-  const { refetch: refetchSelectedFile } = useQuery({
-    queryKey: ["file-content-refresh-only", selectedFile],
-    queryFn: () => api.fileContent(selectedFile, 300),
-    enabled: false,
-  });
-
-  const { refetch: refetchJobs } = useQuery({
-    queryKey: ["jobs-refresh-only"],
-    queryFn: api.jobs,
-    enabled: false,
-  });
-
-  const { refetch: refetchRuntimeJob } = useQuery({
-    queryKey: ["job-refresh-only", selectedRuntimeJobId],
-    queryFn: () => api.job(selectedRuntimeJobId),
-    enabled: false,
   });
 
   const entries = treeData?.entries ?? [];
@@ -163,24 +134,26 @@ export function DataViewer() {
   const runtimeJobs = (jobsData?.jobs ?? []).filter((job) => job.kind === "script" || job.kind === "pipeline");
 
   const refreshNow = useCallback(async () => {
-    await Promise.all([
-      refetchDatasets(),
-      refetchTree(),
-      refetchRecursiveTree(),
-      refetchJobs(),
-      selectedFile ? refetchSelectedFile() : Promise.resolve(),
-      selectedRuntimeJobId ? refetchRuntimeJob() : Promise.resolve(),
-    ]);
-  }, [
-    refetchDatasets,
-    refetchTree,
-    refetchRecursiveTree,
-    refetchJobs,
-    selectedFile,
-    refetchSelectedFile,
-    selectedRuntimeJobId,
-    refetchRuntimeJob,
-  ]);
+    const refreshTasks: Promise<unknown>[] = [
+      queryClient.invalidateQueries({ queryKey: ["datasets"], refetchType: "active" }),
+      queryClient.invalidateQueries({ queryKey: ["files-tree", activePath], refetchType: "active" }),
+      queryClient.invalidateQueries({ queryKey: ["files-tree", "recursive-picker"], refetchType: "active" }),
+      queryClient.invalidateQueries({ queryKey: ["jobs", "terminal"], refetchType: "active" }),
+    ];
+
+    if (selectedFile) {
+      refreshTasks.push(
+        queryClient.invalidateQueries({ queryKey: ["file-content", selectedFile], refetchType: "active" }),
+      );
+    }
+    if (selectedRuntimeJobId) {
+      refreshTasks.push(
+        queryClient.invalidateQueries({ queryKey: ["job", selectedRuntimeJobId, "terminal"], refetchType: "active" }),
+      );
+    }
+
+    await Promise.all(refreshTasks);
+  }, [queryClient, activePath, selectedFile, selectedRuntimeJobId]);
 
   useEffect(() => {
     const previousById = previousRuntimeStatusesRef.current;

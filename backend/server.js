@@ -18,6 +18,8 @@ const PORT = Number(process.env.BACKEND_PORT || 8787);
 const jobsFile = "jobs.json";
 const schedulesFile = "schedules.json";
 const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
+const runHistoryBackupFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.prev.jsonl");
+const RUN_HISTORY_MAX_BYTES = Number(process.env.RUN_HISTORY_MAX_BYTES || 50 * 1024 * 1024);
 const runningProcesses = new Map();
 const scheduleTasks = new Map();
 const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "reverify", "updater", "closing-task"];
@@ -75,6 +77,39 @@ function ensureRunHistoryFile() {
   }
 }
 
+function rotateRunHistoryIfNeeded() {
+  if (!fs.existsSync(runHistoryFile)) {
+    return;
+  }
+
+  let fileSize = 0;
+  try {
+    fileSize = fs.statSync(runHistoryFile).size;
+  } catch {
+    return;
+  }
+
+  if (!Number.isFinite(fileSize) || fileSize < RUN_HISTORY_MAX_BYTES) {
+    return;
+  }
+
+  try {
+    if (fs.existsSync(runHistoryBackupFile)) {
+      fs.unlinkSync(runHistoryBackupFile);
+    }
+  } catch {
+    // Ignore backup cleanup errors; we still attempt rotation.
+  }
+
+  try {
+    fs.renameSync(runHistoryFile, runHistoryBackupFile);
+    fs.writeFileSync(runHistoryFile, "", "utf-8");
+    console.warn(`Run history rotated at ${new Date().toISOString()} (limit=${RUN_HISTORY_MAX_BYTES} bytes)`);
+  } catch (error) {
+    console.error("Failed to rotate run history log:", error);
+  }
+}
+
 function parseLoggedLine(line) {
   const source = String(line || "");
   const match = source.match(/^\[([^\]]+)\]\s*(.*)$/);
@@ -86,6 +121,7 @@ function parseLoggedLine(line) {
 
 function appendRunHistoryEntry(entry) {
   ensureRunHistoryFile();
+  rotateRunHistoryIfNeeded();
   fs.appendFileSync(runHistoryFile, `${JSON.stringify(entry)}\n`, "utf-8");
 }
 
@@ -271,7 +307,16 @@ function createPreflightReport() {
 }
 
 function loadJobs() {
-  return readJson(jobsFile, []);
+  const raw = readJson(jobsFile, []);
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((job) => {
+    if (!job || typeof job !== "object") return false;
+    if (typeof job.id !== "string") return false;
+    if (!["script", "pipeline"].includes(job.kind)) return false;
+    return true;
+  });
 }
 
 function getActiveWorkload() {

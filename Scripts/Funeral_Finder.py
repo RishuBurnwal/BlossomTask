@@ -240,6 +240,92 @@ def _normalize_service_datetime(
     return service_date, service_time, "none"
 
 
+def _append_unique_note(base: str, note: str) -> str:
+    base_text = _safe_str(base)
+    note_text = _safe_str(note)
+    if not note_text:
+        return base_text
+    if note_text in base_text:
+        return base_text
+    return f"{base_text} | {note_text}".strip(" |")
+
+
+def _has_schedule_hint(text: str) -> bool:
+    value = _safe_str(text).lower()
+    if not value:
+        return False
+    has_event_keyword = any(
+        keyword in value
+        for keyword in ["service", "funeral", "memorial", "visitation", "viewing", "wake", "burial"]
+    )
+    has_time_or_date = bool(
+        re.search(r"\b\d{1,2}:\d{2}\s*(am|pm)\b", value)
+        or re.search(r"\b\d{1,2}\s*(am|pm)\b", value)
+        or re.search(r"\b(mon|tue|wed|thu|fri|sat|sun)\b", value)
+        or re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b", value)
+        or re.search(r"\b\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?\b", value)
+    )
+    return has_event_keyword and has_time_or_date
+
+
+def _destination_type(order: dict) -> str:
+    destination_text = " ".join(
+        [
+            _safe_str(order.get("ship_care_of")),
+            _safe_str(order.get("ship_address")),
+            _safe_str(order.get("ord_instruct")),
+        ]
+    ).lower()
+    if not destination_text:
+        return "unknown"
+    if any(
+        keyword in destination_text
+        for keyword in [
+            "funeral",
+            "funeral home",
+            "church",
+            "chapel",
+            "cemetery",
+            "mortuary",
+            "cremation",
+            "crematory",
+            "community center",
+            "memorial",
+            "celebration of life",
+        ]
+    ):
+        return "funeral"
+    if any(keyword in destination_text for keyword in ["p.o. box", "po box", "apartment", "apt", "office", "home"]):
+        return "non_funeral"
+    return "unknown"
+
+
+def _apply_business_rules(order: dict, parsed: dict) -> dict:
+    adjusted = dict(parsed)
+    notes = _safe_str(adjusted.get("notes"))
+    customer_instructions = _safe_str(order.get("ord_instruct"))
+
+    if _has_schedule_hint(customer_instructions):
+        if not _safe_str(adjusted.get("special_instructions")):
+            adjusted["special_instructions"] = f"Customer-provided schedule: {customer_instructions}"[:1000]
+        elif customer_instructions not in _safe_str(adjusted.get("special_instructions")):
+            adjusted["special_instructions"] = (
+                f"{adjusted['special_instructions']} | Customer-provided schedule: {customer_instructions}"
+            )[:1000]
+
+        if adjusted.get("match_status") in {"NotFound", "Review"}:
+            adjusted["match_status"] = "Found"
+            adjusted["ai_accuracy_score"] = max(float(adjusted.get("ai_accuracy_score") or 0), 75.0)
+            notes = _append_unique_note(notes, "Found via existing order instructions with schedule")
+
+    if adjusted.get("match_status") == "Found" and _destination_type(order) == "non_funeral":
+        adjusted["match_status"] = "Review"
+        notes = _append_unique_note(notes, "Review required: destination appears non-funeral location")
+
+    adjusted["notes"] = notes
+    return adjusted
+
+
 # ── logs.txt helpers ─────────────────────────────────────────────────────────
 
 def load_logged_ids() -> set:
@@ -440,6 +526,21 @@ def parse_ai_response(ai_text: str) -> dict:
         delivery_recommendation_time,
     )
 
+    si_parts = []
+    if special_instructions:
+        si_parts.append(special_instructions)
+    if visitation_date or visitation_time:
+        viewing_bits = [bit for bit in [visitation_date, visitation_time] if bit]
+        viewing_line = f"Viewing/Visitation: {' '.join(viewing_bits)}".strip()
+        if viewing_line and viewing_line.lower() not in special_instructions.lower():
+            si_parts.append(viewing_line)
+    if service_date or service_time:
+        service_bits = [bit for bit in [service_date, service_time] if bit]
+        service_line = f"Service: {' '.join(service_bits)}".strip()
+        if service_line and service_line.lower() not in " | ".join(si_parts).lower():
+            si_parts.append(service_line)
+    special_instructions = " | ".join(part for part in si_parts if part)
+
     raw_status = _safe_str(
         ai_data.get("status")       or ai_data.get("Status")      or
         ai_data.get("STATUS")       or ai_data.get("match_status") or
@@ -526,6 +627,9 @@ def parse_ai_response(ai_text: str) -> dict:
     elif match_status == "NotFound":
         if evidence_count >= 2 and score >= 50:
             match_status = "Review"
+
+    if match_status == "Found" and not special_instructions:
+        match_status = "Review"
 
     notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
     if fallback_source in {"visitation", "delivery"}:
@@ -684,8 +788,9 @@ def main():
             })
             continue
 
-        # Parse AI response
+        # Parse AI response and enforce local business rules from review findings.
         parsed = parse_ai_response(ai_text)
+        parsed = _apply_business_rules(order, parsed)
 
         # Show result in terminal
         status = parsed["match_status"]

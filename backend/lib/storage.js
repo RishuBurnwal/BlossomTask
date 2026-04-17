@@ -28,7 +28,37 @@ export function readJson(fileName, defaultValue) {
 export function writeJson(fileName, value) {
   const filePath = path.join(dataDir, fileName);
   ensureDataDir();
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
+  const payload = JSON.stringify(value, null, 2);
+  const tempPath = `${filePath}.tmp`;
+  const maxAttempts = 6;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      fs.writeFileSync(tempPath, payload, "utf-8");
+      fs.renameSync(tempPath, filePath);
+      return;
+    } catch (error) {
+      try {
+        if (fs.existsSync(tempPath)) {
+          fs.unlinkSync(tempPath);
+        }
+      } catch {
+        // ignore cleanup errors
+      }
+
+      const code = String(error?.code || "").toUpperCase();
+      const shouldRetry = ["EPERM", "EBUSY", "UNKNOWN"].includes(code);
+      if (!shouldRetry || attempt === maxAttempts) {
+        throw error;
+      }
+
+      // Small blocking backoff to tolerate transient Windows file locks.
+      const waitUntil = Date.now() + attempt * 20;
+      while (Date.now() < waitUntil) {
+        // intentional no-op busy wait; avoids adding async complexity in sync callsites
+      }
+    }
+  }
 }
 
 export function createId(prefix = "id") {
