@@ -16,6 +16,12 @@ from urllib.parse import urlparse
 
 import requests
 
+try:
+    import openpyxl
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+
 def _configure_windows_stdout_utf8() -> None:
     if os.name != "nt":
         return
@@ -48,6 +54,9 @@ SOURCE_FILES = {
     "review": OUTPUT_DIR / "Funeral_data_review.csv",
 }
 MAIN_CSV_PATH = OUTPUT_DIR / "Funeral_data.csv"
+MAIN_EXCEL_PATH = OUTPUT_DIR / "Funeral_data.xlsx"
+NOT_FOUND_EXCEL_PATH = OUTPUT_DIR / "Funeral_data_not_found.xlsx"
+REVIEW_EXCEL_PATH = OUTPUT_DIR / "Funeral_data_review.xlsx"
 PAYLOAD_PATH = OUTPUT_DIR / "reverify_payload.json"
 LOGS_PATH = OUTPUT_DIR / "reverify_logs.txt"
 
@@ -270,6 +279,21 @@ def parse_ai_response(ai_text: str) -> dict:
         delivery_recommendation_time,
     )
 
+    si_parts = []
+    if special_instructions:
+        si_parts.append(special_instructions)
+    if visitation_date or visitation_time:
+        viewing_bits = [bit for bit in [visitation_date, visitation_time] if bit]
+        viewing_line = f"Viewing/Visitation: {' '.join(viewing_bits)}".strip()
+        if viewing_line and viewing_line.lower() not in special_instructions.lower():
+            si_parts.append(viewing_line)
+    if service_date or service_time:
+        service_bits = [bit for bit in [service_date, service_time] if bit]
+        service_line = f"Service: {' '.join(service_bits)}".strip()
+        if service_line and service_line.lower() not in " | ".join(si_parts).lower():
+            si_parts.append(service_line)
+    special_instructions = " | ".join(part for part in si_parts if part)
+
     raw_status = _safe_str(
         ai_data.get("status")       or ai_data.get("Status")      or
         ai_data.get("STATUS")       or ai_data.get("match_status") or
@@ -357,6 +381,9 @@ def parse_ai_response(ai_text: str) -> dict:
     elif match_status == "NotFound":
         if evidence_count >= 2 and score >= 50:
             match_status = "Review"
+
+    if match_status == "Found" and not special_instructions:
+        match_status = "Review"
 
     notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
     if fallback_source in {"visitation", "delivery"}:
@@ -516,6 +543,23 @@ def remove_record(csv_path: Path, order_id: str):
     write_records(csv_path, filtered)
 
 
+def rebuild_excel_from_csv(csv_path: Path, excel_path: Path, sheet_name: str) -> None:
+    if not OPENPYXL_AVAILABLE or not csv_path.exists():
+        return
+    with open(csv_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or FIELDNAMES
+        rows = list(reader)
+
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet_name
+    worksheet.append(list(fieldnames))
+    for row in rows:
+        worksheet.append([row.get(col, "") for col in fieldnames])
+    workbook.save(excel_path)
+
+
 def append_main_record(record: dict, row_number: int | None = None):
     upsert_record(MAIN_CSV_PATH, record, row_number=row_number)
 
@@ -528,6 +572,83 @@ def append_note(existing: str, note: str) -> str:
     if note in existing:
         return existing
     return f"{existing} | {note}"
+
+
+def has_schedule_hint(text: str) -> bool:
+    value = _safe_str(text).lower()
+    if not value:
+        return False
+    has_event_keyword = any(
+        keyword in value
+        for keyword in ["service", "funeral", "memorial", "visitation", "viewing", "wake", "burial"]
+    )
+    has_time_or_date = bool(
+        re.search(r"\b\d{1,2}:\d{2}\s*(am|pm)\b", value)
+        or re.search(r"\b\d{1,2}\s*(am|pm)\b", value)
+        or re.search(r"\b(mon|tue|wed|thu|fri|sat|sun)\b", value)
+        or re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b", value)
+        or re.search(r"\b\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?\b", value)
+    )
+    return has_event_keyword and has_time_or_date
+
+
+def destination_type(record: dict) -> str:
+    destination_text = " ".join(
+        [
+            _safe_str(record.get("ship_care_of")),
+            _safe_str(record.get("ship_address")),
+            _safe_str(record.get("ord_instruct")),
+        ]
+    ).lower()
+    if not destination_text:
+        return "unknown"
+    if any(
+        keyword in destination_text
+        for keyword in [
+            "funeral",
+            "funeral home",
+            "church",
+            "chapel",
+            "cemetery",
+            "mortuary",
+            "cremation",
+            "crematory",
+            "community center",
+            "memorial",
+            "celebration of life",
+        ]
+    ):
+        return "funeral"
+    if any(keyword in destination_text for keyword in ["p.o. box", "po box", "apartment", "apt", "office", "home"]):
+        return "non_funeral"
+    return "unknown"
+
+
+def apply_business_rules(record: dict, parsed: dict) -> dict:
+    adjusted = dict(parsed)
+    notes = _safe_str(adjusted.get("notes"))
+    customer_instructions = _safe_str(record.get("ord_instruct"))
+
+    if has_schedule_hint(customer_instructions):
+        current_si = _safe_str(adjusted.get("special_instructions"))
+        if not current_si:
+            adjusted["special_instructions"] = f"Customer-provided schedule: {customer_instructions}"[:1000]
+        elif customer_instructions not in current_si:
+            adjusted["special_instructions"] = (
+                f"{current_si} | Customer-provided schedule: {customer_instructions}"
+            )[:1000]
+
+        if adjusted.get("match_status") in {"NotFound", "Review"}:
+            adjusted["match_status"] = "Found"
+            adjusted["ai_accuracy_score"] = max(float(adjusted.get("ai_accuracy_score") or 0), 75.0)
+            notes = append_note(notes, "Found via existing order instructions with schedule")
+
+    if adjusted.get("match_status") == "Found" and destination_type(record) == "non_funeral":
+        adjusted["match_status"] = "Review"
+        notes = append_note(notes, "Review required: destination appears non-funeral location")
+
+    adjusted["notes"] = notes
+    return adjusted
 
 
 def normalize_city(city: str) -> str:
@@ -614,17 +735,14 @@ def build_prompt(record: dict, strategy: str) -> str:
 
 
 def get_strategy_order(record: dict) -> list:
-    strategy_names = ["original"]
-    if _safe_str(record.get("ship_care_of")):
-        strategy_names.append("care_of")
-    else:
-        strategy_names.append("normalized_city")
-
-    if _safe_str(record.get("ord_instruct")):
-        strategy_names.append("ord_instruct")
-    else:
-        strategy_names.append("expanded_nickname")
-
+    strategy_names = [
+        "original",
+        "normalized_city",
+        "expanded_nickname",
+        "state_only",
+        "care_of",
+        "ord_instruct",
+    ]
     return [(name, build_prompt(record, name)) for name in strategy_names]
 
 
@@ -700,9 +818,6 @@ def process_record(api_key: str, record: dict, max_attempts: int = 2) -> dict:
             candidate["_strategy"] = strategy_name
             if best is None or score_rank(candidate["match_status"], candidate["ai_accuracy_score"]) > score_rank(best["match_status"], best["ai_accuracy_score"]):
                 best = candidate
-            if candidate.get("match_status") == "Found":
-                # Stop retrying once we have a conclusive Found result.
-                break
         except Exception as exc:
             attempts.append({
                 "strategy": strategy_name,
@@ -756,15 +871,15 @@ def main():
                         help="Ignore reverify_logs.txt and reprocess all order IDs")
     parser.add_argument("--limit", type=int, default=0,
                         help="Cap how many records to process (0 = unlimited)")
-    parser.add_argument("--attempts", type=int, default=2,
-                        help="Max API attempts per record (recommended: 2 or 3)")
+    parser.add_argument("--attempts", type=int, default=6,
+                        help="Max API attempts per record (1..6). Default runs all 6 strategies.")
     args = parser.parse_args()
 
-    if args.attempts < 2:
-        raise SystemExit(f"[{SCRIPT_NAME}] --attempts must be in range 2..3")
-    if args.attempts > 3:
-        print(f"[{SCRIPT_NAME}] --attempts capped at 3 to avoid excessive retries")
-        args.attempts = 3
+    if args.attempts < 1:
+        raise SystemExit(f"[{SCRIPT_NAME}] --attempts must be in range 1..6")
+    if args.attempts > 6:
+        print(f"[{SCRIPT_NAME}] --attempts capped at 6")
+        args.attempts = 6
 
     load_dotenv_file()
     api_key = _required_env("PERPLEXITY_API_KEY")
@@ -815,6 +930,7 @@ def main():
 
             print(f"[{SCRIPT_NAME}] Checking {order_id} [{source_name}]")
             result = process_record(api_key, row, max_attempts=args.attempts)
+            result = apply_business_rules(row, result)
             status = result.get("match_status", "NotFound")
             updated = update_record_for_result(row, result, source_name)
             source_row_number = _coerce_row_number(row.get("_source_row_number"))
@@ -866,6 +982,9 @@ def main():
             break
 
     print(f"[{SCRIPT_NAME}] Completed. Processed {processed} record(s).")
+    rebuild_excel_from_csv(MAIN_CSV_PATH, MAIN_EXCEL_PATH, "Funeral Data")
+    rebuild_excel_from_csv(SOURCE_FILES["not_found"], NOT_FOUND_EXCEL_PATH, "Not Found")
+    rebuild_excel_from_csv(SOURCE_FILES["review"], REVIEW_EXCEL_PATH, "Review")
     print(
         f"[{SCRIPT_NAME}] RUN SUMMARY | "
         f"Found={found_count} | Review={review_count} | NotFound={not_found_count} | "

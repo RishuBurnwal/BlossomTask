@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from copy import deepcopy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,118 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 class PipelineRequirementTests(unittest.TestCase):
+    def test_funeral_finder_business_rules_promote_found_when_order_instructions_have_schedule(self):
+        order = {
+            "ord_instruct": "Viewing Friday 6:00 PM at St Mary's Church",
+            "ship_care_of": "",
+            "ship_address": "",
+        }
+        parsed = {
+            "match_status": "NotFound",
+            "ai_accuracy_score": 10,
+            "special_instructions": "",
+            "notes": "",
+        }
+
+        adjusted = Funeral_Finder._apply_business_rules(order, parsed)
+
+        self.assertEqual(adjusted["match_status"], "Found")
+        self.assertGreaterEqual(adjusted["ai_accuracy_score"], 75)
+        self.assertIn("Customer-provided schedule", adjusted["special_instructions"])
+
+    def test_funeral_finder_business_rules_downgrade_found_for_non_funeral_destination(self):
+        order = {
+            "ord_instruct": "Deliver to home address",
+            "ship_care_of": "",
+            "ship_address": "123 Main St Home Apt 2",
+        }
+        parsed = {
+            "match_status": "Found",
+            "ai_accuracy_score": 91,
+            "special_instructions": "Service: Apr 20 11:00 AM",
+            "notes": "",
+        }
+
+        adjusted = Funeral_Finder._apply_business_rules(order, parsed)
+
+        self.assertEqual(adjusted["match_status"], "Review")
+        self.assertIn("non-funeral location", adjusted["notes"])
+
+    def test_funeral_finder_business_rules_keep_found_for_unknown_destination_when_schedule_exists(self):
+        order = {
+            "ord_instruct": "Service Tuesday 3:00 PM",
+            "ship_care_of": "",
+            "ship_address": "",
+        }
+        parsed = {
+            "match_status": "Review",
+            "ai_accuracy_score": 62,
+            "special_instructions": "",
+            "notes": "",
+        }
+
+        adjusted = Funeral_Finder._apply_business_rules(order, parsed)
+
+        self.assertEqual(adjusted["match_status"], "Found")
+
+    def test_reverify_uses_six_strategies(self):
+        record = {
+            "ship_name": "John Doe",
+            "ship_city": "Boston",
+            "ship_state": "MA",
+            "ship_care_of": "",
+            "ord_instruct": "",
+        }
+
+        strategies = reverify.get_strategy_order(record)
+
+        self.assertEqual(len(strategies), 6)
+        self.assertEqual(
+            [name for name, _ in strategies],
+            ["original", "normalized_city", "expanded_nickname", "state_only", "care_of", "ord_instruct"],
+        )
+
+    def test_reverify_process_record_runs_all_six_attempts_when_limit_is_six(self):
+        record = {
+            "ship_name": "John Doe",
+            "ship_city": "Boston",
+            "ship_state": "MA",
+            "ship_care_of": "Funeral Home",
+            "ord_instruct": "Service Friday 11:00 AM",
+        }
+
+        with patch.object(reverify, "query_perplexity") as mocked_query:
+            mocked_query.side_effect = [
+                (
+                    "{}",
+                    {
+                        "match_status": "Review",
+                        "ai_accuracy_score": 40,
+                        "funeral_home_name": "",
+                        "funeral_address": "",
+                        "funeral_phone": "",
+                        "service_type": "",
+                        "service_date": "",
+                        "service_time": "",
+                        "visitation_date": "",
+                        "visitation_time": "",
+                        "delivery_recommendation_date": "",
+                        "delivery_recommendation_time": "",
+                        "delivery_recommendation_location": "",
+                        "special_instructions": "",
+                        "source_urls": "",
+                        "notes": "",
+                    },
+                    {"model": "sonar-pro"},
+                )
+                for _ in range(6)
+            ]
+
+            result = reverify.process_record("fake-key", deepcopy(record), max_attempts=6)
+
+        self.assertEqual(len(result["attempts"]), 6)
+        self.assertEqual(mocked_query.call_count, 6)
+
     def test_funeral_finder_parse_ai_response_uses_visitation_fallback(self):
         ai_text = json.dumps(
             {
