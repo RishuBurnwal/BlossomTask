@@ -4,7 +4,7 @@ import XLSX from "xlsx";
 
 const outputsRoot = path.resolve(process.cwd(), "Scripts", "outputs");
 
-const STATUS_FIELDS = ["perplexity_status", "pplx_status", "status"];
+const STATUS_FIELDS = ["perplexity_status", "pplx_status", "status", "match_status", "trResult"];
 
 function sanitizeRelativePath(inputPath = "") {
   const normalized = path.normalize(inputPath).replace(/^([/\\])+/, "");
@@ -291,9 +291,9 @@ function summarizeRows(rows = []) {
   rows.forEach((row) => {
     const status = STATUS_FIELDS.map((key) => row?.[key]).find((value) => Boolean(value)) || "";
     const norm = String(status || "").trim().toLowerCase();
-    if (norm === "matched") matched += 1;
-    else if (norm === "needs_review" || norm === "needs-review" || norm === "needs review") needs_review += 1;
-    else if (norm === "mismatched" || norm === "unmatched") unmatched += 1;
+    if (norm === "matched" || norm === "found") matched += 1;
+    else if (norm === "needs_review" || norm === "needs-review" || norm === "needs review" || norm === "review") needs_review += 1;
+    else if (norm === "mismatched" || norm === "unmatched" || norm === "notfound" || norm === "not_found" || norm === "not found") unmatched += 1;
 
     const processed = row?.processed_at_utc || row?.processedAtUtc || row?.processedAt;
     if (processed) {
@@ -317,13 +317,29 @@ function summarizeRows(rows = []) {
 }
 
 export function getDefaultDatasets(limit = 200) {
-  // Single-file output expectation
-  const mainPath = "master/master_records.csv";
+  // Prefer legacy consolidated output, then fall back to active Funeral_Finder outputs.
+  const candidateMainPaths = [
+    "master/master_records.csv",
+    "Funeral_Finder/Funeral_data.csv",
+    "Funeral_Finder/Funeral_data.xlsx",
+  ];
+  let mainPath = candidateMainPaths[0];
   let mainRows = [];
-  try {
-    mainRows = readFileContent(mainPath, limit).parsed;
-  } catch {
-    mainRows = [];
+  for (const candidatePath of candidateMainPaths) {
+    try {
+      const parsed = readFileContent(candidatePath, limit).parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        mainRows = parsed;
+        mainPath = candidatePath;
+        break;
+      }
+      if (mainRows.length === 0) {
+        mainRows = Array.isArray(parsed) ? parsed : [];
+        mainPath = candidatePath;
+      }
+    } catch {
+      // Try next candidate path.
+    }
   }
 
   const summary = summarizeRows(mainRows);

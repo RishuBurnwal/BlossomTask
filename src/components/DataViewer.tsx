@@ -37,7 +37,11 @@ export function DataViewer() {
     refetchInterval: 5000,
   });
 
-  const { data: selectedFileData } = useQuery({
+  const {
+    data: selectedFileData,
+    isFetching: isSelectedFileFetching,
+    error: selectedFileError,
+  } = useQuery({
     queryKey: ["file-content", selectedFile],
     queryFn: () => api.fileContent(selectedFile, 300),
     enabled: activeTab === "all" && Boolean(selectedFile),
@@ -427,6 +431,16 @@ export function DataViewer() {
 
       {viewMode === "table" || (activeTab !== "all" && (viewMode === "raw" || viewMode === "terminal")) ? (
         <div className="max-h-[400px] overflow-auto">
+          {activeTab === "all" && selectedFileError && (
+            <div className="border-b bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              Failed to load file content: {selectedFileError instanceof Error ? selectedFileError.message : "Unknown error"}
+            </div>
+          )}
+          {activeTab === "all" && isSelectedFileFetching && (
+            <div className="border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              Loading file data...
+            </div>
+          )}
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b">
