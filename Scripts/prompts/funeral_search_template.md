@@ -13,6 +13,8 @@ JSON schema (all keys must be present):
 	"funeral_time": "string",
 	"visitation_date": "string",
 	"visitation_time": "string",
+	"ceremony_date": "string",
+	"ceremony_time": "string",
 	"delivery_recommendation_date": "string",
 	"delivery_recommendation_time": "string",
 	"delivery_recommendation_location": "string",
@@ -24,9 +26,9 @@ JSON schema (all keys must be present):
 }
 
 Decision rules:
-- Use "Found" only when you have credible source-backed service details (at least one valid source URL plus concrete service/funeral details).
-- Use "Review" when partial/ambiguous info exists or signals conflict.
-- Use "NotFound" only when reliable sources do not provide usable service details.
+- Use "Found" when at least one valid date+time pair exists in any one of these: funeral/service, visitation, or ceremony.
+- Use "NotFound" when no valid date+time pair exists in funeral/service, visitation, and ceremony fields.
+- Use "Review" only for conflicting evidence where a date+time pair exists but identity/location confidence is still ambiguous.
 - "AI Accuracy Score" means confidence in the selected status (Found/NotFound/Review), not confidence that data is Found.
 - "AI Accuracy Score" must be numeric from 0 to 100.
 - Score bands:
@@ -37,10 +39,9 @@ Decision rules:
 - If name is very common and unique identifiers are missing, keep score below 60.
 - If no valid source URL exists, score must be <= 50.
 - If uncertain, prefer lower score and "Review" over false certainty.
-- If funeral_date or funeral_time is missing, use visitation_date + visitation_time as fallback.
-- If visitation datetime is also missing, use delivery_recommendation_date + delivery_recommendation_time.
-- Always return the chosen fallback values inside funeral_date and funeral_time.
-- Treat the returned fallback as the canonical service_date/service_time for downstream CRM fields.
+- If funeral datetime is unavailable, you may use visitation datetime as fallback in funeral_date and funeral_time.
+- If visitation is also unavailable, you may use ceremony datetime as fallback in funeral_date and funeral_time.
+- Do not use delivery_recommendation_date/time as funeral/service datetime fallback.
 
 Input context:
 [INSERT PROMPT/Details HERE]

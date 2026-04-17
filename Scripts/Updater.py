@@ -132,31 +132,22 @@ def _safe_str(val) -> str:
 
 
 def _choose_service_datetime(order: dict) -> tuple[str, str, str]:
-    """Pick service datetime, falling back to visitation then delivery when needed."""
+    """Pick canonical service datetime from service/visitation/ceremony pairs only."""
     service_date = _safe_str(order.get("service_date"))
     service_time = _safe_str(order.get("service_time"))
     visitation_date = _safe_str(order.get("visitation_date"))
     visitation_time = _safe_str(order.get("visitation_time"))
-    delivery_date = _safe_str(order.get("delivery_recommendation_date"))
-    delivery_time = _safe_str(order.get("delivery_recommendation_time"))
+    ceremony_date = _safe_str(order.get("ceremony_date"))
+    ceremony_time = _safe_str(order.get("ceremony_time"))
 
     if service_date and service_time:
         return service_date, service_time, "service"
 
-    # If primary service datetime is incomplete, promote visitation as fallback.
     if visitation_date and visitation_time:
         return visitation_date, visitation_time, "visitation"
 
-    # Last fallback: delivery recommendation datetime.
-    if delivery_date and delivery_time:
-        return delivery_date, delivery_time, "delivery"
-
-    if service_date:
-        return service_date, service_time, "service_date_only"
-    if visitation_date:
-        return visitation_date, visitation_time, "visitation_date_only"
-    if delivery_date:
-        return delivery_date, delivery_time, "delivery_date_only"
+    if ceremony_date and ceremony_time:
+        return ceremony_date, ceremony_time, "ceremony"
 
     return "", "", "none"
 
@@ -277,17 +268,20 @@ def build_payload(order: dict) -> dict:
     order_id = _safe_str(order.get("order_id"))
     match_status = _safe_str(order.get("match_status"))
 
-    # trResult: Found / NotFound / Review
-    tr_result = match_status if match_status in ("Found", "NotFound", "Review") else "Review"
-
-    # trEndDate: prefer service datetime, fallback to visitation then delivery.
+    # trEndDate is updated only when a valid date+time pair exists.
     service_date, service_time, datetime_source = _choose_service_datetime(order)
     if service_date and service_time:
         tr_end_date = f"{service_date} {service_time}"
-    elif service_date:
-        tr_end_date = service_date
     else:
         tr_end_date = ""
+
+    # trResult: Found when a valid datetime pair exists, otherwise NotFound.
+    if tr_end_date:
+        tr_result = "Found"
+    elif match_status == "Review":
+        tr_result = "Review"
+    else:
+        tr_result = "NotFound"
 
     # trText: Notes (combination of key findings)
     note_parts = []
@@ -322,7 +316,7 @@ def build_payload(order: dict) -> dict:
         note_parts.append(f"Notes: {notes}")
     if source_urls:
         note_parts.append(f"Sources: {source_urls}")
-    if datetime_source in {"visitation", "delivery"}:
+    if datetime_source in {"visitation", "ceremony"}:
         note_parts.append(f"Service datetime fallback used: {datetime_source}")
 
     tr_text = " | ".join(note_parts) if note_parts else ""

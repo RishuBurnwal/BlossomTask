@@ -47,7 +47,7 @@ class UpdaterPayloadTests(unittest.TestCase):
         self.assertIn("Sources: https://example.com/obit | https://example.com/fh", payload["trText"])
         self.assertIn("Service datetime fallback used: visitation", payload["trText"])
 
-    def test_build_payload_uses_delivery_datetime_when_service_and_visitation_missing(self):
+    def test_build_payload_does_not_use_delivery_datetime_when_service_and_visitation_missing(self):
         order = {
             "order_id": "1002",
             "match_status": "Found",
@@ -64,9 +64,32 @@ class UpdaterPayloadTests(unittest.TestCase):
 
         payload = Updater.build_payload(order)
 
-        self.assertEqual(payload["trEndDate"], "2026-04-22 02:15 PM")
+        self.assertEqual(payload["trEndDate"], "")
+        self.assertEqual(payload["trResult"], "NotFound")
         self.assertIn("Deliver By: 2026-04-22 02:15 PM", payload["trText"])
         self.assertIn("Sources: https://example.com/delivery", payload["trText"])
+
+    def test_build_payload_uses_ceremony_datetime_when_available(self):
+        order = {
+            "order_id": "1003",
+            "match_status": "Found",
+            "service_date": "",
+            "service_time": "",
+            "visitation_date": "",
+            "visitation_time": "",
+            "ceremony_date": "2026-04-23",
+            "ceremony_time": "01:30 PM",
+            "delivery_recommendation_date": "2026-04-22",
+            "delivery_recommendation_time": "02:15 PM",
+            "ship_name": "Ceremony Doe",
+            "source_urls": "https://example.com/ceremony",
+        }
+
+        payload = Updater.build_payload(order)
+
+        self.assertEqual(payload["trEndDate"], "2026-04-23 01:30 PM")
+        self.assertEqual(payload["trResult"], "Found")
+        self.assertIn("Service datetime fallback used: ceremony", payload["trText"])
 
 
 if __name__ == "__main__":

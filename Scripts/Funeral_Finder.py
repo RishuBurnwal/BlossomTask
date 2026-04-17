@@ -70,6 +70,7 @@ FIELDNAMES = [
     "funeral_home_name", "funeral_address", "funeral_phone",
     "service_type", "service_date", "service_time",
     "visitation_date", "visitation_time",
+    "ceremony_date", "ceremony_time",
     "delivery_recommendation_date", "delivery_recommendation_time",
     "delivery_recommendation_location", "special_instructions",
     "match_status", "ai_accuracy_score",
@@ -221,22 +222,16 @@ def _normalize_service_datetime(
     service_time: str,
     visitation_date: str,
     visitation_time: str,
-    delivery_date: str,
-    delivery_time: str,
+    ceremony_date: str,
+    ceremony_time: str,
 ) -> tuple[str, str, str]:
-    """Ensure service datetime is always populated using visitation/delivery fallback."""
+    """Normalize canonical service datetime using service/visitation/ceremony pairs only."""
     if service_date and service_time:
         return service_date, service_time, "service"
     if visitation_date and visitation_time:
         return visitation_date, visitation_time, "visitation"
-    if delivery_date and delivery_time:
-        return delivery_date, delivery_time, "delivery"
-    if service_date:
-        return service_date, service_time, "service_date_only"
-    if visitation_date:
-        return visitation_date, visitation_time, "visitation_date_only"
-    if delivery_date:
-        return delivery_date, delivery_time, "delivery_date_only"
+    if ceremony_date and ceremony_time:
+        return ceremony_date, ceremony_time, "ceremony"
     return service_date, service_time, "none"
 
 
@@ -304,6 +299,21 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
     adjusted = dict(parsed)
     notes = _safe_str(adjusted.get("notes"))
     customer_instructions = _safe_str(order.get("ord_instruct"))
+
+    has_datetime_pair = bool(
+        (_safe_str(adjusted.get("service_date")) and _safe_str(adjusted.get("service_time")))
+        or (_safe_str(adjusted.get("visitation_date")) and _safe_str(adjusted.get("visitation_time")))
+        or (_safe_str(adjusted.get("ceremony_date")) and _safe_str(adjusted.get("ceremony_time")))
+    )
+
+    if has_datetime_pair and adjusted.get("match_status") in {"NotFound", "Review"}:
+        adjusted["match_status"] = "Found"
+        adjusted["ai_accuracy_score"] = max(float(adjusted.get("ai_accuracy_score") or 0), 70.0)
+
+    if not has_datetime_pair and adjusted.get("match_status") != "NotFound":
+        adjusted["match_status"] = "NotFound"
+        adjusted["ai_accuracy_score"] = min(float(adjusted.get("ai_accuracy_score") or 0), 49.0)
+        notes = _append_unique_note(notes, "NotFound: no valid service/visitation/ceremony datetime pair")
 
     if _has_schedule_hint(customer_instructions):
         if not _safe_str(adjusted.get("special_instructions")):
@@ -428,16 +438,16 @@ def build_prompt(order: dict, template_text: str) -> str:
             "Find funeral/memorial service details for this person. "
             "Return JSON with keys: funeral_home_name, funeral_address, funeral_phone, "
             "service_type, funeral_date, funeral_time, visitation_date, visitation_time, "
+            "ceremony_date, ceremony_time, "
             "delivery_recommendation_date, delivery_recommendation_time, "
             "delivery_recommendation_location, special_instructions, "
             "status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for that status), "
             "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
             "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
             "No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. "
-            "If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time, "
-            "and return those values in funeral_date and funeral_time. Treat the selected fallback as the canonical service_date/service_time for downstream CRM fields. "
-            "Mark Found only when source-backed service details are present; "
-            "if unsure use Review.\n\n"
+            "Set Found when at least one valid datetime pair exists in service, visitation, or ceremony fields. "
+            "Set NotFound when no valid date+time pair is available in those fields. "
+            "Do not use delivery recommendation fields as service datetime fallback.\n\n"
             f"{context_block}"
         )
 
@@ -512,6 +522,8 @@ def parse_ai_response(ai_text: str) -> dict:
     service_time = _safe_str(ai_data.get("funeral_time") or ai_data.get("Funeral time") or ai_data.get("service_time"))
     visitation_date = _safe_str(ai_data.get("visitation_date") or ai_data.get("Visitation date"))
     visitation_time = _safe_str(ai_data.get("visitation_time") or ai_data.get("Visitation time"))
+    ceremony_date = _safe_str(ai_data.get("ceremony_date") or ai_data.get("Ceremony date"))
+    ceremony_time = _safe_str(ai_data.get("ceremony_time") or ai_data.get("Ceremony time"))
     delivery_recommendation_date = _safe_str(ai_data.get("delivery_recommendation_date") or ai_data.get("OPTIMAL DELIVERY DATE"))
     delivery_recommendation_time = _safe_str(ai_data.get("delivery_recommendation_time") or ai_data.get("OPTIMAL DELIVERY TIME"))
     delivery_recommendation_location = _safe_str(ai_data.get("delivery_recommendation_location") or ai_data.get("DELIVER TO"))
@@ -522,8 +534,8 @@ def parse_ai_response(ai_text: str) -> dict:
         service_time,
         visitation_date,
         visitation_time,
-        delivery_recommendation_date,
-        delivery_recommendation_time,
+        ceremony_date,
+        ceremony_time,
     )
 
     si_parts = []
@@ -539,6 +551,11 @@ def parse_ai_response(ai_text: str) -> dict:
         service_line = f"Service: {' '.join(service_bits)}".strip()
         if service_line and service_line.lower() not in " | ".join(si_parts).lower():
             si_parts.append(service_line)
+    if ceremony_date or ceremony_time:
+        ceremony_bits = [bit for bit in [ceremony_date, ceremony_time] if bit]
+        ceremony_line = f"Ceremony: {' '.join(ceremony_bits)}".strip()
+        if ceremony_line and ceremony_line.lower() not in " | ".join(si_parts).lower():
+            si_parts.append(ceremony_line)
     special_instructions = " | ".join(part for part in si_parts if part)
 
     raw_status = _safe_str(
@@ -628,11 +645,17 @@ def parse_ai_response(ai_text: str) -> dict:
         if evidence_count >= 2 and score >= 50:
             match_status = "Review"
 
-    if match_status == "Found" and not special_instructions:
-        match_status = "Review"
+    has_datetime_pair = bool((service_date and service_time) or (visitation_date and visitation_time) or (ceremony_date and ceremony_time))
+    if has_datetime_pair:
+        if match_status in {"NotFound", "Review"}:
+            match_status = "Found"
+        score = max(score, 70.0)
+    else:
+        match_status = "NotFound"
+        score = min(score, 49.0)
 
     notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
-    if fallback_source in {"visitation", "delivery"}:
+    if fallback_source in {"visitation", "ceremony"}:
         notes_value = f"{notes_value} | service datetime fallback={fallback_source}".strip(" |")
 
     return {
@@ -644,6 +667,8 @@ def parse_ai_response(ai_text: str) -> dict:
         "service_time": service_time,
         "visitation_date": visitation_date,
         "visitation_time": visitation_time,
+        "ceremony_date": ceremony_date,
+        "ceremony_time": ceremony_time,
         "delivery_recommendation_date": delivery_recommendation_date,
         "delivery_recommendation_time": delivery_recommendation_time,
         "delivery_recommendation_location": delivery_recommendation_location,
@@ -746,7 +771,7 @@ def main():
         api_payload = {
             "model": "sonar-pro",
             "messages": [
-                {"role": "system", "content": "You are an assistant that finds funeral and memorial service details. Return your findings in valid JSON format with these keys: funeral_home_name, funeral_address, funeral_phone, service_type, funeral_date, funeral_time, visitation_date, visitation_time, delivery_recommendation_date, delivery_recommendation_time, delivery_recommendation_location, special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. If funeral_date/funeral_time is missing, use visitation_date/visitation_time; if still missing use delivery_recommendation_date/delivery_recommendation_time and return those values in funeral_date/funeral_time. Use Found only when source-backed service details are available; if evidence is partial or ambiguous, return Review."},
+                {"role": "system", "content": "You are an assistant that finds funeral and memorial service details. Return your findings in valid JSON format with these keys: funeral_home_name, funeral_address, funeral_phone, service_type, funeral_date, funeral_time, visitation_date, visitation_time, ceremony_date, ceremony_time, delivery_recommendation_date, delivery_recommendation_time, delivery_recommendation_location, special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. Set Found when at least one valid date+time pair exists in funeral/service, visitation, or ceremony fields. Set NotFound when no valid date+time pair exists in those fields. Do not use delivery recommendation fields as service datetime fallback."},
                 {"role": "user", "content": prompt}
             ]
         }
