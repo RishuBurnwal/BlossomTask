@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import XLSX from "xlsx";
 
-const outputsRoot = path.resolve(process.cwd(), "Scripts", "outputs");
+function getOutputsRoot() {
+  return path.resolve(process.cwd(), "Scripts", "outputs");
+}
 
 const STATUS_FIELDS = ["perplexity_status", "pplx_status", "status", "match_status", "trResult"];
 
@@ -15,6 +17,7 @@ function sanitizeRelativePath(inputPath = "") {
 }
 
 export function resolveOutputPath(inputPath = "") {
+  const outputsRoot = getOutputsRoot();
   const relative = sanitizeRelativePath(inputPath);
   const absolute = path.resolve(outputsRoot, relative);
   if (!absolute.startsWith(outputsRoot)) {
@@ -24,6 +27,7 @@ export function resolveOutputPath(inputPath = "") {
 }
 
 function walkTree(basePath) {
+  const outputsRoot = getOutputsRoot();
   const entries = fs.readdirSync(basePath, { withFileTypes: true });
   const rows = [];
 
@@ -49,6 +53,7 @@ function walkTree(basePath) {
 
 export function listTree(inputPath = "", options = {}) {
   const recursive = Boolean(options.recursive);
+  const outputsRoot = getOutputsRoot();
   const targetPath = resolveOutputPath(inputPath);
   if (!fs.existsSync(targetPath)) {
     return [];
@@ -316,38 +321,42 @@ function summarizeRows(rows = []) {
   };
 }
 
-export function getDefaultDatasets(limit = 200) {
-  // Prefer legacy consolidated output, then fall back to active Funeral_Finder outputs.
-  const candidateMainPaths = [
-    "master/master_records.csv",
-    "Funeral_Finder/Funeral_data.csv",
-    "Funeral_Finder/Funeral_data.xlsx",
-  ];
-  let mainPath = candidateMainPaths[0];
-  let mainRows = [];
-  for (const candidatePath of candidateMainPaths) {
+function readDataset(candidatePaths, limit) {
+  for (const candidatePath of candidatePaths) {
     try {
-      const parsed = readFileContent(candidatePath, limit).parsed;
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        mainRows = parsed;
-        mainPath = candidatePath;
-        break;
-      }
-      if (mainRows.length === 0) {
-        mainRows = Array.isArray(parsed) ? parsed : [];
-        mainPath = candidatePath;
+      const content = readFileContent(candidatePath, limit);
+      const rows = Array.isArray(content.parsed) ? content.parsed : [];
+      if (rows.length > 0) {
+        return { file: candidatePath, rows, summary: summarizeRows(rows) };
       }
     } catch {
-      // Try next candidate path.
+      // Try the next candidate path.
     }
   }
 
-  const summary = summarizeRows(mainRows);
+  return { file: candidatePaths[0] || "", rows: [], summary: summarizeRows([]) };
+}
+
+export function getDefaultDatasets(limit = 200) {
+  const main = readDataset([
+    "Funeral_Finder/Funeral_data.csv",
+    "Funeral_Finder/Funeral_data.xlsx",
+    "master/master_records.csv",
+  ], limit);
+  const notFound = readDataset([
+    "Funeral_Finder/Funeral_data_not_found.csv",
+    "Funeral_Finder/Funeral_data_not_found.xlsx",
+  ], limit);
+  const review = readDataset([
+    "Funeral_Finder/Funeral_data_review.csv",
+    "Funeral_Finder/Funeral_data_review.xlsx",
+  ], limit);
 
   return {
-    main: { file: mainPath, rows: mainRows, summary },
-    error: { file: "", rows: [] },
-    low: { file: "", rows: [] },
-    review: { file: "", rows: [] },
+    main,
+    not_found: notFound,
+    review,
+    error: notFound,
+    low: notFound,
   };
 }

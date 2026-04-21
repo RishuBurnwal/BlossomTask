@@ -59,6 +59,8 @@ NOT_FOUND_EXCEL_PATH = OUTPUT_DIR / "Funeral_data_not_found.xlsx"
 REVIEW_EXCEL_PATH = OUTPUT_DIR / "Funeral_data_review.xlsx"
 PAYLOAD_PATH = OUTPUT_DIR / "reverify_payload.json"
 LOGS_PATH = OUTPUT_DIR / "reverify_logs.txt"
+RUN_GUARD_PATH = OUTPUT_DIR / "reverify_run_state.json"
+REVERIFY_LOGS_BY_DATE_DIR = OUTPUT_DIR / "reverify_logs_by_date"
 
 FIELDNAMES = [
     "order_id", "task_id", "ship_name", "ship_city", "ship_state", "ship_zip",
@@ -117,6 +119,44 @@ def get_now_iso() -> str:
     return datetime.now().isoformat()
 
 
+def _run_date_key() -> str:
+    """Return YYYY-MM-DD for date-wise reverify logging."""
+    return datetime.now().date().isoformat()
+
+
+def get_reverify_daily_log_path(date_key: str | None = None) -> Path:
+    """Return daily processed log file path for reverify."""
+    key = date_key or _run_date_key()
+    return REVERIFY_LOGS_BY_DATE_DIR / f"reverify_processed_{key}.txt"
+
+
+def ensure_reverify_log_files(date_key: str | None = None) -> Path:
+    """Ensure global and date-wise reverify log files exist."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    REVERIFY_LOGS_BY_DATE_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not LOGS_PATH.exists():
+        LOGS_PATH.write_text("", encoding="utf-8")
+
+    daily_log_path = get_reverify_daily_log_path(date_key)
+    if not daily_log_path.exists():
+        daily_log_path.write_text("", encoding="utf-8")
+    return daily_log_path
+
+
+def append_reverify_daily_log(order_id: str, status: str, source_name: str, date_key: str | None = None):
+    """Write timestamped reverify processing audit entries per day."""
+    normalized_order_id = _normalize_order_id(order_id)
+    if not normalized_order_id:
+        return
+    daily_log_path = get_reverify_daily_log_path(date_key)
+    REVERIFY_LOGS_BY_DATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(daily_log_path, "a", encoding="utf-8") as f:
+        f.write(
+            f"{get_now_iso()}\t{normalized_order_id}\t{_safe_str(status)}\t{_safe_str(source_name)}\n"
+        )
+
+
 def _safe_str(val) -> str:
     if val is None:
         return ""
@@ -152,17 +192,18 @@ def _normalize_service_datetime(
 
 
 def _extract_json_from_text(text: str) -> dict:
-    """Robust JSON extractor — 3 strategies, returns largest valid object."""
+    """Robust JSON extractor — use raw_decode to handle nested objects."""
     if not text:
         return {}
 
     best = {}
-    for match in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}", text, re.DOTALL):
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
         try:
-            candidate = json.loads(match.group(0))
-            if len(candidate) > len(best):
+            candidate, _ = decoder.raw_decode(text[match.start():])
+            if isinstance(candidate, dict) and len(candidate) > len(best):
                 best = candidate
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, TypeError):
             pass
     if best:
         return best
@@ -506,36 +547,18 @@ def _rows_share_identity(existing_row: dict, record: dict) -> bool:
 def upsert_record(csv_path: Path, record: dict, row_number: int | None = None):
     rows = load_records(csv_path)
     order_id = _normalize_order_id(record.get("order_id"))
-    target_row_number = _coerce_row_number(row_number if row_number is not None else record.get("_source_row_number"))
-    row_index_by_number = None
     row_index_by_order_id = None
 
     for index, row in enumerate(rows):
-        current_row_number = _coerce_row_number(row.get("_source_row_number"))
         current_order_id = _normalize_order_id(row.get("order_id"))
-        if target_row_number is not None and current_row_number == target_row_number and row_index_by_number is None:
-            row_index_by_number = index
         if current_order_id == order_id and row_index_by_order_id is None:
             row_index_by_order_id = index
 
-    replacement_index = None
-    if row_index_by_number is not None:
-        candidate_row = rows[row_index_by_number]
-        if (
-            row_index_by_order_id is None
-            and _rows_share_identity(candidate_row, record)
-        ) or row_index_by_order_id == row_index_by_number:
-            replacement_index = row_index_by_number
-        else:
-            replacement_index = row_index_by_order_id
-    elif row_index_by_order_id is not None:
-        replacement_index = row_index_by_order_id
-
     cleaned_record = {field: _safe_str(record.get(field)) for field in FIELDNAMES}
     cleaned_record["order_id"] = order_id
-    if replacement_index is not None:
+    if row_index_by_order_id is not None:
         next_rows = list(rows)
-        next_rows[replacement_index] = {**next_rows[replacement_index], **cleaned_record}
+        next_rows[row_index_by_order_id] = {**next_rows[row_index_by_order_id], **cleaned_record}
     else:
         next_rows = [*rows, cleaned_record]
 
@@ -551,6 +574,24 @@ def remove_record(csv_path: Path, order_id: str):
         if _normalize_order_id(row.get("order_id")) != normalized_target_order_id
     ]
     write_records(csv_path, filtered)
+
+
+def _run_guard_key() -> str:
+    return datetime.now().date().isoformat()
+
+
+def load_run_guard() -> dict:
+    if not RUN_GUARD_PATH.exists():
+        return {}
+    try:
+        return json.loads(RUN_GUARD_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def save_run_guard(payload: dict) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    RUN_GUARD_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def rebuild_excel_from_csv(csv_path: Path, excel_path: Path, sheet_name: str) -> None:
@@ -772,11 +813,6 @@ def get_strategy_order(record: dict) -> list:
     return [(name, build_prompt(record, name)) for name in strategy_names]
 
 
-def score_rank(status: str, score: float) -> tuple:
-    order = {"Found": 3, "Review": 2, "NotFound": 1}.get(status, 0)
-    return order, float(score or 0)
-
-
 def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
     api_payload = {
         "model": "sonar-pro",
@@ -822,39 +858,39 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
     return ai_text, parsed, api_payload
 
 
-def process_record(api_key: str, record: dict, max_attempts: int = 2) -> dict:
+def process_record(api_key: str, record: dict, max_attempts: int = 1) -> dict:
+    if max_attempts != 1:
+        raise ValueError("process_record enforces exactly one search; max_attempts must be 1")
+
     strategies = get_strategy_order(record)
     attempts = []
     best = None
 
-    for strategy_name, prompt in strategies:
-        if len(attempts) >= max_attempts:
-            break
-        try:
-            ai_text, parsed, payload = query_perplexity(api_key, prompt)
-            attempts.append({
-                "strategy": strategy_name,
-                "prompt": prompt,
-                "raw_ai_response": ai_text,
-                "parsed_result": parsed,
-                "sent": payload,
-            })
-            candidate = parsed.copy()
-            candidate["_strategy"] = strategy_name
-            if best is None or score_rank(candidate["match_status"], candidate["ai_accuracy_score"]) > score_rank(best["match_status"], best["ai_accuracy_score"]):
-                best = candidate
-        except Exception as exc:
-            attempts.append({
-                "strategy": strategy_name,
-                "prompt": prompt,
-                "error": str(exc),
-            })
+    # Reverify now performs exactly one search per record.
+    strategy_name, prompt = strategies[0]
+    try:
+        ai_text, parsed, payload = query_perplexity(api_key, prompt)
+        attempts.append({
+            "strategy": strategy_name,
+            "prompt": prompt,
+            "raw_ai_response": ai_text,
+            "parsed_result": parsed,
+            "sent": payload,
+        })
+        best = parsed.copy()
+        best["_strategy"] = strategy_name
+    except Exception as exc:
+        attempts.append({
+            "strategy": strategy_name,
+            "prompt": prompt,
+            "error": str(exc),
+        })
 
     if best is None:
         best = {
             "match_status": "Review",
             "ai_accuracy_score": 0,
-            "notes": "All reverify strategies failed",
+            "notes": "Single reverify search failed",
             "funeral_home_name": "",
             "funeral_address": "",
             "funeral_phone": "",
@@ -897,20 +933,58 @@ def main():
                         help="Ignore reverify_logs.txt and reprocess all order IDs")
     parser.add_argument("--limit", type=int, default=0,
                         help="Cap how many records to process (0 = unlimited)")
-    parser.add_argument("--attempts", type=int, default=6,
-                        help="Max API attempts per record (1..6). Default runs all 6 strategies.")
+    parser.add_argument("--attempts", type=int, default=1,
+                        help="Deprecated: reverify always performs exactly 1 API search per record.")
     args = parser.parse_args()
 
-    if args.attempts < 1:
-        raise SystemExit(f"[{SCRIPT_NAME}] --attempts must be in range 1..6")
-    if args.attempts > 6:
-        print(f"[{SCRIPT_NAME}] --attempts capped at 6")
-        args.attempts = 6
+    if args.attempts != 1:
+        print(f"[{SCRIPT_NAME}] --attempts ignored; running exactly 1 search per record")
+    args.attempts = 1
 
     load_dotenv_file()
     api_key = _required_env("PERPLEXITY_API_KEY")
+    run_date_key = _run_date_key()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    reverify_daily_log_path = ensure_reverify_log_files(run_date_key)
+    run_guard = load_run_guard()
+    current_guard_key = _run_guard_key()
+    run_started_at = get_now_iso()
+    if run_guard.get("run_key") == current_guard_key and run_guard.get("status") == "running":
+        same_config = (
+            _safe_str(run_guard.get("source")) == _safe_str(args.source)
+            and int(run_guard.get("limit") or 0) == int(args.limit or 0)
+            and bool(run_guard.get("force")) == bool(args.force)
+        )
+        guard_is_fresh = False
+        started_at_text = _safe_str(run_guard.get("started_at"))
+        if started_at_text:
+            try:
+                started_dt = datetime.fromisoformat(started_at_text)
+                age_seconds = (datetime.now() - started_dt).total_seconds()
+                guard_is_fresh = age_seconds < 3 * 60 * 60
+            except ValueError:
+                guard_is_fresh = False
+
+        if same_config and guard_is_fresh and not args.force:
+            print(
+                f"[{SCRIPT_NAME}] Another run with same config is active since {started_at_text}; "
+                "skipping to avoid concurrent file updates."
+            )
+            return
+
+        print(f"[{SCRIPT_NAME}] Previous run marker detected; proceeding with current run.")
+
+    save_run_guard({
+        "run_key": current_guard_key,
+        "status": "running",
+        "source": args.source,
+        "force": bool(args.force),
+        "limit": args.limit,
+        "started_at": run_started_at,
+        "pid": os.getpid(),
+    })
+
     logged_ids = set() if args.force else load_logged_ids()
     processed = 0
     skipped_logged = 0
@@ -1001,6 +1075,7 @@ def main():
                 print(f"[{SCRIPT_NAME}] NOT FOUND {order_id} -> moved to not_found CSV")
 
             append_logged_id(order_id)
+            append_reverify_daily_log(order_id, status, source_name, run_date_key)
             logged_ids.add(order_id)
             processed += 1
 
@@ -1008,6 +1083,17 @@ def main():
             break
 
     print(f"[{SCRIPT_NAME}] Completed. Processed {processed} record(s).")
+    save_run_guard({
+        "run_key": current_guard_key,
+        "status": "completed",
+        "source": args.source,
+        "force": bool(args.force),
+        "limit": args.limit,
+        "started_at": run_started_at,
+        "finished_at": get_now_iso(),
+        "pid": os.getpid(),
+        "processed": processed,
+    })
     rebuild_excel_from_csv(MAIN_CSV_PATH, MAIN_EXCEL_PATH, "Funeral Data")
     rebuild_excel_from_csv(SOURCE_FILES["not_found"], NOT_FOUND_EXCEL_PATH, "Not Found")
     rebuild_excel_from_csv(SOURCE_FILES["review"], REVIEW_EXCEL_PATH, "Review")
@@ -1016,6 +1102,8 @@ def main():
         f"Found={found_count} | Review={review_count} | NotFound={not_found_count} | "
         f"UpdatedMain={updated_main_count} | SkippedLogged={skipped_logged}"
     )
+    print(f"[{SCRIPT_NAME}] Reverify logs file: {LOGS_PATH}")
+    print(f"[{SCRIPT_NAME}] Reverify date-wise log: {reverify_daily_log_path}")
 
 
 if __name__ == "__main__":

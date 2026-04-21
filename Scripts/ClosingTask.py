@@ -161,9 +161,9 @@ def load_updater_data() -> list:
 
             # CloseTask should run only for orders that are explicitly Found.
             # Accept Found from either `status` or `trResult` to handle schema variations.
-            status_value = _safe_str(row.get("status")).lower()
-            tr_result_value = _safe_str(row.get("trResult")).lower()
-            if "found" not in {status_value, tr_result_value}:
+            status_value = _safe_str(row.get("status")).strip().lower()
+            tr_result_value = _safe_str(row.get("trResult")).strip().lower()
+            if status_value != "found" and tr_result_value != "found":
                 continue
 
             seen_ids.add(oid)

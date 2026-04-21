@@ -26,9 +26,8 @@ def _configure_windows_stdout_utf8() -> None:
             return
         sys.stdout = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
     except Exception:
-        # Keep original stdout if wrapping is unsupported in this environment.
+        # Keep original stdout if wrapping is unsupported.
         return
-
 
 _configure_windows_stdout_utf8()
 
@@ -45,6 +44,8 @@ TIMEOUT_SECONDS = 120
 SCRIPT_NAME     = "Funeral_Finder"
 SCRIPTS_DIR     = Path(__file__).resolve().parent
 OUTPUT_DIR      = SCRIPTS_DIR / "outputs" / SCRIPT_NAME
+DATE_WISE_DIR   = OUTPUT_DIR / "date_wise"
+LOGS_BY_DATE_DIR = OUTPUT_DIR / "logs_by_date"
 
 # Input: reads from GetOrderInquiry output
 INPUT_CSV = SCRIPTS_DIR / "outputs" / "GetOrderInquiry" / "data.csv"
@@ -61,6 +62,63 @@ REVIEW_CSV_PATH       = OUTPUT_DIR / "Funeral_data_review.csv"
 REVIEW_EXCEL_PATH     = OUTPUT_DIR / "Funeral_data_review.xlsx"
 PAYLOAD_PATH          = OUTPUT_DIR / "payload.json"
 LOGS_PATH             = OUTPUT_DIR / "logs.txt"
+
+
+def _run_date_key() -> str:
+    """Return YYYY-MM-DD for date-wise output partitioning."""
+    return datetime.now().date().isoformat()
+
+
+def get_date_wise_csv_path(date_key: str | None = None) -> Path:
+    """Return date-partitioned CSV path for today's processed rows."""
+    key = date_key or _run_date_key()
+    return DATE_WISE_DIR / f"Funeral_data_{key}.csv"
+
+
+def get_date_wise_log_path(date_key: str | None = None) -> Path:
+    """Return date-partitioned processed-id log path."""
+    key = date_key or _run_date_key()
+    return LOGS_BY_DATE_DIR / f"processed_{key}.txt"
+
+
+def ensure_log_files(date_key: str | None = None) -> tuple[Path, Path]:
+    """Create base log files so skip logic and audit files always exist."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    DATE_WISE_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_BY_DATE_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not LOGS_PATH.exists():
+        LOGS_PATH.write_text("", encoding="utf-8")
+
+    daily_log_path = get_date_wise_log_path(date_key)
+    if not daily_log_path.exists():
+        daily_log_path.write_text("", encoding="utf-8")
+
+    return LOGS_PATH, daily_log_path
+
+
+def append_date_wise_processed_log(order_id: str, status: str, date_key: str | None = None):
+    """Append timestamped processing entries in date-wise log files."""
+    normalized_id = _safe_str(order_id)
+    if not normalized_id:
+        return
+    daily_log_path = get_date_wise_log_path(date_key)
+    LOGS_BY_DATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(daily_log_path, "a", encoding="utf-8") as f:
+        f.write(f"{get_now_iso()}\t{normalized_id}\t{_safe_str(status)}\n")
+
+SYSTEM_PROMPT = (
+    "You are an assistant that finds funeral and memorial service details. Return valid JSON with these keys: "
+    "funeral_home_name, funeral_address, funeral_phone, service_type, funeral_date, funeral_time, visitation_date, "
+    "visitation_time, ceremony_date, ceremony_time, delivery_recommendation_date, delivery_recommendation_time, "
+    "delivery_recommendation_location, special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), source_urls (list), notes. "
+    "Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; "
+    "50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. "
+    "For very common names without unique identifiers, keep score below 60. "
+    "Set Found when at least one valid date+time pair exists in funeral/service, visitation, or ceremony fields. "
+    "Set NotFound when no valid date+time pair exists in those fields. "
+    "Do not use delivery recommendation fields as service datetime fallback."
+)
 
 # Canonical column order for CSV/Excel output
 FIELDNAMES = [
@@ -112,18 +170,18 @@ def get_now_iso() -> str:
 
 
 def _extract_json_from_text(text: str) -> dict:
-    """Robust JSON extractor — 3 strategies, returns largest valid object."""
+    """Robust JSON extractor — use raw_decode so nested objects are handled safely."""
     if not text:
         return {}
 
-    # Strategy 1: largest valid JSON object
     best = {}
-    for match in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}", text, re.DOTALL):
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
         try:
-            candidate = json.loads(match.group(0))
-            if len(candidate) > len(best):
+            candidate, _ = decoder.raw_decode(text[match.start():])
+            if isinstance(candidate, dict) and len(candidate) > len(best):
                 best = candidate
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, TypeError):
             pass
     if best:
         return best
@@ -403,11 +461,7 @@ def load_orders_from_inquiry() -> list:
 # ── Prompt builder ───────────────────────────────────────────────────────────
 
 def build_prompt(order: dict, template_text: str) -> str:
-    """
-    Combine columns C,D,E,F,J,K,L,M,U into a context block
-    and insert into the prompt template.
-    """
-    # Build a clear, structured context from the order data
+    """Build user prompt from template (if present) plus normalized order context."""
     context_lines = []
     context_lines.append(f"Name: {order['ship_name']}")
     context_lines.append(f"City: {order['ship_city']}")
@@ -427,31 +481,19 @@ def build_prompt(order: dict, template_text: str) -> str:
         context_lines.append(f"Delivery Instructions / Known Details: {order['ord_instruct']}")
 
     context_block = "\n".join(context_lines)
-
-    # Insert into template
-    if template_text and "[INSERT PROMPT/Details HERE]" in template_text:
-        prompt = template_text.replace("[INSERT PROMPT/Details HERE]", context_block)
-    elif template_text:
-        prompt = template_text + "\n\n" + context_block
-    else:
-        prompt = (
-            "Find funeral/memorial service details for this person. "
-            "Return JSON with keys: funeral_home_name, funeral_address, funeral_phone, "
-            "service_type, funeral_date, funeral_time, visitation_date, visitation_time, "
-            "ceremony_date, ceremony_time, "
-            "delivery_recommendation_date, delivery_recommendation_time, "
-            "delivery_recommendation_location, special_instructions, "
-            "status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for that status), "
-            "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
-            "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
-            "No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. "
-            "Set Found when at least one valid datetime pair exists in service, visitation, or ceremony fields. "
-            "Set NotFound when no valid date+time pair is available in those fields. "
-            "Do not use delivery recommendation fields as service datetime fallback.\n\n"
-            f"{context_block}"
-        )
-
-    return prompt
+    normalized_template = _safe_str(template_text)
+    if normalized_template:
+        placeholder_markers = [
+            "[INSERT CASE DATA HERE]",
+            "{{INPUT_CONTEXT}}",
+            "<<INPUT_CONTEXT>>",
+            "[INPUT CONTEXT]",
+        ]
+        for marker in placeholder_markers:
+            if marker in normalized_template:
+                return normalized_template.replace(marker, context_block)
+        return f"{normalized_template}\n\nINPUT CONTEXT\n{context_block}"
+    return context_block
 
 
 # ── Output writers ───────────────────────────────────────────────────────────
@@ -693,6 +735,9 @@ def main():
     load_dotenv_file()
 
     pplx_api_key = _required_env("PERPLEXITY_API_KEY")
+    run_date_key = _run_date_key()
+    date_wise_csv_path = get_date_wise_csv_path(run_date_key)
+    _, date_wise_log_path = ensure_log_files(run_date_key)
 
     # Load prompt template
     template_path = Path(os.getenv("FUNERAL_PROMPT_TEMPLATE", str(DEFAULT_PROMPT_TEMPLATE)))
@@ -856,6 +901,10 @@ def main():
         rebuild_excel_from_csv(CSV_PATH, EXCEL_PATH, "Funeral Data")
         print(f"  📁 Saved to Funeral_data.csv & .xlsx")
 
+        # ── DATE-WISE SAVE: Append into today's partition file ─────────
+        save_one_record_to_csv(date_wise_csv_path, record)
+        print(f"  📁 Date-wise appended: {date_wise_csv_path.name}")
+
         # ── CATEGORY FILES: Not Found / Review ───────────────────────────
         if status == "NotFound":
             save_one_record_to_csv(NOT_FOUND_CSV_PATH, record)
@@ -891,6 +940,7 @@ def main():
 
         # ── Update logs.txt ──────────────────────────────────────────────
         append_logged_id(order_id)
+        append_date_wise_processed_log(order_id, status, run_date_key)
         logged_ids.add(order_id)
         new_count += 1
 
@@ -913,7 +963,8 @@ def main():
     print(f"\n[{SCRIPT_NAME}] Output folder : {OUTPUT_DIR}")
     print(f"[{SCRIPT_NAME}] Files created :")
     for fp in [CSV_PATH, EXCEL_PATH, NOT_FOUND_CSV_PATH, NOT_FOUND_EXCEL_PATH,
-               REVIEW_CSV_PATH, REVIEW_EXCEL_PATH, PAYLOAD_PATH, LOGS_PATH]:
+             REVIEW_CSV_PATH, REVIEW_EXCEL_PATH, PAYLOAD_PATH, LOGS_PATH,
+             date_wise_csv_path, date_wise_log_path]:
         mark = "✓" if fp.exists() else "✗"
         print(f"  {mark}  {fp.name}")
 

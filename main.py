@@ -590,6 +590,39 @@ PIPELINE_STAGES = [
     ("ClosingTask",      "Close processed CRM tasks",               "✅"),
 ]
 
+UPDATER_MODES = ["complete", "found_only", "not_found", "review"]
+
+
+def _ask_yes_no(prompt, default=False):
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        choice = input(f"  {prompt} {suffix}: ").strip().lower()
+        if not choice:
+            return default
+        if choice in {"y", "yes"}:
+            return True
+        if choice in {"n", "no"}:
+            return False
+        print_warn("Please answer y or n.")
+
+
+def _ask_updater_mode(default="complete"):
+    print()
+    print(f"  {C.BOLD}Updater mode:{C.RESET}")
+    for idx, mode in enumerate(UPDATER_MODES, 1):
+        marker = " (default)" if mode == default else ""
+        print(f"    {C.CYAN}[{idx}]{C.RESET} {mode}{marker}")
+
+    while True:
+        choice = input(f"  Select updater mode [1-{len(UPDATER_MODES)}] [{default}]: ").strip().lower()
+        if not choice:
+            return default
+        if choice in {"1", "2", "3", "4"}:
+            return UPDATER_MODES[int(choice) - 1]
+        if choice in UPDATER_MODES:
+            return choice
+        print_warn("Please choose a valid updater mode.")
+
 
 def run_script(name, args=None):
     """Run a Python script from the Scripts directory."""
@@ -608,9 +641,26 @@ def run_script(name, args=None):
     return result.returncode == 0
 
 
-def run_pipeline(force=False, dry_run=False, limit=0, stage=None):
+def run_pipeline(force=False, dry_run=False, limit=0, stage=None, updater_mode=None, reverify_source="both", prompt_preflight=True):
     """Run the full data processing pipeline."""
     print_section("Pipeline Execution", "🚀")
+
+    included_stage_names = [name for name, _description, _icon in PIPELINE_STAGES if not stage or stage.lower() in name.lower()]
+    reprocess_get_order = force
+    rerun_funeral_finder = force
+    skip_reverify = False
+
+    if prompt_preflight:
+        print_info("Pipeline pre-flight checks")
+        if "GetOrderInquiry" in included_stage_names:
+            reprocess_get_order = _ask_yes_no("Re-run GetOrderInquiry for already-fetched orders?", default=False)
+        if "Funeral_Finder" in included_stage_names:
+            rerun_funeral_finder = _ask_yes_no("Re-run Funeral_Finder for already-processed orders?", default=False)
+        if "reverify" in included_stage_names:
+            skip_reverify = _ask_yes_no("Skip reverify this run?", default=False)
+
+    if "Updater" in included_stage_names and updater_mode is None:
+        updater_mode = _ask_updater_mode()
 
     common_args = []
     if force:
@@ -625,14 +675,37 @@ def run_pipeline(force=False, dry_run=False, limit=0, stage=None):
         crm_args.append("--dry-run")
         print_warn("Dry-run mode: NO actual CRM updates will be made")
 
+    stage_args = {}
+    for name, _description, _icon in PIPELINE_STAGES:
+        if stage and stage.lower() not in name.lower():
+            continue
+        stage_args[name] = list(common_args)
+
+    if "GetOrderInquiry" in stage_args and not reprocess_get_order:
+        stage_args["GetOrderInquiry"] = [arg for arg in stage_args["GetOrderInquiry"] if arg != "--force"]
+    if "Funeral_Finder" in stage_args and not rerun_funeral_finder:
+        stage_args["Funeral_Finder"] = [arg for arg in stage_args["Funeral_Finder"] if arg != "--force"]
+    if "reverify" in stage_args:
+        if skip_reverify:
+            print_info("Skipping reverify stage for this run")
+            stage_args.pop("reverify", None)
+        else:
+            stage_args["reverify"] = list(common_args) + ["--source", reverify_source]
+    if "Updater" in stage_args:
+        stage_args["Updater"] = list(crm_args)
+        if updater_mode:
+            stage_args["Updater"].extend(["--mode", updater_mode])
+
     print()
     total = len(PIPELINE_STAGES)
     for idx, (name, description, icon) in enumerate(PIPELINE_STAGES, 1):
         if stage and stage.lower() not in name.lower():
             continue
+        if name not in stage_args:
+            continue
 
         print(f"  {C.BLUE}[{idx}/{total}]{C.RESET} {icon}  {C.BOLD}{name}{C.RESET} — {description}")
-        current_args = crm_args if name in ["Updater", "ClosingTask"] else common_args
+        current_args = stage_args.get(name, crm_args if name in ["Updater", "ClosingTask"] else common_args)
         success = run_script(name, current_args)
         if not success:
             print_error(f"Stage '{name}' failed. Pipeline stopped.")
