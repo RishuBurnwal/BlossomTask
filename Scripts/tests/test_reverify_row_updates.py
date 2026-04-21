@@ -123,7 +123,7 @@ def test_upsert_record_ignores_mismatched_row_number_when_order_id_differs(tmp_p
     assert rows[2]["funeral_home_name"] == "Bravo Updated"
 
 
-def test_upsert_record_uses_row_number_when_order_id_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_upsert_record_appends_when_order_id_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     csv_path = tmp_path / "main.csv"
     _write_csv(
         csv_path,
@@ -144,8 +144,20 @@ def test_upsert_record_uses_row_number_when_order_id_changed(tmp_path: Path, mon
     )
 
     rows = _read_csv(csv_path)
-    assert [row["order_id"] for row in rows] == ["A", "B-UPDATED", "C"]
-    assert rows[1]["funeral_home_name"] == "Bravo Updated"
+    assert [row["order_id"] for row in rows] == ["A", "B", "C", "B-UPDATED"]
+    assert rows[3]["funeral_home_name"] == "Bravo Updated"
+
+
+def test_extract_json_from_text_handles_nested_objects():
+    text = (
+        "Here is the answer: "
+        '{"outer": {"inner": {"value": 42}}, "status": "Found", "source_urls": ["https://example.com"]}'
+    )
+
+    parsed = reverify._extract_json_from_text(text)
+
+    assert parsed["outer"]["inner"]["value"] == 42
+    assert parsed["status"] == "Found"
 
 
 def test_upsert_record_appends_when_row_number_hits_unrelated_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

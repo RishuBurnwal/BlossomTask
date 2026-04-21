@@ -1,19 +1,33 @@
 function categorizeField(field) {
   const key = String(field || "").toLowerCase();
-  if (key.startsWith("ship_") || key.includes("address") || key.includes("city") || key.includes("state")) {
+  if (key === "order_id" || key === "task_id" || key === "ord_id" || key.includes("order")) {
+    return "order";
+  }
+  if (key.startsWith("ship_")) {
     return "shipping";
+  }
+  if (
+    key === "funeral_home_name"
+    || key === "funeral_address"
+    || key === "funeral_phone"
+    || key === "service_type"
+    || key.startsWith("service_")
+    || key.startsWith("visitation_")
+    || key.startsWith("ceremony_")
+  ) {
+    return "funeral";
+  }
+  if (key.startsWith("delivery_")) {
+    return "delivery";
+  }
+  if (key.includes("status") || key.includes("error") || key.includes("review") || key.includes("score")) {
+    return "status";
   }
   if (key.startsWith("pplx_") || key.includes("perplexity")) {
     return "perplexity";
   }
   if (key.startsWith("chatgpt_") || key.includes("gpt")) {
     return "chatgpt";
-  }
-  if (key.includes("status") || key.includes("error") || key.includes("review")) {
-    return "status";
-  }
-  if (key.includes("order") || key === "ord_id") {
-    return "order";
   }
   return "other";
 }

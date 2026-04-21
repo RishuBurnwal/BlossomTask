@@ -4,6 +4,7 @@ import type {
   DataRow,
   FileEntry,
   Job,
+  FuneralDatasets,
   PipelineStatus,
   PreflightReport,
   ScheduleItem,
@@ -91,12 +92,7 @@ export const api = {
 
   datasets: () =>
     request<{
-      datasets: {
-        main: { file: string; rows: DataRow[]; summary?: { total: number; matched: number; needs_review: number; unmatched: number; last_processed_at: string | null } };
-        error: { file: string; rows: DataRow[] };
-        low: { file: string; rows: DataRow[] };
-        review: { file: string; rows: DataRow[] };
-      };
+      datasets: FuneralDatasets;
     }>("/data/datasets"),
 
   fileTree: (path = "", recursive = false) =>

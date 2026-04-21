@@ -66,6 +66,14 @@ export interface DatasetWithSummary {
   summary?: DatasetSummary;
 }
 
+export interface FuneralDatasets {
+  main: DatasetWithSummary;
+  not_found: DatasetWithSummary;
+  review: DatasetWithSummary;
+  error: DatasetWithSummary;
+  low: DatasetWithSummary;
+}
+
 export interface FileEntry {
   name: string;
   path: string;

@@ -105,7 +105,7 @@ class PipelineRequirementTests(unittest.TestCase):
             ["original", "normalized_city", "expanded_nickname", "state_only", "care_of", "ord_instruct"],
         )
 
-    def test_reverify_process_record_runs_all_six_attempts_when_limit_is_six(self):
+    def test_reverify_process_record_runs_single_attempt(self):
         record = {
             "ship_name": "John Doe",
             "ship_city": "Boston",
@@ -115,36 +115,133 @@ class PipelineRequirementTests(unittest.TestCase):
         }
 
         with patch.object(reverify, "query_perplexity") as mocked_query:
-            mocked_query.side_effect = [
-                (
-                    "{}",
-                    {
-                        "match_status": "Review",
-                        "ai_accuracy_score": 40,
-                        "funeral_home_name": "",
-                        "funeral_address": "",
-                        "funeral_phone": "",
-                        "service_type": "",
-                        "service_date": "",
-                        "service_time": "",
-                        "visitation_date": "",
-                        "visitation_time": "",
-                        "delivery_recommendation_date": "",
-                        "delivery_recommendation_time": "",
-                        "delivery_recommendation_location": "",
-                        "special_instructions": "",
-                        "source_urls": "",
-                        "notes": "",
-                    },
-                    {"model": "sonar-pro"},
-                )
-                for _ in range(6)
-            ]
+            mocked_query.return_value = (
+                "{}",
+                {
+                    "match_status": "Review",
+                    "ai_accuracy_score": 40,
+                    "funeral_home_name": "",
+                    "funeral_address": "",
+                    "funeral_phone": "",
+                    "service_type": "",
+                    "service_date": "",
+                    "service_time": "",
+                    "visitation_date": "",
+                    "visitation_time": "",
+                    "delivery_recommendation_date": "",
+                    "delivery_recommendation_time": "",
+                    "delivery_recommendation_location": "",
+                    "special_instructions": "",
+                    "source_urls": "",
+                    "notes": "",
+                },
+                {"model": "sonar-pro"},
+            )
 
-            result = reverify.process_record("fake-key", deepcopy(record), max_attempts=6)
+            result = reverify.process_record("fake-key", deepcopy(record), max_attempts=1)
 
-        self.assertEqual(len(result["attempts"]), 6)
-        self.assertEqual(mocked_query.call_count, 6)
+        self.assertEqual(len(result["attempts"]), 1)
+        self.assertEqual(result["attempts"][0]["strategy"], "original")
+        self.assertEqual(mocked_query.call_count, 1)
+
+    def test_reverify_process_record_raises_when_attempts_not_one(self):
+        record = {
+            "ship_name": "John Doe",
+            "ship_city": "Boston",
+            "ship_state": "MA",
+            "ship_care_of": "",
+            "ord_instruct": "",
+        }
+
+        with self.assertRaises(ValueError):
+            reverify.process_record("fake-key", deepcopy(record), max_attempts=2)
+
+    def test_reverify_process_record_single_call_failure_returns_fallback(self):
+        record = {
+            "ship_name": "John Doe",
+            "ship_city": "Boston",
+            "ship_state": "MA",
+            "ship_care_of": "",
+            "ord_instruct": "",
+        }
+
+        with patch.object(reverify, "query_perplexity", side_effect=RuntimeError("boom")) as mocked_query:
+            result = reverify.process_record("fake-key", deepcopy(record), max_attempts=1)
+
+        self.assertEqual(mocked_query.call_count, 1)
+        self.assertEqual(result["match_status"], "Review")
+        self.assertEqual(result["ai_accuracy_score"], 0)
+        self.assertEqual(result["notes"], "Single reverify search failed")
+        self.assertEqual(len(result["attempts"]), 1)
+        self.assertEqual(result["attempts"][0]["strategy"], "original")
+        self.assertIn("error", result["attempts"][0])
+
+    def test_reverify_main_ignores_cli_attempts_and_uses_single_search(self):
+        row = {
+            "order_id": "12345",
+            "ship_name": "John Doe",
+            "ship_city": "Boston",
+            "ship_state": "MA",
+            "ship_zip": "02101",
+            "ship_care_of": "",
+            "ship_address": "",
+            "ship_address_unit": "",
+            "ship_country": "US",
+            "ord_instruct": "",
+            "notes": "",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            not_found_path = temp_path / "Funeral_data_not_found.csv"
+            review_path = temp_path / "Funeral_data_review.csv"
+            payload_path = temp_path / "reverify_payload.json"
+
+            with patch.object(sys, "argv", ["reverify.py", "--source", "not_found", "--attempts", "6"]), \
+                patch.object(reverify, "SOURCE_FILES", {"not_found": not_found_path, "review": review_path}), \
+                patch.object(reverify, "PAYLOAD_PATH", payload_path), \
+                patch.object(reverify, "MAIN_CSV_PATH", temp_path / "Funeral_data.csv"), \
+                patch.object(reverify, "MAIN_EXCEL_PATH", temp_path / "Funeral_data.xlsx"), \
+                patch.object(reverify, "NOT_FOUND_EXCEL_PATH", temp_path / "Funeral_data_not_found.xlsx"), \
+                patch.object(reverify, "REVIEW_EXCEL_PATH", temp_path / "Funeral_data_review.xlsx"), \
+                patch.object(reverify, "load_dotenv_file"), \
+                patch.object(reverify, "_required_env", return_value="fake-key"), \
+                patch.object(reverify, "load_logged_ids", return_value=set()), \
+                patch.object(reverify, "load_records", side_effect=lambda path: [deepcopy(row)] if path == not_found_path else []), \
+                patch.object(reverify, "process_record") as mocked_process_record, \
+                patch.object(reverify, "apply_business_rules", side_effect=lambda record, result: result), \
+                patch.object(reverify, "append_main_record"), \
+                patch.object(reverify, "remove_record"), \
+                patch.object(reverify, "upsert_record"), \
+                patch.object(reverify, "append_logged_id"), \
+                patch.object(reverify, "rebuild_excel_from_csv"):
+
+                mocked_process_record.return_value = {
+                    "match_status": "NotFound",
+                    "ai_accuracy_score": 0,
+                    "notes": "",
+                    "funeral_home_name": "",
+                    "funeral_address": "",
+                    "funeral_phone": "",
+                    "service_type": "",
+                    "service_date": "",
+                    "service_time": "",
+                    "visitation_date": "",
+                    "visitation_time": "",
+                    "ceremony_date": "",
+                    "ceremony_time": "",
+                    "delivery_recommendation_date": "",
+                    "delivery_recommendation_time": "",
+                    "delivery_recommendation_location": "",
+                    "special_instructions": "",
+                    "source_urls": "",
+                    "attempts": [],
+                }
+
+                reverify.main()
+
+            self.assertEqual(mocked_process_record.call_count, 1)
+            self.assertEqual(mocked_process_record.call_args.kwargs["max_attempts"], 1)
 
     def test_funeral_finder_parse_ai_response_uses_visitation_fallback(self):
         ai_text = json.dumps(
