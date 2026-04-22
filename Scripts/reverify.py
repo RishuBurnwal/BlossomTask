@@ -10,9 +10,10 @@ import json
 import os
 import re
 import sys
+from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import requests
 
@@ -48,6 +49,8 @@ TIMEOUT_SECONDS = 120
 SCRIPT_NAME = "Reverify"
 SCRIPTS_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPTS_DIR / "outputs" / "Funeral_Finder"
+DATE_WISE_DIR = OUTPUT_DIR / "date_wise"
+DEFAULT_PROMPT_TEMPLATE = SCRIPTS_DIR / "prompts" / "funeral_search_template.md"
 
 SOURCE_FILES = {
     "not_found": OUTPUT_DIR / "Funeral_data_not_found.csv",
@@ -55,6 +58,8 @@ SOURCE_FILES = {
 }
 MAIN_CSV_PATH = OUTPUT_DIR / "Funeral_data.csv"
 MAIN_EXCEL_PATH = OUTPUT_DIR / "Funeral_data.xlsx"
+FOUND_CSV_PATH = OUTPUT_DIR / "Funeral_data_found.csv"
+FOUND_EXCEL_PATH = OUTPUT_DIR / "Funeral_data_found.xlsx"
 NOT_FOUND_EXCEL_PATH = OUTPUT_DIR / "Funeral_data_not_found.xlsx"
 REVIEW_EXCEL_PATH = OUTPUT_DIR / "Funeral_data_review.xlsx"
 PAYLOAD_PATH = OUTPUT_DIR / "reverify_payload.json"
@@ -66,12 +71,14 @@ FIELDNAMES = [
     "order_id", "task_id", "ship_name", "ship_city", "ship_state", "ship_zip",
     "ship_care_of", "ship_address", "ship_address_unit", "ship_country",
     "ord_instruct",
+    "matched_name",
     "funeral_home_name", "funeral_address", "funeral_phone",
     "service_type", "service_date", "service_time",
     "visitation_date", "visitation_time",
     "ceremony_date", "ceremony_time",
     "delivery_recommendation_date", "delivery_recommendation_time",
     "delivery_recommendation_location", "special_instructions",
+    "name_match_status", "date_verification_status", "date_verification_notes",
     "match_status", "ai_accuracy_score",
     "source_urls", "notes",
     "last_processed_at",
@@ -88,6 +95,28 @@ ROW_IDENTITY_FIELDS = [
     "ship_country",
     "ord_instruct",
 ]
+
+FORCE_OVERWRITE_FIELDS = {
+    "matched_name",
+    "name_match_status",
+    "date_verification_status",
+    "date_verification_notes",
+    "match_status",
+    "ai_accuracy_score",
+    "last_processed_at",
+    "notes",
+}
+
+
+def _run_date_key() -> str:
+    """Return YYYY-MM-DD for date-wise reverify storage."""
+    return datetime.now().date().isoformat()
+
+
+def get_date_wise_output_path(filename: str, date_key: str | None = None) -> Path:
+    """Return the requested file path inside the date-wise folder."""
+    key = date_key or _run_date_key()
+    return DATE_WISE_DIR / key / filename
 
 
 def load_dotenv_file(path=None):
@@ -119,9 +148,26 @@ def get_now_iso() -> str:
     return datetime.now().isoformat()
 
 
-def _run_date_key() -> str:
-    """Return YYYY-MM-DD for date-wise reverify logging."""
-    return datetime.now().date().isoformat()
+def _load_prompt_template() -> str:
+    template_path = Path(os.getenv("FUNERAL_PROMPT_TEMPLATE", str(DEFAULT_PROMPT_TEMPLATE)))
+    if not template_path.exists():
+        return ""
+    return template_path.read_text(encoding="utf-8")
+
+
+def _partial_timing_note(service_date: str, service_time: str, visitation_date: str, visitation_time: str, ceremony_date: str, ceremony_time: str) -> str:
+    dates_present = any(_safe_str(value) for value in [service_date, visitation_date, ceremony_date])
+    times_present = any(_safe_str(value) for value in [service_time, visitation_time, ceremony_time])
+    has_datetime_pair = bool((service_date and service_time) or (visitation_date and visitation_time) or (ceremony_date and ceremony_time))
+    if has_datetime_pair:
+        return ""
+    if dates_present and not times_present:
+        return "date-only"
+    if times_present and not dates_present:
+        return "time-only"
+    if dates_present or times_present:
+        return "partial-datetime"
+    return ""
 
 
 def get_reverify_daily_log_path(date_key: str | None = None) -> Path:
@@ -134,6 +180,7 @@ def ensure_reverify_log_files(date_key: str | None = None) -> Path:
     """Ensure global and date-wise reverify log files exist."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     REVERIFY_LOGS_BY_DATE_DIR.mkdir(parents=True, exist_ok=True)
+    get_date_wise_output_path("Funeral_data.csv", date_key).parent.mkdir(parents=True, exist_ok=True)
 
     if not LOGS_PATH.exists():
         LOGS_PATH.write_text("", encoding="utf-8")
@@ -163,6 +210,24 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _clean_ship_name_for_prompt(name: str) -> str:
+    cleaned = _safe_str(name)
+    patterns = [
+        r"^(?:c/o|c-o)\s+",
+        r"^(?:the family of)\s+",
+        r"^(?:mr|mrs|ms|dr)\.?\s+",
+    ]
+    changed = True
+    while changed and cleaned:
+        changed = False
+        for pattern in patterns:
+            updated = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+            if updated != cleaned:
+                cleaned = updated
+                changed = True
+    return cleaned
+
+
 def _normalize_order_id(value) -> str:
     order_id = _safe_str(value)
     if not order_id:
@@ -189,6 +254,385 @@ def _normalize_service_datetime(
     if ceremony_date and ceremony_time:
         return ceremony_date, ceremony_time, "ceremony"
     return service_date, service_time, "none"
+
+
+def _unique_non_empty(values: list[str]) -> list[str]:
+    seen = set()
+    unique_values = []
+    for value in values:
+        normalized = _safe_str(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_values.append(normalized)
+    return unique_values
+
+
+def _normalize_name_tokens(name: str) -> list[str]:
+    cleaned = _clean_ship_name_for_prompt(name).lower()
+    cleaned = re.sub(r"[^a-z0-9\s'-]+", " ", cleaned)
+    return [token for token in cleaned.split() if token]
+
+
+NAME_STATUS_RANK = {
+    "missing": 0,
+    "mismatch": 1,
+    "fuzzy": 2,
+    "minor": 3,
+    "exact": 4,
+}
+
+NICKNAME_EQUIVALENTS = {
+    "bill": "william",
+    "billy": "william",
+    "bob": "robert",
+    "bobby": "robert",
+    "jim": "james",
+    "jimmy": "james",
+    "joe": "joseph",
+    "joey": "joseph",
+    "johnny": "john",
+    "kate": "katherine",
+    "kathy": "katherine",
+    "liz": "elizabeth",
+    "beth": "elizabeth",
+    "mike": "michael",
+    "mickey": "michael",
+    "matt": "matthew",
+    "pat": "patrick",
+    "rick": "richard",
+    "rich": "richard",
+    "tom": "thomas",
+    "dick": "richard",
+    "sue": "susan",
+    "lou": "louis",
+    "lue": "louis",
+}
+
+URL_NAME_SKIP_WORDS = {
+    "and",
+    "details",
+    "funeral",
+    "home",
+    "homes",
+    "location",
+    "locations",
+    "memorial",
+    "memorials",
+    "name",
+    "obituary",
+    "obituaries",
+    "print",
+    "service",
+    "services",
+    "tribute",
+    "tributewall",
+    "wall",
+}
+
+
+def _name_status_rank(status: str) -> int:
+    return NAME_STATUS_RANK.get(_safe_str(status).lower(), 0)
+
+
+def _canonicalize_name_token(token: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "", _safe_str(token).lower())
+    return NICKNAME_EQUIVALENTS.get(cleaned, cleaned)
+
+
+def _token_similarity(left: str, right: str) -> float:
+    left_value = _canonicalize_name_token(left)
+    right_value = _canonicalize_name_token(right)
+    if not left_value or not right_value:
+        return 0.0
+    if left_value == right_value:
+        return 1.0
+
+    ratio = SequenceMatcher(None, left_value, right_value).ratio()
+    shorter, longer = sorted([left_value, right_value], key=len)
+    if (
+        len(shorter) >= 3
+        and len(longer) > len(shorter)
+        and longer.startswith(shorter)
+        and (len(shorter) / len(longer)) >= 0.6
+    ):
+        ratio = max(ratio, 0.92)
+    return ratio
+
+
+def _name_similarity_metrics(expected_name: str, matched_name: str) -> dict:
+    expected_tokens = _normalize_name_tokens(expected_name)
+    matched_tokens = _normalize_name_tokens(matched_name)
+    expected_canonical = [_canonicalize_name_token(token) for token in expected_tokens]
+    matched_canonical = [_canonicalize_name_token(token) for token in matched_tokens]
+    shared_tokens = set(expected_canonical) & set(matched_canonical)
+
+    token_scores = []
+    for token in expected_canonical:
+        if not matched_canonical:
+            token_scores.append(0.0)
+            continue
+        token_scores.append(max(_token_similarity(token, candidate) for candidate in matched_canonical))
+
+    token_score = sum(token_scores) / len(token_scores) if token_scores else 0.0
+    overlap_score = len(shared_tokens) / max(len(set(expected_canonical)), 1)
+    full_score = SequenceMatcher(
+        None,
+        " ".join(expected_canonical),
+        " ".join(matched_canonical),
+    ).ratio() if expected_canonical and matched_canonical else 0.0
+
+    expected_first = expected_canonical[0] if expected_canonical else ""
+    expected_last = expected_canonical[-1] if expected_canonical else ""
+    matched_first = matched_canonical[0] if matched_canonical else ""
+    matched_last = matched_canonical[-1] if matched_canonical else ""
+
+    return {
+        "expected_tokens": expected_tokens,
+        "matched_tokens": matched_tokens,
+        "expected_canonical": expected_canonical,
+        "matched_canonical": matched_canonical,
+        "shared_token_count": len(shared_tokens),
+        "token_score": token_score,
+        "overlap_score": overlap_score,
+        "similarity_score": max(full_score, (token_score * 0.75) + (overlap_score * 0.25)),
+        "expected_first": expected_first,
+        "expected_last": expected_last,
+        "matched_first": matched_first,
+        "matched_last": matched_last,
+        "first_similarity": _token_similarity(expected_first, matched_first),
+        "last_similarity": _token_similarity(expected_last, matched_last),
+        "expected_first_seen_anywhere": bool(expected_first and expected_first in matched_canonical),
+    }
+
+
+def _classify_name_match(expected_name: str, matched_name: str) -> tuple[str, str]:
+    metrics = _name_similarity_metrics(expected_name, matched_name)
+    expected_tokens = metrics["expected_tokens"]
+    matched_tokens = metrics["matched_tokens"]
+
+    if not matched_tokens:
+        return "missing", "Name verification pending: matched name not returned"
+    if not expected_tokens:
+        return "missing", "Name verification pending: input name unavailable"
+    if metrics["expected_canonical"] == metrics["matched_canonical"]:
+        return "exact", f"Name verified exact: {_safe_str(matched_name)}"
+
+    if metrics["expected_first"] == metrics["matched_first"] and metrics["expected_last"] == metrics["matched_last"]:
+        return "minor", f"Name verified with minor variation: {_safe_str(expected_name)} vs {_safe_str(matched_name)}"
+    if metrics["expected_last"] == metrics["matched_last"] and metrics["shared_token_count"] >= 2:
+        return "minor", f"Name verified with shared family tokens: {_safe_str(expected_name)} vs {_safe_str(matched_name)}"
+    if (
+        metrics["similarity_score"] >= 0.75
+        and metrics["last_similarity"] >= 0.88
+        and (
+            metrics["first_similarity"] >= 0.72
+            or metrics["expected_first_seen_anywhere"]
+            or metrics["shared_token_count"] >= 1
+        )
+    ):
+        percent = round(metrics["similarity_score"] * 100, 1)
+        return "fuzzy", f"Name verified with fuzzy match ({percent}%): {_safe_str(expected_name)} vs {_safe_str(matched_name)}"
+
+    return "mismatch", f"Name mismatch: {_safe_str(expected_name)} vs {_safe_str(matched_name)}"
+
+
+def _extract_url_candidates_from_value(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return re.findall(r"https?://[^\s<>()\"'|]+", value, re.IGNORECASE)
+    if isinstance(value, dict):
+        urls = []
+        for nested_value in value.values():
+            urls.extend(_extract_url_candidates_from_value(nested_value))
+        return urls
+    if isinstance(value, (list, tuple, set)):
+        urls = []
+        for nested_value in value:
+            urls.extend(_extract_url_candidates_from_value(nested_value))
+        return urls
+    return []
+
+
+def _normalize_url_list(*values) -> list[str]:
+    normalized_urls = []
+    for value in values:
+        for candidate in _extract_url_candidates_from_value(value):
+            normalized = candidate.rstrip(".,;:!?)\"]'")
+            parsed = urlparse(normalized)
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                normalized_urls.append(normalized)
+    return _unique_non_empty(normalized_urls)
+
+
+def _collect_response_urls(response_payload: dict, ai_text: str = "") -> list[str]:
+    candidates = [_safe_str(ai_text)]
+    if isinstance(response_payload, dict):
+        for key in (
+            "citations",
+            "references",
+            "search_results",
+            "search_results_with_snippets",
+            "sources",
+            "web_results",
+            "web_search_results",
+        ):
+            if response_payload.get(key):
+                candidates.append(response_payload.get(key))
+        choices = response_payload.get("choices") or []
+        if choices:
+            candidates.append(choices[0])
+    return _normalize_url_list(*candidates)
+
+
+def _is_obituary_like_url(url: str) -> bool:
+    path = urlparse(_safe_str(url)).path.lower()
+    return any(keyword in path for keyword in ("obituary", "obituaries", "tribute", "memorial"))
+
+
+def _decode_url_name_candidate(segment: str) -> str:
+    candidate = unquote(_safe_str(segment))
+    if not candidate:
+        return ""
+    candidate = candidate.split("#", 1)[0].split("?", 1)[0]
+    candidate = re.sub(r"\.[a-z0-9]{1,5}$", "", candidate, flags=re.IGNORECASE)
+    candidate = candidate.replace("_", " ").replace("-", " ")
+    candidate = re.sub(r"\b\d+\b", " ", candidate)
+    candidate = re.sub(r"[^a-zA-Z\s']", " ", candidate)
+    tokens = [
+        token
+        for token in candidate.split()
+        if token and token.lower() not in URL_NAME_SKIP_WORDS
+    ]
+    if len(tokens) < 2:
+        return ""
+    return " ".join(token.title() for token in tokens)
+
+
+def _url_name_candidates(url: str) -> list[str]:
+    path_segments = [segment for segment in urlparse(_safe_str(url)).path.split("/") if segment]
+    candidates = []
+    for index, segment in enumerate(path_segments):
+        decoded = _decode_url_name_candidate(segment)
+        if decoded:
+            candidates.append(decoded)
+        if segment.isdigit() and index + 1 < len(path_segments):
+            decoded = _decode_url_name_candidate(path_segments[index + 1])
+            if decoded:
+                candidates.append(decoded)
+    return _unique_non_empty(candidates)
+
+
+def _infer_matched_name_from_sources(expected_name: str, source_urls: list[str]) -> str:
+    best_candidate = ""
+    best_rank = 0
+    best_score = 0.0
+
+    for url in source_urls:
+        if not _is_obituary_like_url(url):
+            continue
+        for candidate in _url_name_candidates(url):
+            status, _ = _classify_name_match(expected_name, candidate)
+            metrics = _name_similarity_metrics(expected_name, candidate)
+            rank = _name_status_rank(status)
+            score = metrics["similarity_score"]
+            if rank > best_rank or (rank == best_rank and score > best_score):
+                best_candidate = candidate
+                best_rank = rank
+                best_score = score
+
+    return best_candidate if best_rank >= _name_status_rank("fuzzy") else ""
+
+
+def _parse_date_candidate(raw_text: str) -> str:
+    value = _safe_str(raw_text)
+    if not value:
+        return ""
+
+    cleaned = re.sub(
+        r"(?i)\b(mon(day)?|tue(s(day)?)?|wed(nesday)?|thu(r(s(day)?)?)?|fri(day)?|sat(urday)?|sun(day)?)\b",
+        " ",
+        value,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned.replace(",", " ")).strip()
+    direct_candidates = [cleaned]
+    for pattern in [
+        r"\b\d{4}-\d{2}-\d{2}\b",
+        r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:\s+\d{2,4})\b",
+    ]:
+        direct_candidates.extend(re.findall(pattern, cleaned, re.IGNORECASE))
+
+    for candidate in _unique_non_empty(direct_candidates):
+        for fmt in (
+            "%Y-%m-%d",
+            "%m/%d/%Y",
+            "%m/%d/%y",
+            "%m-%d-%Y",
+            "%m-%d-%y",
+            "%B %d %Y",
+            "%b %d %Y",
+        ):
+            try:
+                return datetime.strptime(candidate, fmt).date().isoformat()
+            except ValueError:
+                continue
+    return ""
+
+
+def _extract_dates_from_text(text: str) -> list[str]:
+    raw_text = _safe_str(text)
+    if not raw_text:
+        return []
+
+    candidates = re.findall(
+        r"\b\d{4}-\d{2}-\d{2}\b|"
+        r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|"
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,\s*|\s+)\d{2,4}\b",
+        raw_text,
+        re.IGNORECASE,
+    )
+
+    normalized_dates = []
+    for candidate in candidates:
+        normalized = _parse_date_candidate(candidate)
+        if normalized:
+            normalized_dates.append(normalized)
+    return _unique_non_empty(normalized_dates)
+
+
+def _evaluate_date_verification(record: dict, parsed: dict) -> tuple[str, str]:
+    parsed_date_values = _unique_non_empty(
+        [
+            _safe_str(parsed.get("service_date")),
+            _safe_str(parsed.get("visitation_date")),
+            _safe_str(parsed.get("ceremony_date")),
+        ]
+    )
+    parsed_dates = _unique_non_empty([_parse_date_candidate(value) for value in parsed_date_values])
+    if has_schedule_hint(parsed.get("special_instructions")):
+        parsed_dates = _unique_non_empty([*parsed_dates, *_extract_dates_from_text(parsed.get("special_instructions"))])
+    instruction_dates = _extract_dates_from_text(record.get("ord_instruct"))
+
+    if instruction_dates and parsed_dates:
+        if any(parsed_date in instruction_dates for parsed_date in parsed_dates):
+            return "verified", f"Date verified against order instructions: {', '.join(parsed_dates)}"
+        return "mismatch", f"Date mismatch: instructions={', '.join(instruction_dates)} source={', '.join(parsed_dates)}"
+
+    if parsed_date_values and not parsed_dates:
+        return "invalid", f"Date requires review: unable to normalize source date value(s) {', '.join(parsed_date_values)}"
+
+    if parsed_dates:
+        return "source_only", f"Date verified from source only: {', '.join(parsed_dates)}"
+
+    if instruction_dates and has_schedule_hint(record.get("ord_instruct")):
+        return "instruction_only", f"Date verified from order instructions: {', '.join(instruction_dates)}"
+
+    if has_schedule_hint(record.get("ord_instruct")):
+        return "instruction_only", "Schedule verified from order instructions without a fully normalized date"
+
+    return "missing", "Date verification missing: no valid service date identified"
 
 
 def _extract_json_from_text(text: str) -> dict:
@@ -233,6 +677,10 @@ def _extract_structured_fields_from_text(text: str) -> dict:
         return {}
 
     key_aliases = {
+        "matched name": "matched_name",
+        "matched_name": "matched_name",
+        "matched deceased name": "matched_name",
+        "deceased name": "matched_name",
         "funeral home name (optional)": "funeral_home_name",
         "funeral home name": "funeral_home_name",
         "funeral_home_name": "funeral_home_name",
@@ -293,6 +741,13 @@ def parse_ai_response(ai_text: str) -> dict:
     if not ai_data:
         ai_data = _extract_structured_fields_from_text(ai_text)
 
+    matched_name = _safe_str(
+        ai_data.get("matched_name")
+        or ai_data.get("Matched Name")
+        or ai_data.get("matched_deceased_name")
+        or ai_data.get("deceased_name")
+        or ai_data.get("Deceased Name")
+    )
     funeral_home_name = _safe_str(ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)"))
     funeral_address = _safe_str(ai_data.get("funeral_address") or ai_data.get("Service location"))
     funeral_phone = _safe_str(ai_data.get("funeral_phone") or ai_data.get("Phone number"))
@@ -371,18 +826,7 @@ def parse_ai_response(ai_text: str) -> dict:
     score = max(0.0, min(100.0, score))
 
     urls = ai_data.get("source_urls") or ai_data.get("Source URLs") or []
-    if isinstance(urls, list):
-        raw_url_text = " | ".join(str(u) for u in urls if u)
-    else:
-        raw_url_text = _safe_str(urls)
-
-    url_candidates = re.findall(r"https?://[^\s|]+", raw_url_text, re.IGNORECASE)
-    valid_urls = []
-    for candidate in url_candidates:
-        normalized = candidate.rstrip(".,;:!?)\"]'")
-        parsed = urlparse(normalized)
-        if parsed.scheme in ("http", "https") and parsed.netloc:
-            valid_urls.append(normalized)
+    valid_urls = _normalize_url_list(urls, ai_text)
     source_urls = " | ".join(valid_urls)
 
     has_sources = bool(valid_urls)
@@ -406,11 +850,12 @@ def parse_ai_response(ai_text: str) -> dict:
         return re.sub(r"[^a-z0-9]+", "", raw)
 
     evidence_count = sum(1 for value in evidence_values if _normalized_marker(value) not in invalid_markers)
+    notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
 
     # Primary decision comes from AI status; score only gates ambiguous transitions.
     if match_status == "Found":
         if not (score >= 70 and evidence_count >= 2 and has_sources):
-            if evidence_count >= 2:
+            if evidence_count >= 1 or has_sources or funeral_home_name or funeral_address or funeral_phone or service_type:
                 match_status = "Review"
             else:
                 match_status = "NotFound"
@@ -426,19 +871,32 @@ def parse_ai_response(ai_text: str) -> dict:
             match_status = "Review"
 
     has_datetime_pair = bool((service_date and service_time) or (visitation_date and visitation_time) or (ceremony_date and ceremony_time))
+    timing_note = _partial_timing_note(service_date, service_time, visitation_date, visitation_time, ceremony_date, ceremony_time)
     if has_datetime_pair:
         if match_status in {"NotFound", "Review"}:
             match_status = "Found"
         score = max(score, 70.0)
+    elif timing_note:
+        if match_status == "Found" or evidence_count >= 1 or has_sources or funeral_home_name or funeral_address or funeral_phone or service_type:
+            match_status = "Review"
+            score = max(score, 60.0)
+        else:
+            match_status = "NotFound"
+            score = min(score, 49.0)
+        notes_value = append_note(notes_value, timing_note)
     else:
-        match_status = "NotFound"
-        score = min(score, 49.0)
+        if evidence_count >= 1 or has_sources or funeral_home_name or funeral_address or funeral_phone or service_type:
+            match_status = "Review"
+            score = min(max(score, 55.0), 69.0)
+        else:
+            match_status = "NotFound"
+            score = min(score, 49.0)
 
-    notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
     if fallback_source in {"visitation", "ceremony"}:
         notes_value = f"{notes_value} | service datetime fallback={fallback_source}".strip(" |")
 
     return {
+        "matched_name": matched_name,
         "funeral_home_name": funeral_home_name,
         "funeral_address": funeral_address,
         "funeral_phone": funeral_phone,
@@ -453,6 +911,9 @@ def parse_ai_response(ai_text: str) -> dict:
         "delivery_recommendation_time": delivery_recommendation_time,
         "delivery_recommendation_location": delivery_recommendation_location,
         "special_instructions": special_instructions,
+        "name_match_status": "",
+        "date_verification_status": "",
+        "date_verification_notes": "",
         "match_status": match_status,
         "ai_accuracy_score": score,
         "source_urls": source_urls,
@@ -514,6 +975,7 @@ def filter_records_by_logged_ids(rows: list, logged_ids: set[str]) -> tuple[list
 
 def write_records(csv_path: Path, rows: list):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES, extrasaction="ignore")
         writer.writeheader()
@@ -558,7 +1020,11 @@ def upsert_record(csv_path: Path, record: dict, row_number: int | None = None):
     cleaned_record["order_id"] = order_id
     if row_index_by_order_id is not None:
         next_rows = list(rows)
-        next_rows[row_index_by_order_id] = {**next_rows[row_index_by_order_id], **cleaned_record}
+        merged_row = dict(next_rows[row_index_by_order_id])
+        for key, value in cleaned_record.items():
+            if key == "order_id" or key in FORCE_OVERWRITE_FIELDS or _safe_str(value):
+                merged_row[key] = value
+        next_rows[row_index_by_order_id] = merged_row
     else:
         next_rows = [*rows, cleaned_record]
 
@@ -597,6 +1063,7 @@ def save_run_guard(payload: dict) -> None:
 def rebuild_excel_from_csv(csv_path: Path, excel_path: Path, sheet_name: str) -> None:
     if not OPENPYXL_AVAILABLE or not csv_path.exists():
         return
+    excel_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or FIELDNAMES
@@ -613,6 +1080,22 @@ def rebuild_excel_from_csv(csv_path: Path, excel_path: Path, sheet_name: str) ->
 
 def append_main_record(record: dict, row_number: int | None = None):
     upsert_record(MAIN_CSV_PATH, record, row_number=row_number)
+
+
+def save_record_to_status_outputs(record: dict, status: str, date_key: str | None = None):
+    normalized_status = _safe_str(status)
+    if normalized_status == "Found":
+        upsert_record(FOUND_CSV_PATH, record)
+        upsert_record(get_date_wise_output_path("Funeral_data_found.csv", date_key), record)
+        return
+
+    if normalized_status == "Review":
+        upsert_record(SOURCE_FILES["review"], record)
+        upsert_record(get_date_wise_output_path("Funeral_data_review.csv", date_key), record)
+        return
+
+    upsert_record(SOURCE_FILES["not_found"], record)
+    upsert_record(get_date_wise_output_path("Funeral_data_not_found.csv", date_key), record)
 
 
 def append_note(existing: str, note: str) -> str:
@@ -685,33 +1168,102 @@ def apply_business_rules(record: dict, parsed: dict) -> dict:
         or (_safe_str(adjusted.get("visitation_date")) and _safe_str(adjusted.get("visitation_time")))
         or (_safe_str(adjusted.get("ceremony_date")) and _safe_str(adjusted.get("ceremony_time")))
     )
+    has_any_timing = bool(
+        _safe_str(adjusted.get("service_date"))
+        or _safe_str(adjusted.get("service_time"))
+        or _safe_str(adjusted.get("visitation_date"))
+        or _safe_str(adjusted.get("visitation_time"))
+        or _safe_str(adjusted.get("ceremony_date"))
+        or _safe_str(adjusted.get("ceremony_time"))
+    )
 
-    if has_datetime_pair and adjusted.get("match_status") in {"NotFound", "Review"}:
-        adjusted["match_status"] = "Found"
-        adjusted["ai_accuracy_score"] = max(float(adjusted.get("ai_accuracy_score") or 0), 70.0)
+    source_urls = _normalize_url_list(adjusted.get("source_urls"))
+    adjusted["source_urls"] = " | ".join(source_urls)
+    inferred_name = _infer_matched_name_from_sources(record.get("ship_name"), source_urls)
+    current_name_status, _ = _classify_name_match(record.get("ship_name"), adjusted.get("matched_name"))
+    inferred_name_status, _ = _classify_name_match(record.get("ship_name"), inferred_name)
+    if _name_status_rank(inferred_name_status) > _name_status_rank(current_name_status):
+        adjusted["matched_name"] = inferred_name
 
-    if not has_datetime_pair and adjusted.get("match_status") != "NotFound":
-        adjusted["match_status"] = "NotFound"
-        adjusted["ai_accuracy_score"] = min(float(adjusted.get("ai_accuracy_score") or 0), 49.0)
-        notes = append_note(notes, "NotFound: no valid service/visitation/ceremony datetime pair")
+    has_obituary_url = any(_is_obituary_like_url(url) for url in source_urls)
+    has_legacy_source = any("legacy.com" in str(url).lower() for url in source_urls)
+    has_source_evidence = bool(
+        _safe_str(adjusted.get("funeral_home_name"))
+        or _safe_str(adjusted.get("funeral_address"))
+        or _safe_str(adjusted.get("funeral_phone"))
+        or _safe_str(adjusted.get("service_type"))
+        or source_urls
+    )
 
     if has_schedule_hint(customer_instructions):
         current_si = _safe_str(adjusted.get("special_instructions"))
+        customer_note = f"Customer-provided schedule: {customer_instructions}"[:1000]
         if not current_si:
-            adjusted["special_instructions"] = f"Customer-provided schedule: {customer_instructions}"[:1000]
+            adjusted["special_instructions"] = customer_note
         elif customer_instructions not in current_si:
-            adjusted["special_instructions"] = (
-                f"{current_si} | Customer-provided schedule: {customer_instructions}"
-            )[:1000]
+            adjusted["special_instructions"] = f"{current_si} | {customer_note}"[:1000]
+        if not _safe_str(adjusted.get("matched_name")):
+            adjusted["matched_name"] = _clean_ship_name_for_prompt(record.get("ship_name")) or "customer-provided schedule"
 
-        if adjusted.get("match_status") in {"NotFound", "Review"}:
-            adjusted["match_status"] = "Found"
-            adjusted["ai_accuracy_score"] = max(float(adjusted.get("ai_accuracy_score") or 0), 75.0)
-            notes = append_note(notes, "Found via existing order instructions with schedule")
+    name_match_status, name_match_note = _classify_name_match(
+        record.get("ship_name"),
+        adjusted.get("matched_name"),
+    )
+    if has_schedule_hint(customer_instructions) and name_match_status in {"missing", "mismatch"} and not has_source_evidence:
+        name_match_status = "exact"
+        adjusted_name = _clean_ship_name_for_prompt(record.get("ship_name")) or "customer-provided schedule"
+        name_match_note = f"Name verified from order instructions: {adjusted_name}"
+        adjusted["matched_name"] = adjusted_name
+    adjusted["name_match_status"] = name_match_status
+    notes = append_note(notes, name_match_note)
 
-    if adjusted.get("match_status") == "Found" and destination_type(record) == "non_funeral":
+    date_verification_status, date_verification_note = _evaluate_date_verification(record, adjusted)
+    adjusted["date_verification_status"] = date_verification_status
+    adjusted["date_verification_notes"] = date_verification_note
+    notes = append_note(notes, date_verification_note)
+
+    score = float(adjusted.get("ai_accuracy_score") or 0)
+    instruction_has_schedule = has_schedule_hint(customer_instructions)
+    has_schedule_text = has_schedule_hint(adjusted.get("special_instructions"))
+
+    if name_match_status == "mismatch" and (has_source_evidence or has_any_timing or instruction_has_schedule):
         adjusted["match_status"] = "Review"
+        adjusted["ai_accuracy_score"] = min(max(score, 60.0), 84.0)
+        notes = append_note(notes, "Review: source identity does not cleanly match requested deceased")
+    elif date_verification_status == "mismatch":
+        adjusted["match_status"] = "Review"
+        adjusted["ai_accuracy_score"] = min(max(score, 60.0), 84.0)
+        notes = append_note(notes, "Review: source date conflicts with customer instructions")
+    elif date_verification_status in {"verified", "source_only"} and name_match_status in {"exact", "minor", "fuzzy"}:
+        adjusted["match_status"] = "Found"
+        adjusted["ai_accuracy_score"] = max(score, 85.0 if date_verification_status == "verified" else 80.0)
+    elif date_verification_status == "instruction_only" and name_match_status in {"exact", "minor", "fuzzy"}:
+        adjusted["match_status"] = "Found"
+        adjusted["ai_accuracy_score"] = max(score, 75.0)
+        notes = append_note(notes, "Found via existing order instructions with schedule")
+    elif date_verification_status == "invalid":
+        adjusted["match_status"] = "Review"
+        adjusted["ai_accuracy_score"] = min(max(score, 55.0), 84.0)
+    elif has_obituary_url or has_legacy_source or has_source_evidence or has_any_timing or instruction_has_schedule or has_schedule_text:
+        adjusted["match_status"] = "Review"
+        adjusted["ai_accuracy_score"] = min(max(score, 55.0), 84.0)
+        if has_obituary_url:
+            notes = append_note(notes, "Review: obituary source found but validation is incomplete")
+        elif has_source_evidence:
+            notes = append_note(notes, "Review: venue or source evidence found but complete validation is pending")
+    else:
+        adjusted["match_status"] = "NotFound"
+        adjusted["ai_accuracy_score"] = min(score, 49.0)
+        notes = append_note(notes, "NotFound: no matching obituary, venue, or verified schedule evidence")
+
+    if destination_type(record) == "non_funeral" and (adjusted.get("match_status") == "Found" or has_source_evidence or instruction_has_schedule or has_any_timing):
+        adjusted["match_status"] = "Review"
+        adjusted["ai_accuracy_score"] = min(float(adjusted.get("ai_accuracy_score") or 0), 84.0)
         notes = append_note(notes, "Review required: destination appears non-funeral location")
+
+    if has_datetime_pair and adjusted.get("match_status") == "Review" and name_match_status in {"exact", "minor", "fuzzy"} and date_verification_status != "mismatch":
+        adjusted["match_status"] = "Found"
+        adjusted["ai_accuracy_score"] = max(float(adjusted.get("ai_accuracy_score") or 0), 85.0)
 
     adjusted["notes"] = notes
     return adjusted
@@ -761,7 +1313,7 @@ def expand_nickname(name: str) -> str:
 
 
 def build_prompt(record: dict, strategy: str) -> str:
-    lines = [f"Strategy: {strategy}", f"Name: {record.get('ship_name', '')}"]
+    lines = [f"Strategy: {strategy}", f"Name: {_clean_ship_name_for_prompt(record.get('ship_name', ''))}"]
     city = record.get("ship_city", "")
     state = record.get("ship_state", "")
     if strategy == "normalized_city":
@@ -783,22 +1335,27 @@ def build_prompt(record: dict, strategy: str) -> str:
         lines.append(f"Primary clue: {record.get('ord_instruct')}")
 
     context_block = "\n".join(line for line in lines if line)
-    return (
+    prompt_body = (
         "Search for funeral and memorial service details using the specific strategy below. "
-        "Return valid JSON with keys: funeral_home_name, funeral_address, funeral_phone, "
+        "Return valid JSON with keys: matched_name, funeral_home_name, funeral_address, funeral_phone, "
         "service_type, funeral_date, funeral_time, visitation_date, visitation_time, "
         "ceremony_date, ceremony_time, "
         "delivery_recommendation_date, delivery_recommendation_time, "
         "delivery_recommendation_location, special_instructions, "
         "status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for that status), source_urls (list), notes. "
         "Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; "
-        "50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score must be <=50. "
+        "50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score should usually be <=65 unless identity evidence is strong. "
         "For very common names without unique identifiers, keep score below 60. "
-        "Set Found when at least one valid date+time pair exists in funeral/service, visitation, or ceremony fields. "
-        "Set NotFound when no valid date+time pair exists in those fields. "
+        "Always return the exact obituary or memorial permalink you relied on when one exists; do not return only a funeral-home directory or homepage if a deeper obituary URL is available. "
+        "Return matched_name exactly as found on the obituary, funeral page, or customer-provided schedule you relied on. "
+        "Set Found when matched_name aligns with the input person and at least one valid date OR time exists in funeral/service, visitation, or ceremony fields together with identity confirmation (name + funeral home OR name + source URL OR trusted customer-provided schedule). "
+        "Set Review, not NotFound, for date-only/time-only evidence with identity confirmation. "
+        "Set Review when names or dates conflict between source evidence and customer instructions. "
+        "Set NotFound only when timing evidence is absent and identity confirmation is weak or missing. "
         "Do not use delivery recommendation fields as service datetime fallback.\n\n"
         f"{context_block}"
     )
+    return prompt_body
 
 
 def get_strategy_order(record: dict) -> list:
@@ -821,16 +1378,20 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
                 "role": "system",
                 "content": (
                     "You are an assistant that finds funeral and memorial service details. "
-                    "Return your findings in valid JSON format with these keys: funeral_home_name, "
+                    "Return your findings in valid JSON format with these keys: matched_name, funeral_home_name, "
                     "funeral_address, funeral_phone, service_type, funeral_date, funeral_time, "
                     "visitation_date, visitation_time, ceremony_date, ceremony_time, delivery_recommendation_date, "
                     "delivery_recommendation_time, delivery_recommendation_location, "
                     "special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), "
                     "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
                     "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
-                    "No source URL means score must be <=50. For very common names without unique identifiers, keep score below 60. "
-                    "Set Found when at least one valid date+time pair exists in funeral/service, visitation, or ceremony fields. "
-                    "Set NotFound when no valid date+time pair exists in those fields. "
+                    "No source URL means score should usually be <=65 unless identity evidence is strong. For very common names without unique identifiers, keep score below 60. "
+                    "Always return the exact obituary or memorial permalink you relied on when one exists; do not return only a funeral-home directory or homepage if a deeper obituary URL is available. "
+                    "Return matched_name exactly as found on the obituary, funeral page, or customer-provided schedule you relied on. "
+                    "Set Found when matched_name aligns with the input person and at least one valid date OR time exists in funeral/service, visitation, or ceremony fields together with identity confirmation (name + funeral home OR name + source URL OR trusted customer-provided schedule). "
+                    "Set Review, not NotFound, for date-only/time-only evidence with identity confirmation. "
+                    "Set Review when names or dates conflict between source evidence and customer instructions. "
+                    "Set NotFound only when timing evidence is absent and identity confirmation is weak or missing. "
                     "Do not use delivery recommendation fields as service datetime fallback."
                 ),
             },
@@ -855,42 +1416,55 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
     resp_json = response.json()
     ai_text = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
     parsed = parse_ai_response(ai_text)
+    merged_urls = _normalize_url_list(parsed.get("source_urls"), _collect_response_urls(resp_json, ai_text))
+    if merged_urls:
+        parsed["source_urls"] = " | ".join(merged_urls)
     return ai_text, parsed, api_payload
 
 
 def process_record(api_key: str, record: dict, max_attempts: int = 1) -> dict:
-    if max_attempts != 1:
-        raise ValueError("process_record enforces exactly one search; max_attempts must be 1")
-
     strategies = get_strategy_order(record)
+    attempt_limit = max(1, min(int(max_attempts or len(strategies)), len(strategies)))
+    template_text = _load_prompt_template()
     attempts = []
     best = None
 
-    # Reverify now performs exactly one search per record.
-    strategy_name, prompt = strategies[0]
-    try:
-        ai_text, parsed, payload = query_perplexity(api_key, prompt)
-        attempts.append({
-            "strategy": strategy_name,
-            "prompt": prompt,
-            "raw_ai_response": ai_text,
-            "parsed_result": parsed,
-            "sent": payload,
-        })
-        best = parsed.copy()
-        best["_strategy"] = strategy_name
-    except Exception as exc:
-        attempts.append({
-            "strategy": strategy_name,
-            "prompt": prompt,
-            "error": str(exc),
-        })
+    for strategy_name, _ in strategies[:attempt_limit]:
+        prompt = build_prompt(record, strategy_name)
+        if template_text:
+            prompt = f"{template_text}\n\n{prompt}"
+        try:
+            ai_text, parsed, payload = query_perplexity(api_key, prompt)
+            attempts.append({
+                "strategy": strategy_name,
+                "prompt": prompt,
+                "raw_ai_response": ai_text,
+                "parsed_result": parsed,
+                "sent": payload,
+            })
+            best = parsed.copy()
+            best["_strategy"] = strategy_name
+            if best.get("match_status") == "Found" and (
+                _safe_str(best.get("funeral_home_name"))
+                or _safe_str(best.get("source_urls"))
+                or _safe_str(best.get("service_date"))
+                or _safe_str(best.get("visitation_date"))
+                or _safe_str(best.get("ceremony_date"))
+            ):
+                best["notes"] = append_note(best.get("notes"), f"reverified via strategy={strategy_name}")
+                break
+        except Exception as exc:
+            attempts.append({
+                "strategy": strategy_name,
+                "prompt": prompt,
+                "error": str(exc),
+            })
 
     if best is None:
         best = {
             "match_status": "Review",
             "ai_accuracy_score": 0,
-            "notes": "Single reverify search failed",
+            "notes": "Multi-strategy reverify search failed",
             "funeral_home_name": "",
             "funeral_address": "",
             "funeral_phone": "",
@@ -915,11 +1489,17 @@ def process_record(api_key: str, record: dict, max_attempts: int = 1) -> dict:
 def update_record_for_result(record: dict, result: dict, source_name: str) -> dict:
     now = get_now_iso()
     updated = dict(record)
-    updated.update({k: v for k, v in result.items() if k in FIELDNAMES})
+    for key, value in result.items():
+        if key in FIELDNAMES and (key in FORCE_OVERWRITE_FIELDS or _safe_str(value)):
+            updated[key] = value
     updated["last_processed_at"] = now
 
     status = result.get("match_status", "NotFound")
-    updated["notes"] = _safe_str(result.get("notes")) or _safe_str(record.get("notes"))
+    strategy_name = _safe_str(result.get("_strategy"))
+    notes = _safe_str(result.get("notes"))
+    if strategy_name:
+        notes = append_note(notes, f"reverified via strategy={strategy_name}")
+    updated["notes"] = notes
     updated["ai_accuracy_score"] = result.get("ai_accuracy_score", 0)
     updated["match_status"] = status
     return updated
@@ -933,13 +1513,9 @@ def main():
                         help="Ignore reverify_logs.txt and reprocess all order IDs")
     parser.add_argument("--limit", type=int, default=0,
                         help="Cap how many records to process (0 = unlimited)")
-    parser.add_argument("--attempts", type=int, default=1,
-                        help="Deprecated: reverify always performs exactly 1 API search per record.")
+    parser.add_argument("--attempts", type=int, default=6,
+                        help="How many strategies to try per record (1-6).")
     args = parser.parse_args()
-
-    if args.attempts != 1:
-        print(f"[{SCRIPT_NAME}] --attempts ignored; running exactly 1 search per record")
-    args.attempts = 1
 
     load_dotenv_file()
     api_key = _required_env("PERPLEXITY_API_KEY")
@@ -955,6 +1531,7 @@ def main():
             _safe_str(run_guard.get("source")) == _safe_str(args.source)
             and int(run_guard.get("limit") or 0) == int(args.limit or 0)
             and bool(run_guard.get("force")) == bool(args.force)
+            and int(run_guard.get("attempts") or 0) == int(args.attempts or 0)
         )
         guard_is_fresh = False
         started_at_text = _safe_str(run_guard.get("started_at"))
@@ -979,6 +1556,7 @@ def main():
         "run_key": current_guard_key,
         "status": "running",
         "source": args.source,
+        "attempts": args.attempts,
         "force": bool(args.force),
         "limit": args.limit,
         "started_at": run_started_at,
@@ -1037,6 +1615,7 @@ def main():
 
             # Keep the main file as the canonical superset of all processed records.
             append_main_record(updated, row_number=source_row_number)
+            upsert_record(get_date_wise_output_path("Funeral_data.csv", run_date_key), updated)
             updated_main_count += 1
 
             payload_entry = {
@@ -1061,16 +1640,19 @@ def main():
                 remove_record(source_path, order_id)
                 other_source = "review" if source_name == "not_found" else "not_found"
                 remove_record(SOURCE_FILES[other_source], order_id)
+                save_record_to_status_outputs(updated, status, run_date_key)
                 found_count += 1
-                print(f"[{SCRIPT_NAME}] FOUND {order_id} -> moved to main CSV")
+                print(f"[{SCRIPT_NAME}] FOUND {order_id} -> moved to main + found CSV")
             elif status == "Review":
                 remove_record(SOURCE_FILES["not_found"], order_id)
-                upsert_record(SOURCE_FILES["review"], updated)
+                remove_record(FOUND_CSV_PATH, order_id)
+                save_record_to_status_outputs(updated, status, run_date_key)
                 review_count += 1
                 print(f"[{SCRIPT_NAME}] REVIEW {order_id} -> moved to review CSV")
             else:
                 remove_record(SOURCE_FILES["review"], order_id)
-                upsert_record(SOURCE_FILES["not_found"], updated)
+                remove_record(FOUND_CSV_PATH, order_id)
+                save_record_to_status_outputs(updated, status, run_date_key)
                 not_found_count += 1
                 print(f"[{SCRIPT_NAME}] NOT FOUND {order_id} -> moved to not_found CSV")
 
@@ -1095,6 +1677,7 @@ def main():
         "processed": processed,
     })
     rebuild_excel_from_csv(MAIN_CSV_PATH, MAIN_EXCEL_PATH, "Funeral Data")
+    rebuild_excel_from_csv(FOUND_CSV_PATH, FOUND_EXCEL_PATH, "Found")
     rebuild_excel_from_csv(SOURCE_FILES["not_found"], NOT_FOUND_EXCEL_PATH, "Not Found")
     rebuild_excel_from_csv(SOURCE_FILES["review"], REVIEW_EXCEL_PATH, "Review")
     print(

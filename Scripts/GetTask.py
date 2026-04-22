@@ -228,6 +228,21 @@ def save_one_record_to_csv(record: dict):
         writer.writerow(record)
 
 
+def save_empty_snapshot():
+    """Create empty CSV/XLSX outputs so downstream steps do not read stale rows."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
+
+    if OPENPYXL_AVAILABLE:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "GetTask Data"
+        ws.append(list(FIELDNAMES))
+        wb.save(EXCEL_PATH)
+
+
 def rebuild_excel_from_csv():
     """Rebuild data.xlsx from the current data.csv (called after each save)."""
     if not OPENPYXL_AVAILABLE:
@@ -379,6 +394,11 @@ def main():
 
     # Save query.txt – exact request that was sent
     save_query_txt(request_url, final_params, headers, actual_url)
+
+    # Always materialize output files so downstream stages can detect an empty run
+    # instead of failing on missing files.
+    if not raw_payload:
+        save_empty_snapshot()
 
     if not raw_payload:
         print("[GetTask] No tasks returned – nothing to do.")
