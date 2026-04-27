@@ -16,6 +16,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import requests
+from runtime_config import get_date_key, get_now_iso as runtime_now_iso, load_root_env
+
+PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-pro")
 
 try:
     import openpyxl
@@ -110,7 +113,7 @@ FORCE_OVERWRITE_FIELDS = {
 
 def _run_date_key() -> str:
     """Return YYYY-MM-DD for date-wise reverify storage."""
-    return datetime.now().date().isoformat()
+    return get_date_key()
 
 
 def get_date_wise_output_path(filename: str, date_key: str | None = None) -> Path:
@@ -120,21 +123,7 @@ def get_date_wise_output_path(filename: str, date_key: str | None = None) -> Pat
 
 
 def load_dotenv_file(path=None):
-    if path is None:
-        path = SCRIPTS_DIR / ".env"
-    path = Path(path)
-    if not path.exists():
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+    load_root_env(Path(path) if path is not None else None)
 
 
 def _required_env(name: str) -> str:
@@ -145,7 +134,7 @@ def _required_env(name: str) -> str:
 
 
 def get_now_iso() -> str:
-    return datetime.now().isoformat()
+    return runtime_now_iso()
 
 
 def _load_prompt_template() -> str:
@@ -441,7 +430,11 @@ def _extract_url_candidates_from_value(value) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        return re.findall(r"https?://[^\s<>()\"'|]+", value, re.IGNORECASE)
+        candidates = re.findall(r"https?://[^\s<>()\"'|]+|www\.[^\s<>()\"'|]+", value, re.IGNORECASE)
+        candidates.extend(
+            re.findall(r"\((https?://[^\s<>()\"'|]+|www\.[^\s<>()\"'|]+)\)", value, re.IGNORECASE)
+        )
+        return candidates
     if isinstance(value, dict):
         urls = []
         for nested_value in value.values():
@@ -459,7 +452,10 @@ def _normalize_url_list(*values) -> list[str]:
     normalized_urls = []
     for value in values:
         for candidate in _extract_url_candidates_from_value(value):
-            normalized = candidate.rstrip(".,;:!?)\"]'")
+            normalized = _safe_str(candidate).strip().strip("<>{}[]\"'")
+            normalized = normalized.rstrip(".,;:!?)")
+            if normalized.lower().startswith("www."):
+                normalized = f"https://{normalized}"
             parsed = urlparse(normalized)
             if parsed.scheme in ("http", "https") and parsed.netloc:
                 normalized_urls.append(normalized)
@@ -1042,6 +1038,22 @@ def remove_record(csv_path: Path, order_id: str):
     write_records(csv_path, filtered)
 
 
+def remove_record_from_all_date_wise(order_id: str):
+    if not DATE_WISE_DIR.exists():
+        return
+    filenames = [
+        "Funeral_data.csv",
+        "Funeral_data_found.csv",
+        "Funeral_data_not_found.csv",
+        "Funeral_data_review.csv",
+    ]
+    for date_dir in DATE_WISE_DIR.iterdir():
+        if not date_dir.is_dir():
+            continue
+        for filename in filenames:
+            remove_record(date_dir / filename, order_id)
+
+
 def _run_guard_key() -> str:
     return datetime.now().date().isoformat()
 
@@ -1372,7 +1384,7 @@ def get_strategy_order(record: dict) -> list:
 
 def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
     api_payload = {
-        "model": "sonar-pro",
+        "model": PERPLEXITY_MODEL,
         "messages": [
             {
                 "role": "system",
@@ -1635,6 +1647,7 @@ def main():
                 existing_payload = {}
             existing_payload[order_id] = payload_entry
             PAYLOAD_PATH.write_text(json.dumps(existing_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            remove_record_from_all_date_wise(order_id)
 
             if status == "Found":
                 remove_record(source_path, order_id)

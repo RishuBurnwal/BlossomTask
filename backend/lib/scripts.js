@@ -24,8 +24,8 @@ export const scriptCatalog = [
     name: "Funeral_Finder",
     description: "Search, verify, and classify funeral data",
     file: path.join(scriptsRoot, "Funeral_Finder.py"),
-    hasOptions: true,
-    options: ["batch", "interactive"],
+    hasOptions: false,
+    options: [],
   },
   {
     id: "reverify",

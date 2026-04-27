@@ -1,14 +1,21 @@
 import type {
+  AuthState,
   CompareDifference,
   CompareSummaryItem,
   DataRow,
   FileEntry,
   Job,
   FuneralDatasets,
+  ModelPerformanceStats,
+  OrderDateBucket,
+  OrderProcessingStats,
   PipelineStatus,
   PreflightReport,
   ScheduleItem,
   ScriptConfig,
+  SessionSummary,
+  UserSummary,
+  UsageMetrics,
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -16,6 +23,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+    credentials: "include",
     ...options,
   });
 
@@ -38,7 +46,73 @@ export const api = {
 
   preflight: () => request<PreflightReport>("/preflight"),
 
+  metrics: () => request<UsageMetrics>("/metrics"),
+
+  authMe: () => request<AuthState>("/auth/me"),
+
+  login: (username: string, password: string) =>
+    request<AuthState>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+
+  logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+
+  users: () => request<{ users: UserSummary[] }>("/auth/users"),
+
+  createUser: (payload: { username: string; password: string; role: "admin" | "user" }) =>
+    request<{ user: UserSummary }>("/auth/users", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateUserPassword: (userId: string, password: string) =>
+    request<{ ok: boolean }>(`/auth/users/${userId}/password`, {
+      method: "PUT",
+      body: JSON.stringify({ password }),
+    }),
+
+  deleteUser: (userId: string) =>
+    request<{ ok: boolean }>(`/auth/users/${userId}`, { method: "DELETE" }),
+
+  sessions: () => request<{ sessions: SessionSummary[] }>("/auth/sessions"),
+
+  revokeSession: (sessionId: string) =>
+    request<{ ok: boolean }>(`/auth/sessions/${sessionId}`, { method: "DELETE" }),
+
+  revokeUserSessions: (userId: string) =>
+    request<{ ok: boolean; message: string }>(`/auth/users/${userId}/sessions`, { method: "DELETE" }),
+
+  setModel: (model: string) =>
+    request<{ activeModel: string; availableModels: string[] }>("/auth/model", {
+      method: "PUT",
+      body: JSON.stringify({ model }),
+    }),
+
+  setSessionTtl: (minutes: number) =>
+    request<{ sessionTtlMinutes: number }>("/auth/settings/session-ttl", {
+      method: "PUT",
+      body: JSON.stringify({ minutes }),
+    }),
+
+  setTimezone: (timeZone: string) =>
+    request<{ configuredTimezone: string }>("/auth/settings/timezone", {
+      method: "PUT",
+      body: JSON.stringify({ timeZone }),
+    }),
+
   pipelineStatus: () => request<PipelineStatus>("/pipeline/status"),
+
+  orderProcessingStats: () => request<OrderProcessingStats>("/stats/order-processing"),
+
+  orderProcessingByDate: (from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    return request<{ from: string; to: string; days: OrderDateBucket[] }>(`/stats/order-processing/by-date?${params.toString()}`);
+  },
+
+  modelPerformance: () => request<ModelPerformanceStats>("/stats/model-performance"),
 
   scripts: () => request<{ scripts: ScriptConfig[] }>("/scripts"),
 

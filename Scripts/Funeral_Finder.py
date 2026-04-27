@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import unquote, urlparse
+from runtime_config import get_date_key, get_now_iso as runtime_now_iso, load_root_env
 
 # Ensure UTF-8 output for Windows terminals with line-buffered flushing
 def _configure_windows_stdout_utf8() -> None:
@@ -31,6 +32,8 @@ def _configure_windows_stdout_utf8() -> None:
         return
 
 _configure_windows_stdout_utf8()
+
+PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-pro")
 
 # ── Optional openpyxl for Excel output ──────────────────────────────────────
 try:
@@ -65,11 +68,12 @@ REVIEW_CSV_PATH       = OUTPUT_DIR / "Funeral_data_review.csv"
 REVIEW_EXCEL_PATH     = OUTPUT_DIR / "Funeral_data_review.xlsx"
 PAYLOAD_PATH          = OUTPUT_DIR / "payload.json"
 LOGS_PATH             = OUTPUT_DIR / "logs.txt"
+RUN_GUARD_PATH        = OUTPUT_DIR / "run_state.json"
 
 
 def _run_date_key() -> str:
     """Return YYYY-MM-DD for date-wise output partitioning."""
-    return datetime.now().date().isoformat()
+    return get_date_key()
 
 
 def get_date_wise_csv_path(date_key: str | None = None) -> Path:
@@ -178,22 +182,8 @@ FIELDNAMES = [
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_dotenv_file(path=None):
-    """Load a .env file from the Scripts directory (or given path)."""
-    if path is None:
-        path = SCRIPTS_DIR / ".env"
-    path = Path(path)
-    if not path.exists():
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key   = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+    """Load environment variables from the root .env file."""
+    load_root_env(Path(path) if path is not None else None)
 
 
 def _required_env(name: str) -> str:
@@ -204,14 +194,29 @@ def _required_env(name: str) -> str:
 
 
 def get_now_iso() -> str:
-    return datetime.now().isoformat()
+    return runtime_now_iso()
+
+
+def load_run_guard() -> dict:
+    if not RUN_GUARD_PATH.exists():
+        return {}
+    try:
+        return json.loads(RUN_GUARD_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def save_run_guard(payload: dict) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    RUN_GUARD_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _extract_json_from_text(text: str) -> dict:
-    """Robust JSON extractor — use raw_decode so nested objects are handled safely."""
+    """Robust JSON extractor that tolerates nested objects and wrapper prose."""
     if not text:
         return {}
 
+    # Strategy 1: try decoding from every opening brace and keep the largest dict.
     best = {}
     decoder = json.JSONDecoder()
     for match in re.finditer(r"\{", text):
@@ -226,7 +231,7 @@ def _extract_json_from_text(text: str) -> dict:
 
     # Strategy 2: first { to last }
     start = text.find("{")
-    end   = text.rfind("}")
+    end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         try:
             return json.loads(text[start:end + 1])
@@ -241,7 +246,6 @@ def _extract_json_from_text(text: str) -> dict:
                 return json.loads(m.group(1).strip())
             except (json.JSONDecodeError, ValueError):
                 pass
-
     return {}
 
 
@@ -1210,9 +1214,9 @@ def parse_ai_response(ai_text: str) -> dict:
         match_status = "Review"
     else:
         has_data = bool(
-            funeral_home_name or service_date or service_time or funeral_address or
-            funeral_phone or service_type or visitation_date or visitation_time or
-            ai_data.get("source_urls") or ai_data.get("Source URLs")
+            ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)") or
+            ai_data.get("funeral_date")      or ai_data.get("Funeral date") or
+            ai_data.get("service_date")
         )
         match_status = "Review" if has_data else "NotFound"
 
@@ -1227,6 +1231,9 @@ def parse_ai_response(ai_text: str) -> dict:
     except (ValueError, TypeError):
         score = 0
     score = max(0.0, min(100.0, score))
+
+    if match_status == "Review" and score >= 75:
+        match_status = "Found"
 
     urls = ai_data.get("source_urls") or ai_data.get("Source URLs") or []
     valid_urls = _normalize_url_list(urls, ai_text)
@@ -1355,9 +1362,29 @@ def main():
     args = parser.parse_args()
 
     load_dotenv_file()
+    run_guard = load_run_guard()
+    run_date_key = _run_date_key()
+    if (
+        _safe_str(run_guard.get("status")) == "running"
+        and _safe_str(run_guard.get("date_key")) == run_date_key
+        and not args.force
+    ):
+        print(
+            f"[{SCRIPT_NAME}] Another run is already active since {_safe_str(run_guard.get('started_at'))}. "
+            "Use --force to override."
+        )
+        return
+
+    save_run_guard({
+        "status": "running",
+        "date_key": run_date_key,
+        "started_at": get_now_iso(),
+        "pid": os.getpid(),
+        "force": bool(args.force),
+        "limit": int(args.limit or 0),
+    })
 
     pplx_api_key = _required_env("PERPLEXITY_API_KEY")
-    run_date_key = _run_date_key()
     date_wise_csv_path = get_date_wise_csv_path(run_date_key)
     _, date_wise_log_path = ensure_log_files(run_date_key)
 
@@ -1433,11 +1460,11 @@ def main():
 
         # Build prompt
         prompt = build_prompt(order, template_text)
-        print(f"  → Sending to Perplexity AI (sonar-pro)...")
+        print(f"  → Sending to Perplexity AI ({PERPLEXITY_MODEL})...")
 
         # Build API payload
         api_payload = {
-            "model": "sonar-pro",
+            "model": PERPLEXITY_MODEL,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
@@ -1591,6 +1618,17 @@ def main():
              date_wise_csv_path, date_wise_log_path]:
         mark = "✓" if fp.exists() else "✗"
         print(f"  {mark}  {fp.name}")
+    save_run_guard({
+        "status": "completed",
+        "date_key": run_date_key,
+        "started_at": _safe_str(run_guard.get("started_at")) or get_now_iso(),
+        "finished_at": get_now_iso(),
+        "pid": os.getpid(),
+        "processed": new_count,
+        "found": found_count,
+        "review": review_count,
+        "not_found": not_found_count,
+    })
 
 
 if __name__ == "__main__":
