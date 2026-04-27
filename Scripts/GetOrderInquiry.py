@@ -6,6 +6,7 @@ import csv
 import argparse
 import subprocess
 from pathlib import Path
+from runtime_config import load_root_env
 from datetime import datetime
 
 # Ensure UTF-8 output for Windows terminals.
@@ -78,21 +79,7 @@ EXCLUDE_FIELDS = {
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_dotenv_file(path=None):
-    if path is None:
-        path = SCRIPTS_DIR / ".env"
-    path = Path(path)
-    if not path.exists():
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key   = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+    load_root_env(Path(path) if path is not None else None)
 
 
 def _required_env(name: str) -> str:

@@ -7,10 +7,10 @@ import { api } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
   api: {
+    authMe: vi.fn(),
     pipelineStatus: vi.fn(),
     schedules: vi.fn(),
     scheduleHistory: vi.fn(),
-    jobs: vi.fn(),
     preflight: vi.fn(),
     runPipeline: vi.fn(),
     updateSchedule: vi.fn(),
@@ -18,6 +18,9 @@ vi.mock("@/lib/api", () => ({
     triggerSchedule: vi.fn(),
     clearJobs: vi.fn(),
     job: vi.fn(),
+    logout: vi.fn(),
+    setModel: vi.fn(),
+    setTimezone: vi.fn(),
   },
 }));
 
@@ -43,6 +46,26 @@ function renderHeader() {
 describe("DashboardHeader cron controls", () => {
   beforeEach(() => {
     queryClient.clear();
+    vi.mocked(api.authMe).mockResolvedValue({
+      user: {
+        id: "user-1",
+        username: "admin",
+        role: "admin",
+        active: true,
+        createdAt: "2026-04-13T00:00:00.000Z",
+        updatedAt: "2026-04-13T00:00:00.000Z",
+      },
+      session: {
+        id: "session-1",
+        createdAt: "2026-04-13T00:00:00.000Z",
+        expiresAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: "2026-04-13T00:00:00.000Z",
+      },
+      activeModel: "sonar-pro",
+      availableModels: ["sonar-pro"],
+      sessionTtlMinutes: 480,
+      configuredTimezone: "UTC",
+    });
     vi.mocked(api.pipelineStatus).mockResolvedValue({
       state: "idle",
       runningPipelines: 0,
@@ -66,7 +89,6 @@ describe("DashboardHeader cron controls", () => {
       ],
     });
     vi.mocked(api.scheduleHistory).mockResolvedValue({ scheduleId: "schedule-1", history: [] });
-    vi.mocked(api.jobs).mockResolvedValue({ jobs: [] });
     vi.mocked(api.updateSchedule).mockResolvedValue({
       schedule: {
         id: "schedule-1",
@@ -77,6 +99,7 @@ describe("DashboardHeader cron controls", () => {
         createdAt: "2026-04-13T00:00:00.000Z",
       },
     });
+    vi.mocked(api.setTimezone).mockResolvedValue({ configuredTimezone: "UTC" });
   });
 
   it("shows a Stop Cron button for enabled schedules and disables them through the API", async () => {

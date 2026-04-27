@@ -7,6 +7,8 @@ import requests
 
 import Funeral_Finder as ff
 
+PERPLEXITY_MODEL = ff.os.getenv("PERPLEXITY_MODEL", "sonar-pro")
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -74,7 +76,7 @@ def run() -> None:
         print(f"\\n[{idx}/5] order_id={order['order_id']} name={order['ship_name']} city={order['ship_city']}, {order['ship_state']}")
         prompt = ff.build_prompt(order, template)
         payload = {
-            "model": "sonar-pro",
+            "model": PERPLEXITY_MODEL,
             "messages": [
                 {"role": "system", "content": ff.SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -83,7 +85,7 @@ def run() -> None:
 
         entry = {
             "row": order,
-            "request": {"model": "sonar-pro"},
+            "request": {"model": PERPLEXITY_MODEL},
         }
 
         try:

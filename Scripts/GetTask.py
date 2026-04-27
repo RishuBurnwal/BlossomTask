@@ -4,6 +4,7 @@ import csv
 import argparse
 import sys
 from pathlib import Path
+from runtime_config import load_root_env
 from datetime import datetime
 
 import requests
@@ -32,22 +33,8 @@ QUERY_PATH   = OUTPUT_DIR / "query.txt"
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_dotenv_file(path=None):
-    """Load a .env file from the Scripts directory (or given path)."""
-    if path is None:
-        path = SCRIPTS_DIR / ".env"
-    path = Path(path)
-    if not path.exists():
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key   = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+    """Load environment variables from the root .env file."""
+    load_root_env(Path(path) if path is not None else None)
 
 
 def _required_env(name: str) -> str:
@@ -189,8 +176,10 @@ def save_payload(raw_payload):
 
 
 def save_query_txt(request_url: str, params: dict, headers: dict, actual_url: str):
-    """Save query.txt – shows exactly what was sent to the server."""
+    """Save query.txt – shows exactly what was sent to the server (credentials masked)."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Mask any header value that looks like a credential
+    safe_headers = {k: ("[REDACTED]" if any(s in k.upper() for s in ("KEY", "AUTH", "TOKEN", "SECRET", "PASS")) else v) for k, v in headers.items()}
     with open(QUERY_PATH, "w", encoding="utf-8", newline="\n") as f:
         f.write(f"Generated at : {get_now_iso()}\n")
         f.write("\n")
@@ -204,8 +193,8 @@ def save_query_txt(request_url: str, params: dict, headers: dict, actual_url: st
         f.write("=== FULL URL (as prepared by requests) ===\n")
         f.write(f"{actual_url}\n")
         f.write("\n")
-        f.write("=== HEADERS SENT ===\n")
-        for k, v in headers.items():
+        f.write("=== HEADERS SENT (credentials masked) ===\n")
+        for k, v in safe_headers.items():
             f.write(f"  {k}: {v}\n")
     print(f"[GetTask] Query saved : {QUERY_PATH}")
 
