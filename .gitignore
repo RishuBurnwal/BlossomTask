@@ -68,3 +68,11 @@ backend/data/run_history_logs.jsonl
 /deploy_sync.tar
 /funeral_Apr_15.xlsx
 /public/favicon.ico
+# Ignore DB + large files
+backend/data/*.sqlite*
+backend/data/*.db
+backend/data/*.jsonl
+backend/data/run_history_logs*.jsonl
+*.log
+*.tmp
+graphify-out/
