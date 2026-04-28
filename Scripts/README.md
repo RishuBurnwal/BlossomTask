@@ -118,7 +118,9 @@ cp .env.example .env
 # Edit .env and add your API keys
 ```
 
-### Configuration (.env file)
+### Configuration (root `.env` file)
+
+All active scripts in this project load configuration from the repository root `.env`. Do not create a second `Scripts/.env`.
 
 ```
 # API Keys (REQUIRED)

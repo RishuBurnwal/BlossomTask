@@ -1,0 +1,32 @@
+{
+  "users": [
+    {
+      "id": "5e7034e6-6477-4aa2-9eae-519f9bff5bc4",
+      "username": "admin",
+      "password_hash": "4832dc8c12f78c0cde5375682d7d7bbf:6ef7dfe0682f9442eb8fc1d80fc8625c27588c86ee7a0025d07ecd6a928980af",
+      "role": "admin",
+      "active": true,
+      "created_at": "2026-04-28T18:09:31.083Z",
+      "updated_at": "2026-04-28T18:09:31.083Z"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "30575e35-a039-47d5-809c-cd5b3252e34a",
+      "user_id": "5e7034e6-6477-4aa2-9eae-519f9bff5bc4",
+      "created_at": "2026-04-28T18:09:31.204Z",
+      "expires_at": "2026-04-29T03:37:56.861Z",
+      "last_seen_at": "2026-04-28T19:37:56.861Z",
+      "revoked_at": null,
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+      "ip_address": "::1"
+    }
+  ],
+  "settings": {
+    "default_model": "sonar-pro",
+    "session_ttl_minutes": "480",
+    "display_timezone": "Asia/Calcutta",
+    "reverify_default_provider": "perplexity"
+  },
+  "model_runs": []
+}

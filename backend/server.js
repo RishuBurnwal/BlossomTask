@@ -19,17 +19,20 @@ import {
   getActiveModel,
   getConfiguredTimezone,
   getDatabasePath,
+  getReverifyDefaultProvider,
   getSessionTtlMinutes,
   getSessionById,
   getUserById,
   listModelRuns,
   listSessions,
   listUsers,
+  purgeInactiveSessions,
   recordModelRun,
   revokeSession,
   revokeSessionsForUser,
   setActiveModel,
   setConfiguredTimezone,
+  setReverifyDefaultProvider,
   setSessionTtlMinutes,
   touchSession,
   updateUserPassword,
@@ -42,6 +45,7 @@ app.use(express.json({ limit: "2mb" }));
 const PORT = Number(process.env.BACKEND_PORT || 8787);
 const jobsFile = "jobs.json";
 const schedulesFile = "schedules.json";
+const alertsStateFile = "alerts_state.json";
 const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
 const runHistoryBackupFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.prev.jsonl");
 const RUN_HISTORY_MAX_BYTES = Number(process.env.RUN_HISTORY_MAX_BYTES || 50 * 1024 * 1024);
@@ -50,6 +54,9 @@ const scheduleTasks = new Map();
 const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "reverify", "updater", "closing-task"];
 const AUTH_COOKIE_NAME = "blossom_session";
 const ROOT_ENV_PATH = path.resolve(process.cwd(), ".env");
+const DEFAULT_OPENAI_MODEL = "gpt-4o-search-preview";
+const DEFAULT_PERPLEXITY_MODEL = "sonar-pro";
+const FUNERAL_OUTPUT_DIR = path.resolve(process.cwd(), "Scripts", "outputs", "Funeral_Finder");
 
 // Platform-aware Python binary detection
 let PYTHON_BIN = "python3";
@@ -117,6 +124,20 @@ function serializeSessionCookie(sessionId, expiresAt) {
 
 function clearSessionCookie() {
   return `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+function isOpenAIModel(modelName) {
+  const normalized = String(modelName || "").trim().toLowerCase();
+  return normalized.startsWith("gpt-") || normalized.startsWith("o");
+}
+
+function resolveProviderModel(provider, selectedModel) {
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+  const normalizedModel = String(selectedModel || "").trim();
+  if (normalizedProvider === "openai") {
+    return isOpenAIModel(normalizedModel) ? normalizedModel : DEFAULT_OPENAI_MODEL;
+  }
+  return isOpenAIModel(normalizedModel) ? DEFAULT_PERPLEXITY_MODEL : (normalizedModel || DEFAULT_PERPLEXITY_MODEL);
 }
 
 function readSessionId(req) {
@@ -700,12 +721,20 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
     RUN_MODE: effectiveOption || "",
     PYTHONUNBUFFERED: "1",
     BLOSSOM_CANCEL_FLAG: cancelFlagPath,
-    PERPLEXITY_MODEL: selectedModel,
-    OPENAI_MODEL: selectedModel,
+    ACTIVE_MODEL: selectedModel,
+    PERPLEXITY_MODEL: resolveProviderModel("perplexity", selectedModel),
+    OPENAI_MODEL: resolveProviderModel("openai", selectedModel),
+    REVERIFY_DEFAULT_PROVIDER: getReverifyDefaultProvider(),
     BLOSSOM_TIMEZONE: getConfiguredTimezone(),
   };
 
-  const scriptArgs = scriptId === "reverify" ? ["--force"] : [];
+  const scriptArgs = [];
+  if (scriptId === "reverify" && effectiveOption) {
+    scriptArgs.push("--source", effectiveOption);
+  }
+  if (scriptId === "updater" && effectiveOption) {
+    scriptArgs.push("--mode", effectiveOption);
+  }
   const child = spawn(PYTHON_BIN, [script.file, ...scriptArgs], {
     cwd: path.dirname(script.file),
     env,
@@ -1012,6 +1041,7 @@ app.post("/api/auth/login", (req, res) => {
     activeModel: getActiveModel(),
     availableModels,
     sessionTtlMinutes: getSessionTtlMinutes(),
+    reverifyDefaultProvider: getReverifyDefaultProvider(),
   });
 });
 
@@ -1024,6 +1054,7 @@ app.get("/api/auth/me", (req, res) => {
     activeModel: getActiveModel(),
     availableModels,
     sessionTtlMinutes: getSessionTtlMinutes(),
+    reverifyDefaultProvider: getReverifyDefaultProvider(),
     configuredTimezone: getConfiguredTimezone(),
     databasePath: getDatabasePath(),
   });
@@ -1095,6 +1126,11 @@ app.get("/api/auth/sessions", requireAdmin, (_req, res) => {
   return res.json({ sessions: listSessions() });
 });
 
+app.delete("/api/auth/sessions/inactive", requireAdmin, (_req, res) => {
+  const removed = purgeInactiveSessions();
+  return res.json({ ok: true, removed });
+});
+
 app.delete("/api/auth/sessions/:sessionId", requireAdmin, (req, res) => {
   revokeSession(req.params.sessionId);
   return res.json({ ok: true });
@@ -1144,6 +1180,19 @@ app.put("/api/auth/settings/timezone", requireAdmin, (req, res) => {
   try {
     const configuredTimezone = setConfiguredTimezone(timeZone);
     return res.json({ configuredTimezone });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+app.put("/api/auth/settings/reverify-provider", requireAdmin, (req, res) => {
+  const provider = String(req.body?.provider || "").trim().toLowerCase();
+  if (!provider) {
+    return res.status(400).json({ error: "provider is required" });
+  }
+  try {
+    const reverifyDefaultProvider = setReverifyDefaultProvider(provider);
+    return res.json({ reverifyDefaultProvider });
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
@@ -1534,23 +1583,65 @@ app.get("/api/pipeline/status", (_req, res) => {
 function parseCsvFileForStats(filePath) {
   if (!fs.existsSync(filePath)) return [];
   const raw = fs.readFileSync(filePath, "utf-8");
-  const lines = raw.split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.replace(/^\uFEFF/, "").trim().toLowerCase());
-  return lines.slice(1).map((line) => {
-    const values = [];
-    let cell = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { inQuotes = !inQuotes; continue; }
-      if (ch === "," && !inQuotes) { values.push(cell); cell = ""; continue; }
-      cell += ch;
+  const csvRows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index];
+
+    if (character === '"') {
+      if (inQuotes && raw[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
     }
-    values.push(cell);
-    const row = {};
-    headers.forEach((h, idx) => { row[h] = (values[idx] || "").trim(); });
-    return row;
+
+    if (character === "," && !inQuotes) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if ((character === "\n" || character === "\r") && !inQuotes) {
+      if (character === "\r" && raw[index + 1] === "\n") {
+        index += 1;
+      }
+      row.push(cell);
+      if (row.some((value) => String(value || "").trim() !== "")) {
+        csvRows.push(row);
+      }
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    if (row.some((value) => String(value || "").trim() !== "")) {
+      csvRows.push(row);
+    }
+  }
+
+  if (csvRows.length < 2) return [];
+  const headers = csvRows[0].map((header, index) => {
+    const cleaned = String(header ?? "").replace(/^\uFEFF/, "").trim().toLowerCase();
+    return cleaned || `column_${index + 1}`;
+  });
+
+  return csvRows.slice(1).map((values) => {
+    const parsedRow = {};
+    headers.forEach((header, index) => {
+      parsedRow[header] = String(values[index] ?? "").trim();
+    });
+    return parsedRow;
   });
 }
 
@@ -1562,6 +1653,102 @@ function classifyStatus(row) {
   return "unknown";
 }
 
+function readStatusDatasetsByOrderId() {
+  const files = {
+    found: path.join(FUNERAL_OUTPUT_DIR, "Funeral_data_found.csv"),
+    notfound: path.join(FUNERAL_OUTPUT_DIR, "Funeral_data_not_found.csv"),
+    review: path.join(FUNERAL_OUTPUT_DIR, "Funeral_data_review.csv"),
+  };
+  const rowsByStatus = Object.fromEntries(
+    Object.entries(files).map(([status, filePath]) => [status, parseCsvFileForStats(filePath)]),
+  );
+  const byOrderId = new Map();
+
+  Object.entries(rowsByStatus).forEach(([status, rows]) => {
+    rows.forEach((row) => {
+      const orderId = String(row.order_id || "").trim();
+      if (!orderId) {
+        return;
+      }
+      byOrderId.set(orderId, { ...row, match_status: status });
+    });
+  });
+
+  return { rowsByStatus, byOrderId };
+}
+
+function collectAlerts(limit = 50) {
+  const alertsState = readJson(alertsStateFile, { clearedAt: null });
+  const clearedAtMs = alertsState?.clearedAt ? Date.parse(alertsState.clearedAt) : null;
+  const jobs = loadJobs();
+  const alerts = [];
+  const seen = new Set();
+
+  jobs.forEach((job) => {
+    (job.logs || []).forEach((line, lineIndex) => {
+      const text = String(line || "");
+      const lower = text.toLowerCase();
+      if (lower.includes("run_summary|")) {
+        return;
+      }
+      let type = "";
+      let title = "";
+      let severity = "info";
+
+      if (lower.includes("api error") || lower.includes("response_status_code")) {
+        type = "api";
+        title = "API alert";
+        severity = "error";
+      } else if (lower.includes("process error") || lower.includes("traceback") || lower.includes("failed with code")) {
+        type = "script";
+        title = "Script runtime alert";
+        severity = "error";
+      } else if (
+        job.status === "failed"
+        && (lower.includes("failed") || lower.includes("error") || lower.includes("orphaned"))
+      ) {
+        type = "job";
+        title = "Job alert";
+        severity = "error";
+      }
+
+      if (!type) {
+        return;
+      }
+
+      const createdAt = text.match(/^\[([^\]]+)\]/)?.[1] || job.updatedAt || job.createdAt;
+      const createdAtMs = Date.parse(createdAt);
+      if (Number.isFinite(clearedAtMs) && Number.isFinite(createdAtMs) && createdAtMs <= clearedAtMs) {
+        return;
+      }
+
+      const id = `${job.id}:${lineIndex}:${type}`;
+      if (seen.has(id)) {
+        return;
+      }
+      seen.add(id);
+
+      const raw = text.replace(/^\[[^\]]+\]\s*/, "");
+      alerts.push({
+        id,
+        type,
+        title,
+        jobId: job.id,
+        scriptId: job.scriptId || job.kind,
+        status: job.status,
+        severity,
+        createdAt,
+        message: raw,
+        raw,
+      });
+    });
+  });
+
+  return alerts
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+    .slice(0, Math.max(1, Number(limit || 50)));
+}
+
 function extractDateFromRow(row) {
   const ts = row.last_processed_at || row.processed_at || row.processedAt || "";
   if (!ts) return null;
@@ -1570,14 +1757,20 @@ function extractDateFromRow(row) {
 }
 
 app.get("/api/stats/order-processing", requireAuth, (_req, res) => {
-  const funeralDataPath = path.resolve(process.cwd(), "Scripts", "outputs", "Funeral_Finder", "Funeral_data.csv");
+  const funeralDataPath = path.join(FUNERAL_OUTPUT_DIR, "Funeral_data.csv");
   const rows = parseCsvFileForStats(funeralDataPath);
+  const datasetStatus = readStatusDatasetsByOrderId();
+  const reconciledRows = rows.map((row) => {
+    const orderId = String(row.order_id || "").trim();
+    const canonical = orderId ? datasetStatus.byOrderId.get(orderId) : null;
+    return canonical ? { ...row, match_status: canonical.match_status } : row;
+  });
 
   let found = 0, notfound = 0, review = 0, unknown = 0;
   const byDate = {};
   const byModel = {};
 
-  rows.forEach((row) => {
+  reconciledRows.forEach((row) => {
     const status = classifyStatus(row);
     if (status === "found") found++;
     else if (status === "notfound") notfound++;
@@ -1606,7 +1799,7 @@ app.get("/api/stats/order-processing", requireAuth, (_req, res) => {
   });
 
   // Try to assign order-level stats to models from date-wise logs
-  const dateWiseDir = path.resolve(process.cwd(), "Scripts", "outputs", "Funeral_Finder", "date_wise");
+  const dateWiseDir = path.join(FUNERAL_OUTPUT_DIR, "date_wise");
   if (fs.existsSync(dateWiseDir)) {
     const dateDirs = fs.readdirSync(dateWiseDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
@@ -1644,6 +1837,17 @@ app.get("/api/stats/order-processing", requireAuth, (_req, res) => {
       reviewPct,
       activeModel: getActiveModel(),
     },
+    reconciliation: {
+      mainRows: rows.length,
+      foundFileRows: datasetStatus.rowsByStatus.found.length,
+      notFoundFileRows: datasetStatus.rowsByStatus.notfound.length,
+      reviewFileRows: datasetStatus.rowsByStatus.review.length,
+      statusFileTotal:
+        datasetStatus.rowsByStatus.found.length
+        + datasetStatus.rowsByStatus.notfound.length
+        + datasetStatus.rowsByStatus.review.length,
+      matchedToStatusFiles: reconciledRows.filter((row) => datasetStatus.byOrderId.has(String(row.order_id || "").trim())).length,
+    },
     byDate: Object.values(byDate).sort((a, b) => b.date.localeCompare(a.date)),
     byModel: Object.values(byModel).sort((a, b) => b.total - a.total),
   });
@@ -1652,7 +1856,7 @@ app.get("/api/stats/order-processing", requireAuth, (_req, res) => {
 app.get("/api/stats/order-processing/by-date", requireAuth, (req, res) => {
   const from = String(req.query.from || "");
   const to = String(req.query.to || "");
-  const dateWiseDir = path.resolve(process.cwd(), "Scripts", "outputs", "Funeral_Finder", "date_wise");
+  const dateWiseDir = path.join(FUNERAL_OUTPUT_DIR, "date_wise");
   const result = [];
 
   if (!fs.existsSync(dateWiseDir)) {
@@ -1667,15 +1871,9 @@ app.get("/api/stats/order-processing/by-date", requireAuth, (req, res) => {
     .sort();
 
   dateDirs.forEach((dateDir) => {
-    const mainPath = path.join(dateWiseDir, dateDir, "Funeral_data.csv");
-    const rows = parseCsvFileForStats(mainPath);
-    let found = 0, notfound = 0, review = 0;
-    rows.forEach((row) => {
-      const s = classifyStatus(row);
-      if (s === "found") found++;
-      else if (s === "notfound") notfound++;
-      else if (s === "review") review++;
-    });
+    const found = parseCsvFileForStats(path.join(dateWiseDir, dateDir, "Funeral_data_found.csv")).length;
+    const notfound = parseCsvFileForStats(path.join(dateWiseDir, dateDir, "Funeral_data_not_found.csv")).length;
+    const review = parseCsvFileForStats(path.join(dateWiseDir, dateDir, "Funeral_data_review.csv")).length;
     const total = found + notfound + review;
     result.push({
       date: dateDir,
@@ -1725,6 +1923,23 @@ app.get("/api/stats/model-performance", requireAuth, (_req, res) => {
     activeModel: getActiveModel(),
     models: Object.values(modelStats).sort((a, b) => b.totalRuns - a.totalRuns),
   });
+});
+
+app.get("/api/alerts", requireAuth, (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  return res.json({ alerts: collectAlerts(limit) });
+});
+
+app.delete("/api/alerts", requireAdmin, (_req, res) => {
+  const nextState = { clearedAt: new Date().toISOString() };
+  writeJson(alertsStateFile, nextState);
+  return res.json({ ok: true, clearedAt: nextState.clearedAt });
+});
+
+app.post("/api/alerts/clear", requireAdmin, (_req, res) => {
+  const nextState = { clearedAt: new Date().toISOString() };
+  writeJson(alertsStateFile, nextState);
+  return res.json({ ok: true, clearedAt: nextState.clearedAt });
 });
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));

@@ -36,8 +36,9 @@ export function DashboardHeader() {
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
   const [selectedHistoryJobId, setSelectedHistoryJobId] = useState<string | null>(null);
   const [showPreflight, setShowPreflight] = useState(false);
-  const [pipelineUpdaterMode, setPipelineUpdaterMode] = useState("complete");
+  const [pipelineReverifySource, setPipelineReverifySource] = useState("both");
   const [selectedModel, setSelectedModel] = useState("sonar-pro");
+  const [reverifyDefaultProvider, setReverifyDefaultProvider] = useState<"perplexity" | "openai">("perplexity");
   const [configuredTimezone, setConfiguredTimezone] = useState("UTC");
   const [liveClock, setLiveClock] = useState(new Date().toISOString());
 
@@ -70,6 +71,7 @@ export function DashboardHeader() {
   const activeModel = authData?.activeModel || "sonar-pro";
   const availableModels = authData?.availableModels ?? [activeModel];
   const currentTimezone = authData?.configuredTimezone || "UTC";
+  const currentReverifyDefaultProvider = authData?.reverifyDefaultProvider || "perplexity";
   const pipelineStatus = pipelineStatusData as PipelineStatus | undefined;
   const pipelineState = pipelineStatus?.state ?? "idle";
   const executionLocked = (pipelineStatus?.activeWorkloads ?? 0) > 0;
@@ -84,6 +86,10 @@ export function DashboardHeader() {
   useEffect(() => {
     setConfiguredTimezone(currentTimezone);
   }, [currentTimezone]);
+
+  useEffect(() => {
+    setReverifyDefaultProvider(currentReverifyDefaultProvider);
+  }, [currentReverifyDefaultProvider]);
 
   const { data: scheduleHistoryData } = useQuery({
     queryKey: ["schedule-history", activeScheduleId],
@@ -112,8 +118,8 @@ export function DashboardHeader() {
       { scriptId: "get-task" },
       { scriptId: "get-order-inquiry" },
       { scriptId: "funeral-finder" },
-      { scriptId: "reverify", option: "both" },
-      { scriptId: "updater", option: pipelineUpdaterMode },
+      { scriptId: "reverify", option: pipelineReverifySource },
+      { scriptId: "updater", option: "complete" },
       { scriptId: "closing-task" },
     ]),
     onSuccess: ({ jobId }) => toast.success(`Pipeline started (${jobId})`),
@@ -236,6 +242,15 @@ export function DashboardHeader() {
     onError: (error) => toast.error(error.message || "Failed to update timezone"),
   });
 
+  const setReverifyProviderMutation = useMutation({
+    mutationFn: (provider: "perplexity" | "openai") => api.setReverifyProvider(provider),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ["auth"] });
+      toast.success(`Reverify default set to ${response.reverifyDefaultProvider}`);
+    },
+    onError: (error) => toast.error(error.message || "Failed to update reverify provider"),
+  });
+
   const toggledScheduleId = toggleSchedule.variables?.id;
 
   return (
@@ -289,18 +304,40 @@ export function DashboardHeader() {
             </Button>
 
             <div className="flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5">
-              <span className="text-[10px] text-muted-foreground whitespace-nowrap">Updater:</span>
+              <span className="text-[10px] text-muted-foreground whitespace-nowrap">Reverify:</span>
               <select
-                value={pipelineUpdaterMode}
-                onChange={(e) => setPipelineUpdaterMode(e.target.value)}
+                value={pipelineReverifySource}
+                onChange={(e) => setPipelineReverifySource(e.target.value)}
                 className="h-6 rounded border bg-background px-1.5 text-[10px] text-foreground"
               >
-                <option value="complete">Complete (All)</option>
-                <option value="found_only">Found Only</option>
-                <option value="not_found">Not Found</option>
-                <option value="review">Review Data</option>
+                <option value="both">Both</option>
+                <option value="not_found">Not Found Only</option>
+                <option value="review">Review Only</option>
               </select>
             </div>
+
+            {isAdmin && (
+              <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2">
+                <span className="text-[10px] uppercase tracking-[0.28em] text-muted-foreground">Reverify</span>
+                <Select value={reverifyDefaultProvider} onValueChange={(value) => setReverifyDefaultProvider(value as "perplexity" | "openai")}>
+                  <SelectTrigger className="h-8 w-[170px] text-xs">
+                    <SelectValue placeholder="Default provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="perplexity">Perplexity First</SelectItem>
+                    <SelectItem value="openai">OpenAI First</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setReverifyProviderMutation.mutate(reverifyDefaultProvider)}
+                  disabled={setReverifyProviderMutation.isPending || reverifyDefaultProvider === currentReverifyDefaultProvider}
+                >
+                  Save
+                </Button>
+              </div>
+            )}
 
             <Button
               onClick={() => preflightMutation.mutate()}

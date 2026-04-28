@@ -92,6 +92,14 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _is_found_status(*values) -> bool:
+    """Return True only when any provided status value is exactly Found."""
+    for value in values:
+        if _safe_str(value).lower() == "found":
+            return True
+    return False
+
+
 # ── logs.txt helpers ─────────────────────────────────────────────────────────
 
 def load_logged_ids() -> set:
@@ -148,9 +156,7 @@ def load_updater_data() -> list:
 
             # CloseTask should run only for orders that are explicitly Found.
             # Accept Found from either `status` or `trResult` to handle schema variations.
-            status_value = _safe_str(row.get("status")).strip().lower()
-            tr_result_value = _safe_str(row.get("trResult")).strip().lower()
-            if status_value != "found" and tr_result_value != "found":
+            if not _is_found_status(row.get("match_status"), row.get("status"), row.get("trResult")):
                 continue
 
             seen_ids.add(oid)
@@ -324,9 +330,7 @@ def main():
         ship_name = _safe_str(order.get("ship_name"))
 
         # Defense-in-depth: even if upstream data changes, never close non-Found rows.
-        status_value = _safe_str(order.get("status")).lower()
-        tr_result_value = _safe_str(order.get("trResult")).lower()
-        if "found" not in {status_value, tr_result_value}:
+        if not _is_found_status(order.get("match_status"), order.get("status"), order.get("trResult")):
             print(f"[{idx}/{total}] {'─'*45}")
             print(f"  Order ID : {order_id}")
             raw_status = _safe_str(order.get("status")) or "empty"

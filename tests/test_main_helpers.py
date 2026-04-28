@@ -1,5 +1,6 @@
 import unittest
 import sys
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
@@ -68,6 +69,58 @@ class MainHelperTests(unittest.TestCase):
     def test_kill_pid_rejects_non_positive_pid(self):
         self.assertFalse(main._kill_pid(0))
         self.assertFalse(main._kill_pid(-10))
+
+    def test_access_control_command_can_set_reverify_provider(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_db_path = Path(temp_dir) / "blossomtask.sqlite"
+            original_auth_db_connection = main._auth_db_connection
+            with patch.object(main, "AUTH_DB_PATH", temp_db_path):
+                bootstrap_conn = original_auth_db_connection()
+                try:
+                    self.assertEqual(main._get_setting(bootstrap_conn, "reverify_default_provider", "perplexity"), "perplexity")
+                finally:
+                    bootstrap_conn.close()
+
+                provider_conn = original_auth_db_connection()
+                try:
+                    main._set_reverify_default_provider(provider_conn, "openai")
+                    provider = main._get_setting(provider_conn, "reverify_default_provider", "perplexity")
+                finally:
+                    provider_conn.close()
+
+        self.assertEqual(provider, "openai")
+
+    def test_run_script_injects_active_model_and_reverify_provider(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            script_path = temp_path / "reverify.py"
+            script_path.write_text("print('ok')", encoding="utf-8")
+            temp_db_path = temp_path / "blossomtask.sqlite"
+            original_auth_db_connection = main._auth_db_connection
+
+            with patch.object(main, "SCRIPTS_DIR", temp_path), patch.object(main, "AUTH_DB_PATH", temp_db_path):
+                conn = original_auth_db_connection()
+                try:
+                    main._set_active_model(conn, "gpt-4o-search-preview")
+                    main._ensure_setting(conn, "reverify_default_provider", "openai")
+                finally:
+                    conn.close()
+
+                captured = {}
+
+                def fake_run(cmd, cwd=None, env=None):
+                    captured["cmd"] = cmd
+                    captured["cwd"] = cwd
+                    captured["env"] = env
+                    return SimpleNamespace(returncode=0)
+
+                with patch.object(main.subprocess, "run", side_effect=fake_run), patch.object(main, "find_python", return_value="python"):
+                    result = main.run_script("reverify", ["--source", "both"])
+
+        self.assertTrue(result)
+        self.assertEqual(captured["env"]["OPENAI_MODEL"], "gpt-4o-search-preview")
+        self.assertEqual(captured["env"]["PERPLEXITY_MODEL"], "sonar-pro")
+        self.assertEqual(captured["env"]["REVERIFY_DEFAULT_PROVIDER"], "openai")
 
 
 if __name__ == "__main__":

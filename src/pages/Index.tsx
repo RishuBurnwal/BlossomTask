@@ -6,6 +6,7 @@ import { OrderStatsPanel } from "@/components/OrderStatsPanel";
 import { ScriptPanel } from "@/components/ScriptPanel";
 import { CompareSection } from "@/components/CompareSection";
 import { DataViewer } from "@/components/DataViewer";
+import { AlertsPanel } from "@/components/AlertsPanel";
 import { api } from "@/lib/api";
 import type { Job } from "@/lib/types";
 
@@ -65,6 +66,8 @@ const Index = () => {
 
         {/* Order Processing Analytics */}
         <OrderStatsPanel />
+
+        <AlertsPanel />
 
         {/* Compare Section */}
         <section>

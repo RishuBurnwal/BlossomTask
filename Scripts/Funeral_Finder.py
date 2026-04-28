@@ -9,6 +9,7 @@ import argparse
 from difflib import SequenceMatcher
 from pathlib import Path
 from datetime import datetime
+from typing import Optional, Tuple
 from urllib.parse import unquote, urlparse
 from runtime_config import get_date_key, get_now_iso as runtime_now_iso, load_root_env
 
@@ -33,7 +34,9 @@ def _configure_windows_stdout_utf8() -> None:
 
 _configure_windows_stdout_utf8()
 
+ACTIVE_MODEL = os.getenv("ACTIVE_MODEL", os.getenv("PERPLEXITY_MODEL", "sonar-pro"))
 PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-pro")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-search-preview")
 
 # ── Optional openpyxl for Excel output ──────────────────────────────────────
 try:
@@ -44,6 +47,7 @@ except ImportError:
 
 # ── Constants ────────────────────────────────────────────────────────────────
 PERPLEXITY_URL  = "https://api.perplexity.ai/chat/completions"
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 TIMEOUT_SECONDS = 120
 SCRIPT_NAME     = "Funeral_Finder"
 SCRIPTS_DIR     = Path(__file__).resolve().parent
@@ -76,25 +80,25 @@ def _run_date_key() -> str:
     return get_date_key()
 
 
-def get_date_wise_csv_path(date_key: str | None = None) -> Path:
+def get_date_wise_csv_path(date_key: Optional[str] = None) -> Path:
     """Return date-partitioned CSV path for today's processed rows."""
     key = date_key or _run_date_key()
     return DATE_WISE_DIR / key / "Funeral_data.csv"
 
 
-def get_date_wise_output_path(filename: str, date_key: str | None = None) -> Path:
+def get_date_wise_output_path(filename: str, date_key: Optional[str] = None) -> Path:
     """Return a file path inside the date-wise folder for the given date."""
     key = date_key or _run_date_key()
     return DATE_WISE_DIR / key / filename
 
 
-def get_date_wise_log_path(date_key: str | None = None) -> Path:
+def get_date_wise_log_path(date_key: Optional[str] = None) -> Path:
     """Return date-partitioned processed-id log path."""
     key = date_key or _run_date_key()
     return LOGS_BY_DATE_DIR / f"processed_{key}.txt"
 
 
-def ensure_log_files(date_key: str | None = None) -> tuple[Path, Path]:
+def ensure_log_files(date_key: Optional[str] = None) -> Tuple[Path, Path]:
     """Create base log files so skip logic and audit files always exist."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     DATE_WISE_DIR.mkdir(parents=True, exist_ok=True)
@@ -111,7 +115,7 @@ def ensure_log_files(date_key: str | None = None) -> tuple[Path, Path]:
     return LOGS_PATH, daily_log_path
 
 
-def append_date_wise_processed_log(order_id: str, status: str, date_key: str | None = None):
+def append_date_wise_processed_log(order_id: str, status: str, date_key: Optional[str] = None):
     """Append timestamped processing entries in date-wise log files."""
     normalized_id = _safe_str(order_id)
     if not normalized_id:
@@ -191,6 +195,19 @@ def _required_env(name: str) -> str:
     if not value:
         raise SystemExit(f"[{SCRIPT_NAME}] Missing required env var: {name}")
     return value
+
+
+def _active_model_name() -> str:
+    return _safe_str(ACTIVE_MODEL or PERPLEXITY_MODEL or "sonar-pro") or "sonar-pro"
+
+
+def _is_openai_model(model_name: str) -> bool:
+    normalized = _safe_str(model_name).lower()
+    return normalized.startswith("gpt-") or normalized.startswith("o")
+
+
+def _provider_label(model_name: str) -> str:
+    return "OpenAI" if _is_openai_model(model_name) else "Perplexity AI"
 
 
 def get_now_iso() -> str:
@@ -585,6 +602,40 @@ def _collect_response_urls(response_payload: dict, ai_text: str = "") -> list[st
         if choices:
             candidates.append(choices[0])
     return _normalize_url_list(*candidates)
+
+
+def _build_search_api_request(prompt: str) -> tuple[str, str, dict, dict]:
+    model_name = _active_model_name()
+    if _is_openai_model(model_name):
+        api_key = _required_env("OPENAI_API_KEY")
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        if "search" in model_name.lower():
+            payload["web_search_options"] = {"search_context_size": "high"}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        return "OpenAI", OPENAI_URL, headers, payload
+
+    api_key = _required_env("PERPLEXITY_API_KEY")
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    return "Perplexity AI", PERPLEXITY_URL, headers, payload
 
 
 def _is_obituary_like_url(url: str) -> bool:
@@ -1120,7 +1171,7 @@ def append_to_payload_json(order_id: str, payload: dict):
         json.dump(all_payloads, f, indent=2, ensure_ascii=False)
 
 
-def save_record_to_status_outputs(record: dict, status: str, date_key: str | None = None) -> None:
+def save_record_to_status_outputs(record: dict, status: str, date_key: Optional[str] = None) -> None:
     """Persist record into category-specific canonical and date-wise files."""
     normalized_status = _safe_str(status)
     if normalized_status == "Found":
@@ -1296,6 +1347,11 @@ def parse_ai_response(ai_text: str) -> dict:
         if evidence_count >= 2 and score >= 50:
             match_status = "Review"
 
+    name_evidence = bool(_safe_str(matched_name))
+    obituary_evidence = any(keyword in url.lower() for url in valid_urls for keyword in ["obituary", "obituaries", "tribute", "memorial"])
+    if match_status == "Review" and not name_evidence and not obituary_evidence and not has_datetime_pair:
+        match_status = "NotFound"
+
     if has_datetime_pair:
         if match_status in {"NotFound", "Review"}:
             match_status = "Found"
@@ -1384,7 +1440,6 @@ def main():
         "limit": int(args.limit or 0),
     })
 
-    pplx_api_key = _required_env("PERPLEXITY_API_KEY")
     date_wise_csv_path = get_date_wise_csv_path(run_date_key)
     _, date_wise_log_path = ensure_log_files(run_date_key)
 
@@ -1460,25 +1515,12 @@ def main():
 
         # Build prompt
         prompt = build_prompt(order, template_text)
-        print(f"  → Sending to Perplexity AI ({PERPLEXITY_MODEL})...")
-
-        # Build API payload
-        api_payload = {
-            "model": PERPLEXITY_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ]
-        }
-
-        headers = {
-            "Authorization": f"Bearer {pplx_api_key}",
-            "Content-Type": "application/json"
-        }
+        provider_name, request_url, headers, api_payload = _build_search_api_request(prompt)
+        print(f"  → Sending to {provider_name} ({api_payload['model']})...")
 
         try:
             response = requests.post(
-                PERPLEXITY_URL,
+                request_url,
                 headers=headers,
                 json=api_payload,
                 timeout=TIMEOUT_SECONDS
@@ -1610,6 +1652,11 @@ def main():
     print(f"  📁 Total      : {total}")
     print(f"  🆕 Processed  : {new_count}")
     print(f"{'═'*60}")
+    print(
+        f"[{SCRIPT_NAME}] RUN SUMMARY | "
+        f"Found={found_count} | Review={review_count} | NotFound={not_found_count} | "
+        f"Skipped={skipped_count} | Errors={error_count} | Total={total} | Processed={new_count}"
+    )
 
     print(f"\n[{SCRIPT_NAME}] Output folder : {OUTPUT_DIR}")
     print(f"[{SCRIPT_NAME}] Files created :")

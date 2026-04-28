@@ -50,6 +50,7 @@ function ProgressBar({
 export function OrderStatsPanel() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [selectedDay, setSelectedDay] = useState("");
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [showAllDates, setShowAllDates] = useState(false);
@@ -73,12 +74,25 @@ export function OrderStatsPanel() {
   });
 
   const summary = statsData?.summary;
+  const reconciliation = statsData?.reconciliation;
   const byDate = dateData?.days ?? statsData?.byDate ?? [];
   const byModel = statsData?.byModel ?? [];
   const models = modelPerf?.models ?? [];
   const activeModel = modelPerf?.activeModel || summary?.activeModel || "n/a";
 
   const visibleDates = showAllDates ? byDate : byDate.slice(0, 7);
+
+  const applyQuickDay = (mode: "today" | "yesterday" | "single") => {
+    const now = new Date();
+    const target = new Date(now);
+    if (mode === "yesterday") {
+      target.setDate(target.getDate() - 1);
+    }
+    const iso = target.toISOString().slice(0, 10);
+    const resolved = mode === "single" ? selectedDay : iso;
+    setDateFrom(resolved);
+    setDateTo(resolved);
+  };
 
   return (
     <section>
@@ -189,6 +203,11 @@ export function OrderStatsPanel() {
                 label="❓ Unknown"
               />
             )}
+            {reconciliation && (
+              <div className="rounded-lg border bg-background px-3 py-2 text-xs text-muted-foreground">
+                Offline sync check: main {reconciliation.mainRows} · found {reconciliation.foundFileRows} · not found {reconciliation.notFoundFileRows} · review {reconciliation.reviewFileRows}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -246,10 +265,39 @@ export function OrderStatsPanel() {
                   onClick={() => {
                     setDateFrom("");
                     setDateTo("");
+                    setSelectedDay("");
                   }}
                 >
                   Clear
                 </Button>
+                <Button variant="outline" size="sm" className="mt-4 text-xs" onClick={() => applyQuickDay("today")}>
+                  Today
+                </Button>
+                <Button variant="outline" size="sm" className="mt-4 text-xs" onClick={() => applyQuickDay("yesterday")}>
+                  Yesterday
+                </Button>
+                <div className="mt-1 space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Single Day
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={selectedDay}
+                      onChange={(e) => setSelectedDay(e.target.value)}
+                      className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      disabled={!selectedDay}
+                      onClick={() => applyQuickDay("single")}
+                    >
+                      Apply
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
           </CardHeader>

@@ -150,6 +150,37 @@ class PipelineRequirementTests(unittest.TestCase):
 
         self.assertEqual(parsed["match_status"], "Review")
 
+    def test_reverify_business_rules_mark_not_found_when_no_valid_person_or_obituary(self):
+        record = {
+            "ship_name": "John Example",
+            "ord_instruct": "",
+            "ship_care_of": "Generic Funeral Home",
+            "ship_address": "",
+        }
+        parsed = {
+            "match_status": "Review",
+            "ai_accuracy_score": 61,
+            "matched_name": "",
+            "funeral_home_name": "Generic Funeral Home",
+            "funeral_address": "123 Main St",
+            "funeral_phone": "",
+            "service_type": "funeral_home",
+            "service_date": "",
+            "service_time": "",
+            "visitation_date": "",
+            "visitation_time": "",
+            "ceremony_date": "",
+            "ceremony_time": "",
+            "special_instructions": "",
+            "source_urls": "https://genericfuneralhome.example/",
+            "notes": "",
+        }
+
+        adjusted = reverify.apply_business_rules(record, parsed)
+
+        self.assertEqual(adjusted["match_status"], "NotFound")
+        self.assertIn("no valid obituary or person-level identity confirmation", adjusted["notes"])
+
     def test_reverify_query_perplexity_uses_response_citations_for_exact_urls(self):
         response_payload = {
             "choices": [
@@ -209,7 +240,7 @@ class PipelineRequirementTests(unittest.TestCase):
             "ord_instruct": "Service Friday 11:00 AM",
         }
 
-        def fake_query(_api_key, prompt):
+        def fake_query(_provider, _api_key, prompt):
             if "Strategy: original" in prompt or "Strategy: normalized_city" in prompt:
                 return (
                     "{}",
@@ -261,12 +292,12 @@ class PipelineRequirementTests(unittest.TestCase):
                 {"model": "sonar-pro"},
             )
 
-        with patch.object(reverify, "query_perplexity", side_effect=fake_query) as mocked_query:
+        with patch.object(reverify, "query_provider", side_effect=fake_query) as mocked_query:
             result = reverify.process_record("fake-key", deepcopy(record), max_attempts=6)
 
-        self.assertEqual(len(result["attempts"]), 3)
-        self.assertEqual([attempt["strategy"] for attempt in result["attempts"]], ["original", "normalized_city", "expanded_nickname"])
-        self.assertEqual(mocked_query.call_count, 3)
+        self.assertEqual(len(result["attempts"]), 6)
+        self.assertEqual([attempt["strategy"] for attempt in result["attempts"]], ["original", "original", "normalized_city", "normalized_city", "expanded_nickname", "expanded_nickname"])
+        self.assertEqual(mocked_query.call_count, 6)
         self.assertEqual(result["match_status"], "Found")
         self.assertEqual(result["_strategy"], "expanded_nickname")
 
@@ -279,14 +310,14 @@ class PipelineRequirementTests(unittest.TestCase):
             "ord_instruct": "",
         }
 
-        with patch.object(reverify, "query_perplexity", side_effect=RuntimeError("boom")) as mocked_query:
+        with patch.object(reverify, "query_provider", side_effect=RuntimeError("boom")) as mocked_query:
             result = reverify.process_record("fake-key", deepcopy(record), max_attempts=6)
 
-        self.assertEqual(mocked_query.call_count, 6)
+        self.assertEqual(mocked_query.call_count, 12)
         self.assertEqual(result["match_status"], "Review")
         self.assertEqual(result["ai_accuracy_score"], 0)
         self.assertEqual(result["notes"], "Multi-strategy reverify search failed")
-        self.assertEqual(len(result["attempts"]), 6)
+        self.assertEqual(len(result["attempts"]), 12)
         self.assertEqual(result["attempts"][0]["strategy"], "original")
         self.assertEqual(result["attempts"][-1]["strategy"], "ord_instruct")
         self.assertIn("error", result["attempts"][0])
@@ -376,7 +407,7 @@ class PipelineRequirementTests(unittest.TestCase):
 
             captured_prompt = {}
 
-            def fake_query(_api_key, prompt):
+            def fake_query(_provider, _api_key, prompt):
                 captured_prompt["value"] = prompt
                 return (
                     "{}",
@@ -404,7 +435,7 @@ class PipelineRequirementTests(unittest.TestCase):
                 )
 
             with patch.object(reverify, "DEFAULT_PROMPT_TEMPLATE", template_path), \
-                patch.object(reverify, "query_perplexity", side_effect=fake_query):
+                patch.object(reverify, "query_provider", side_effect=fake_query):
                 reverify.process_record("fake-key", deepcopy(record), max_attempts=1)
 
         self.assertIn("TEMPLATE HEADER", captured_prompt["value"])

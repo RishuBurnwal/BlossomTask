@@ -1,9 +1,12 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
-const dbPath = path.resolve(process.cwd(), "backend", "data", "blossomtask.sqlite");
+// Cloudways commonly ships Node 18, so keep auth storage on plain JSON here
+// instead of depending on newer built-in SQLite modules.
+const dataDir = path.resolve(process.cwd(), "backend", "data");
+const storePath = path.join(dataDir, "auth-store.json");
+const dbPath = path.join(dataDir, "blossomtask.sqlite");
 const defaultSessionMinutes = Number(process.env.SESSION_TTL_MINUTES || 480);
 const defaultAdminUsername = String(process.env.BLOSSOMTASK_ADMIN_USERNAME || "admin").trim() || "admin";
 const defaultAdminPassword = String(process.env.BLOSSOMTASK_ADMIN_PASSWORD || "admin123").trim() || "admin123";
@@ -17,69 +20,12 @@ export const availableModels = [
   "gpt-4.1-mini",
 ];
 
-let database;
+export const reverifyProviderOptions = ["perplexity", "openai"];
+
+let storeCache = null;
 
 function ensureDataDir() {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-}
-
-function getDatabase() {
-  if (database) {
-    return database;
-  }
-
-  ensureDataDir();
-  database = new DatabaseSync(dbPath);
-  database.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
-      active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL,
-      revoked_at TEXT,
-      user_agent TEXT,
-      ip_address TEXT,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS model_runs (
-      id TEXT PRIMARY KEY,
-      job_id TEXT,
-      script_id TEXT,
-      model_name TEXT NOT NULL,
-      status TEXT NOT NULL,
-      source TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      finished_at TEXT
-    );
-  `);
-
-  seedDefaultAdmin();
-  ensureSetting("default_model", defaultAdminModel());
-  ensureSetting("session_ttl_minutes", String(defaultSessionMinutes));
-  ensureSetting("display_timezone", defaultTimezone);
-
-  return database;
+  fs.mkdirSync(dataDir, { recursive: true });
 }
 
 function nowIso() {
@@ -117,69 +63,157 @@ function verifyPassword(password, storedHash) {
   return crypto.timingSafeEqual(candidateBuffer, hashBuffer);
 }
 
-function ensureSetting(key, value) {
-  const db = getDatabase();
-  const statement = db.prepare("SELECT value FROM settings WHERE key = ?");
-  const row = statement.get(key);
-  if (row) {
-    return row.value;
+function createEmptyStore() {
+  return {
+    users: [],
+    sessions: [],
+    settings: {
+      default_model: defaultAdminModel(),
+      session_ttl_minutes: String(defaultSessionMinutes),
+      display_timezone: defaultTimezone,
+      reverify_default_provider: "perplexity",
+    },
+    model_runs: [],
+  };
+}
+
+function cloneStore(store) {
+  return JSON.parse(JSON.stringify(store));
+}
+
+function saveStore(store) {
+  ensureDataDir();
+  fs.writeFileSync(storePath, JSON.stringify(store, null, 2), "utf-8");
+  storeCache = store;
+}
+
+function ensureDefaults(store) {
+  store.settings ||= {};
+  if (!store.settings.default_model) {
+    store.settings.default_model = defaultAdminModel();
   }
-  db.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").run(key, String(value), nowIso());
-  return String(value);
-}
-
-function getSetting(key, fallback = "") {
-  const row = getDatabase().prepare("SELECT value FROM settings WHERE key = ?").get(key);
-  return row ? String(row.value) : fallback;
-}
-
-function setSetting(key, value) {
-  getDatabase()
-    .prepare(
-      `INSERT INTO settings (key, value, updated_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    )
-    .run(key, String(value), nowIso());
-}
-
-function seedDefaultAdmin() {
-  const db = getDatabase();
-  const count = db.prepare("SELECT COUNT(*) AS count FROM users").get().count;
-  if (count > 0) {
-    return;
+  if (!store.settings.session_ttl_minutes) {
+    store.settings.session_ttl_minutes = String(defaultSessionMinutes);
+  }
+  if (!store.settings.display_timezone) {
+    store.settings.display_timezone = defaultTimezone;
+  }
+  if (!store.settings.reverify_default_provider) {
+    store.settings.reverify_default_provider = "perplexity";
   }
 
-  const username = defaultAdminUsername;
-  const password = process.env.BLOSSOMTASK_ADMIN_PASSWORD || crypto.randomBytes(18).toString("base64url");
-  console.warn(`[auth] Bootstrapping default admin user '${username}'`);
-  createUser({ username, password, role: "admin" });
+  store.users ||= [];
+  store.sessions ||= [];
+  store.model_runs ||= [];
+
+  if (store.users.length === 0) {
+    const timestamp = nowIso();
+    console.warn(`[auth] Bootstrapping default admin user '${defaultAdminUsername}'`);
+    store.users.push({
+      id: crypto.randomUUID(),
+      username: normalizeUsername(defaultAdminUsername),
+      password_hash: hashPassword(defaultAdminPassword),
+      role: "admin",
+      active: true,
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+  }
+
+  return store;
+}
+
+function getStore() {
+  if (storeCache) {
+    return storeCache;
+  }
+
+  ensureDataDir();
+  let store = createEmptyStore();
+  if (fs.existsSync(storePath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(storePath, "utf-8"));
+      store = {
+        ...store,
+        ...parsed,
+      };
+    } catch {
+      store = createEmptyStore();
+    }
+  }
+
+  store = ensureDefaults(store);
+  saveStore(store);
+  return store;
+}
+
+function updateStore(mutator) {
+  const draft = cloneStore(getStore());
+  const result = mutator(draft);
+  const finalStore = ensureDefaults(draft);
+  saveStore(finalStore);
+  return result;
+}
+
+function serializeUser(record) {
+  if (!record) {
+    return null;
+  }
+  return {
+    id: record.id,
+    username: record.username,
+    role: record.role,
+    active: Boolean(record.active),
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  };
+}
+
+function serializeSession(session, userOverride = null) {
+  if (!session) {
+    return null;
+  }
+  const user = userOverride || getStore().users.find((entry) => entry.id === session.user_id);
+  if (!user) {
+    return null;
+  }
+  return {
+    id: session.id,
+    userId: session.user_id,
+    createdAt: session.created_at,
+    expiresAt: session.expires_at,
+    lastSeenAt: session.last_seen_at,
+    revokedAt: session.revoked_at || null,
+    userAgent: session.user_agent || "",
+    ipAddress: session.ip_address || "",
+    username: user.username,
+    role: user.role,
+    active: Boolean(user.active),
+  };
+}
+
+function getSettingValue(key, fallback = "") {
+  const value = getStore().settings?.[key];
+  return value === undefined || value === null || value === "" ? fallback : String(value);
+}
+
+function setSettingValue(key, value) {
+  updateStore((store) => {
+    store.settings[key] = String(value);
+  });
 }
 
 export function listUsers() {
-  return getDatabase()
-    .prepare(
-      "SELECT id, username, role, active, created_at AS createdAt, updated_at AS updatedAt FROM users ORDER BY created_at ASC",
-    )
-    .all()
-    .map((row) => ({
-      ...row,
-      active: Boolean(row.active),
-    }));
+  return getStore().users.map(serializeUser);
 }
 
 export function getUserById(userId) {
-  return getDatabase()
-    .prepare(
-      "SELECT id, username, role, active, created_at AS createdAt, updated_at AS updatedAt FROM users WHERE id = ?",
-    )
-    .get(userId) || null;
+  return serializeUser(getStore().users.find((entry) => entry.id === userId) || null);
 }
 
 export function getUserRecordByUsername(username) {
-  return getDatabase()
-    .prepare("SELECT * FROM users WHERE username = ?")
-    .get(normalizeUsername(username)) || null;
+  const normalized = normalizeUsername(username);
+  return getStore().users.find((entry) => entry.username === normalized) || null;
 }
 
 export function createUser({ username, password, role = "user" }) {
@@ -190,10 +224,7 @@ export function createUser({ username, password, role = "user" }) {
   if (!String(password || "").trim()) {
     throw new Error("password is required");
   }
-
-  const db = getDatabase();
-  const existing = getUserRecordByUsername(normalizedUsername);
-  if (existing) {
+  if (getUserRecordByUsername(normalizedUsername)) {
     throw new Error("username already exists");
   }
 
@@ -203,35 +234,45 @@ export function createUser({ username, password, role = "user" }) {
     username: normalizedUsername,
     password_hash: hashPassword(password),
     role: normalizeRole(role),
-    active: 1,
+    active: true,
     created_at: timestamp,
     updated_at: timestamp,
   };
 
-  db.prepare(
-    `INSERT INTO users (id, username, password_hash, role, active, created_at, updated_at)
-     VALUES (@id, @username, @password_hash, @role, @active, @created_at, @updated_at)`,
-  ).run(user);
+  updateStore((store) => {
+    store.users.push(user);
+  });
 
   return getUserById(user.id);
 }
 
 export function deleteUser(userId) {
-  const db = getDatabase();
-  const result = db.prepare("DELETE FROM users WHERE id = ?").run(userId);
-  return result.changes > 0;
+  let changed = false;
+  updateStore((store) => {
+    const before = store.users.length;
+    store.users = store.users.filter((entry) => entry.id !== userId);
+    store.sessions = store.sessions.filter((entry) => entry.user_id !== userId);
+    changed = store.users.length !== before;
+  });
+  return changed;
 }
 
 export function updateUserPassword(userId, password) {
   if (!String(password || "").trim()) {
     throw new Error("password is required");
   }
-  const passwordHash = hashPassword(password);
-  const timestamp = nowIso();
-  const result = getDatabase()
-    .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
-    .run(passwordHash, timestamp, userId);
-  return result.changes > 0;
+
+  let changed = false;
+  updateStore((store) => {
+    const record = store.users.find((entry) => entry.id === userId);
+    if (!record) {
+      return;
+    }
+    record.password_hash = hashPassword(password);
+    record.updated_at = nowIso();
+    changed = true;
+  });
+  return changed;
 }
 
 export function updateUserPasswordByUsername(username, password) {
@@ -250,49 +291,34 @@ export function authenticateUser(username, password) {
   if (!verifyPassword(password, record.password_hash)) {
     return null;
   }
-  return {
-    id: record.id,
-    username: record.username,
-    role: record.role,
-    active: Boolean(record.active),
-    createdAt: record.created_at,
-    updatedAt: record.updated_at,
-  };
+  return serializeUser(record);
 }
 
 export function createSession(userId, ttlMinutes = defaultSessionMinutes, meta = {}) {
-  const id = crypto.randomUUID();
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + Math.max(5, Number(ttlMinutes || defaultSessionMinutes)) * 60 * 1000);
-  getDatabase()
-    .prepare(
-      `INSERT INTO sessions (id, user_id, created_at, expires_at, last_seen_at, revoked_at, user_agent, ip_address)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
-    )
-    .run(
-      id,
-      userId,
-      createdAt.toISOString(),
-      expiresAt.toISOString(),
-      createdAt.toISOString(),
-      String(meta.userAgent || ""),
-      String(meta.ipAddress || ""),
-    );
-  return getSessionById(id);
+  const session = {
+    id: crypto.randomUUID(),
+    user_id: userId,
+    created_at: createdAt.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    last_seen_at: createdAt.toISOString(),
+    revoked_at: null,
+    user_agent: String(meta.userAgent || ""),
+    ip_address: String(meta.ipAddress || ""),
+  };
+
+  updateStore((store) => {
+    store.sessions.push(session);
+  });
+
+  return getSessionById(session.id);
 }
 
 export function getSessionById(sessionId) {
-  return getDatabase()
-    .prepare(
-      `SELECT s.id, s.user_id AS userId, s.created_at AS createdAt, s.expires_at AS expiresAt,
-              s.last_seen_at AS lastSeenAt, s.revoked_at AS revokedAt,
-              s.user_agent AS userAgent, s.ip_address AS ipAddress,
-              u.username, u.role, u.active
-       FROM sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.id = ?`,
-    )
-    .get(sessionId) || null;
+  const store = getStore();
+  const session = store.sessions.find((entry) => entry.id === sessionId);
+  return serializeSession(session || null);
 }
 
 export function getValidSession(sessionId) {
@@ -308,45 +334,74 @@ export function getValidSession(sessionId) {
 }
 
 export function touchSession(sessionId, ttlMinutes = defaultSessionMinutes) {
-  const session = getValidSession(sessionId);
-  if (!session) {
-    return null;
-  }
-  const updatedAt = new Date();
-  const expiresAt = new Date(updatedAt.getTime() + Math.max(5, Number(ttlMinutes || defaultSessionMinutes)) * 60 * 1000);
-  getDatabase()
-    .prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?")
-    .run(updatedAt.toISOString(), expiresAt.toISOString(), sessionId);
-  return getSessionById(sessionId);
+  let updated = null;
+  updateStore((store) => {
+    const session = store.sessions.find((entry) => entry.id === sessionId);
+    const user = session ? store.users.find((entry) => entry.id === session.user_id) : null;
+    if (!session || !user || session.revoked_at || !user.active) {
+      return;
+    }
+    const now = new Date();
+    if (new Date(session.expires_at).getTime() <= now.getTime()) {
+      session.revoked_at = nowIso();
+      return;
+    }
+    const expiresAt = new Date(now.getTime() + Math.max(5, Number(ttlMinutes || defaultSessionMinutes)) * 60 * 1000);
+    session.last_seen_at = now.toISOString();
+    session.expires_at = expiresAt.toISOString();
+    updated = serializeSession(session, user);
+  });
+  return updated;
 }
 
 export function revokeSession(sessionId) {
-  getDatabase()
-    .prepare("UPDATE sessions SET revoked_at = ? WHERE id = ?")
-    .run(nowIso(), sessionId);
+  updateStore((store) => {
+    const session = store.sessions.find((entry) => entry.id === sessionId);
+    if (session && !session.revoked_at) {
+      session.revoked_at = nowIso();
+    }
+  });
 }
 
 export function revokeSessionsForUser(userId) {
-  getDatabase()
-    .prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
-    .run(nowIso(), userId);
+  updateStore((store) => {
+    const timestamp = nowIso();
+    store.sessions.forEach((entry) => {
+      if (entry.user_id === userId && !entry.revoked_at) {
+        entry.revoked_at = timestamp;
+      }
+    });
+  });
 }
 
 export function listSessions() {
-  return getDatabase()
-    .prepare(
-      `SELECT s.id, s.user_id AS userId, s.created_at AS createdAt, s.expires_at AS expiresAt,
-              s.last_seen_at AS lastSeenAt, s.revoked_at AS revokedAt,
-              u.username, u.role
-       FROM sessions s
-       JOIN users u ON u.id = s.user_id
-       ORDER BY s.created_at DESC`,
-    )
-    .all();
+  const store = getStore();
+  return store.sessions
+    .map((entry) => serializeSession(entry))
+    .filter(Boolean)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+}
+
+export function purgeInactiveSessions() {
+  let removed = 0;
+  updateStore((store) => {
+    const nowMs = Date.now();
+    store.sessions = store.sessions.filter((entry) => {
+      const expiresAtMs = Date.parse(entry.expires_at);
+      const isExpired = Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs;
+      const isRevoked = Boolean(entry.revoked_at);
+      if (isExpired || isRevoked) {
+        removed += 1;
+        return false;
+      }
+      return true;
+    });
+  });
+  return removed;
 }
 
 export function getActiveModel() {
-  return getSetting("default_model", defaultAdminModel());
+  return getSettingValue("default_model", defaultAdminModel());
 }
 
 export function setActiveModel(modelName) {
@@ -354,23 +409,23 @@ export function setActiveModel(modelName) {
   if (!selected) {
     throw new Error("model is required");
   }
-  setSetting("default_model", selected);
+  setSettingValue("default_model", selected);
   return selected;
 }
 
 export function getSessionTtlMinutes() {
-  const value = Number(getSetting("session_ttl_minutes", String(defaultSessionMinutes)));
+  const value = Number(getSettingValue("session_ttl_minutes", String(defaultSessionMinutes)));
   return Number.isFinite(value) && value > 0 ? value : defaultSessionMinutes;
 }
 
 export function setSessionTtlMinutes(minutes) {
   const value = Math.max(5, Number(minutes || defaultSessionMinutes));
-  setSetting("session_ttl_minutes", String(value));
+  setSettingValue("session_ttl_minutes", String(value));
   return value;
 }
 
 export function getConfiguredTimezone() {
-  return getSetting("display_timezone", defaultTimezone) || defaultTimezone;
+  return getSettingValue("display_timezone", defaultTimezone) || defaultTimezone;
 }
 
 export function setConfiguredTimezone(timeZone) {
@@ -380,38 +435,66 @@ export function setConfiguredTimezone(timeZone) {
   } catch {
     throw new Error("Invalid timezone");
   }
-  setSetting("display_timezone", selected);
+  setSettingValue("display_timezone", selected);
+  return selected;
+}
+
+export function getReverifyDefaultProvider() {
+  const selected = String(getSettingValue("reverify_default_provider", "perplexity") || "perplexity").trim().toLowerCase();
+  return reverifyProviderOptions.includes(selected) ? selected : "perplexity";
+}
+
+export function setReverifyDefaultProvider(provider) {
+  const selected = String(provider || "").trim().toLowerCase();
+  if (!reverifyProviderOptions.includes(selected)) {
+    throw new Error("Invalid reverify provider");
+  }
+  setSettingValue("reverify_default_provider", selected);
   return selected;
 }
 
 export function listModelRuns(limit = 500) {
-  return getDatabase()
-    .prepare(
-      `SELECT id, job_id AS jobId, script_id AS scriptId, model_name AS modelName, status, source,
-              created_at AS createdAt, finished_at AS finishedAt
-       FROM model_runs
-       ORDER BY created_at DESC
-       LIMIT ?`,
-    )
-    .all(limit);
+  return getStore().model_runs
+    .slice()
+    .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))
+    .slice(0, Math.max(0, Number(limit || 500)))
+    .map((entry) => ({
+      id: entry.id,
+      jobId: entry.job_id,
+      scriptId: entry.script_id,
+      modelName: entry.model_name,
+      status: entry.status,
+      source: entry.source,
+      createdAt: entry.created_at,
+      finishedAt: entry.finished_at || null,
+    }));
 }
 
 export function recordModelRun({ jobId = null, scriptId = null, modelName, status = "running", source = "script" }) {
-  const id = crypto.randomUUID();
-  const createdAt = nowIso();
-  getDatabase()
-    .prepare(
-      `INSERT INTO model_runs (id, job_id, script_id, model_name, status, source, created_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-    )
-    .run(id, jobId, scriptId, modelName, status, source, createdAt);
-  return id;
+  const entry = {
+    id: crypto.randomUUID(),
+    job_id: jobId,
+    script_id: scriptId,
+    model_name: modelName,
+    status,
+    source,
+    created_at: nowIso(),
+    finished_at: null,
+  };
+  updateStore((store) => {
+    store.model_runs.push(entry);
+  });
+  return entry.id;
 }
 
 export function finishModelRun(runId, status) {
-  getDatabase()
-    .prepare("UPDATE model_runs SET status = ?, finished_at = ? WHERE id = ?")
-    .run(status, nowIso(), runId);
+  updateStore((store) => {
+    const entry = store.model_runs.find((item) => item.id === runId);
+    if (entry) {
+      entry.status = status;
+      entry.finished_at = nowIso();
+    }
+  });
 }
 
 export function getDatabasePath() {

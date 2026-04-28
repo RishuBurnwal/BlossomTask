@@ -50,6 +50,9 @@ AVAILABLE_MODELS = [
     "gpt-4o-search-preview",
     "gpt-4.1-mini",
 ]
+DEFAULT_OPENAI_MODEL = "gpt-4o-search-preview"
+DEFAULT_PERPLEXITY_MODEL = "sonar-pro"
+REVERIFY_PROVIDER_OPTIONS = ["perplexity", "openai"]
 
 
 def _safe_input(prompt=""):
@@ -645,6 +648,7 @@ def _auth_db_connection():
     _seed_default_admin(conn)
     _ensure_setting(conn, "default_model", _get_setting(conn, "default_model", AVAILABLE_MODELS[0]))
     _ensure_setting(conn, "session_ttl_minutes", str(DEFAULT_SESSION_MINUTES))
+    _ensure_setting(conn, "reverify_default_provider", _get_setting(conn, "reverify_default_provider", REVERIFY_PROVIDER_OPTIONS[0]))
     return conn
 
 
@@ -773,9 +777,62 @@ def _set_active_model(conn, model_name):
     _ensure_setting(conn, "default_model", normalized)
 
 
+def _is_openai_model(model_name):
+    normalized = str(model_name or "").strip().lower()
+    return normalized.startswith("gpt-") or normalized.startswith("o")
+
+
+def _resolve_provider_model(provider, selected_model):
+    normalized_provider = str(provider or "").strip().lower()
+    normalized_model = str(selected_model or "").strip()
+    if normalized_provider == "openai":
+        return normalized_model if _is_openai_model(normalized_model) else DEFAULT_OPENAI_MODEL
+    return DEFAULT_PERPLEXITY_MODEL if _is_openai_model(normalized_model) else (normalized_model or DEFAULT_PERPLEXITY_MODEL)
+
+
+def _normalize_reverify_provider(provider):
+    normalized = str(provider or "").strip().lower()
+    return "openai" if normalized == "openai" else "perplexity"
+
+
+def _get_reverify_default_provider(conn):
+    return _normalize_reverify_provider(_get_setting(conn, "reverify_default_provider", REVERIFY_PROVIDER_OPTIONS[0]))
+
+
+def _set_reverify_default_provider(conn, provider):
+    selected = _normalize_reverify_provider(provider)
+    _ensure_setting(conn, "reverify_default_provider", selected)
+    return selected
+
+
 def _set_session_ttl(conn, minutes):
     value = max(5, int(minutes))
     _ensure_setting(conn, "session_ttl_minutes", str(value))
+
+
+def _build_script_env(extra_env=None):
+    env = os.environ.copy()
+    try:
+        conn = _auth_db_connection()
+        try:
+            active_model = _get_setting(conn, "default_model", AVAILABLE_MODELS[0])
+            reverify_provider = _get_reverify_default_provider(conn)
+        finally:
+            conn.close()
+        env["OPENAI_MODEL"] = _resolve_provider_model("openai", active_model)
+        env["PERPLEXITY_MODEL"] = _resolve_provider_model("perplexity", active_model)
+        env["REVERIFY_DEFAULT_PROVIDER"] = reverify_provider
+    except Exception:
+        env.setdefault("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        env.setdefault("PERPLEXITY_MODEL", DEFAULT_PERPLEXITY_MODEL)
+        env.setdefault("REVERIFY_DEFAULT_PROVIDER", REVERIFY_PROVIDER_OPTIONS[0])
+
+    if extra_env:
+        for key, value in extra_env.items():
+            if value is not None:
+                env[str(key)] = str(value)
+
+    return env
 
 
 def manage_access_controls():
@@ -785,11 +842,13 @@ def manage_access_controls():
         with _auth_db_connection() as conn:
             active_model = _get_setting(conn, "default_model", AVAILABLE_MODELS[0])
             ttl = _get_setting(conn, "session_ttl_minutes", str(DEFAULT_SESSION_MINUTES))
+            reverify_provider = _get_reverify_default_provider(conn)
             users = _list_users(conn)
             sessions = _list_sessions(conn)
 
             print(f"  Active model: {C.BOLD}{active_model}{C.RESET}")
             print(f"  Session TTL : {C.BOLD}{ttl} minutes{C.RESET}")
+            print(f"  Reverify    : {C.BOLD}{reverify_provider}{C.RESET}")
             print(f"  Users       : {C.BOLD}{len(users)}{C.RESET}")
             print(f"  Sessions    : {C.BOLD}{len(sessions)}{C.RESET}")
             print()
@@ -803,7 +862,8 @@ def manage_access_controls():
         print(f"    {C.CYAN}[3]{C.RESET}  🔑  Change password")
         print(f"    {C.CYAN}[4]{C.RESET}  🎛️  Switch active model")
         print(f"    {C.CYAN}[5]{C.RESET}  ⏱️  Set session TTL")
-        print(f"    {C.CYAN}[6]{C.RESET}  📜  View sessions")
+        print(f"    {C.CYAN}[6]{C.RESET}  ♻️  Set reverify provider")
+        print(f"    {C.CYAN}[7]{C.RESET}  📜  View sessions")
         print(f"    {C.CYAN}[0]{C.RESET}  ↩️  Back")
         choice = input(f"  {C.BOLD}➤ Select option: {C.RESET}").strip()
 
@@ -868,6 +928,21 @@ def manage_access_controls():
                 print_error(str(error))
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice == "6":
+            print("\n  Reverify provider options:")
+            for idx, provider in enumerate(REVERIFY_PROVIDER_OPTIONS, 1):
+                print(f"    {idx}. {provider}")
+            provider_choice = input("  Enter provider number or name: ").strip().lower()
+            selected_provider = provider_choice
+            if provider_choice.isdigit() and 1 <= int(provider_choice) <= len(REVERIFY_PROVIDER_OPTIONS):
+                selected_provider = REVERIFY_PROVIDER_OPTIONS[int(provider_choice) - 1]
+            try:
+                with _auth_db_connection() as conn:
+                    _set_reverify_default_provider(conn, selected_provider)
+                print_success(f"Reverify provider set to {selected_provider}")
+            except Exception as error:
+                print_error(str(error))
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "7":
             with _auth_db_connection() as conn:
                 sessions = _list_sessions(conn)
             print()
@@ -952,6 +1027,15 @@ def access_control_command(args):
             print_success(f"Session TTL set to {int(args.access_set_ttl)} minutes")
             return 0
 
+        if args.access_set_reverify_provider:
+            try:
+                _set_reverify_default_provider(conn, args.access_set_reverify_provider)
+            except Exception as error:
+                print_error(str(error))
+                return 1
+            print_success(f"Reverify provider set to {_normalize_reverify_provider(args.access_set_reverify_provider)}")
+            return 0
+
     return None
 
 
@@ -1013,7 +1097,17 @@ def run_script(name, args=None):
         cmd.extend(args)
 
     print(f"\n  {C.BOLD}>>> Running {name}...{C.RESET}")
-    result = subprocess.run(cmd, cwd=str(ROOT), env=os.environ.copy())
+    env = _build_script_env()
+    if name == "reverify":
+        try:
+            conn = _auth_db_connection()
+            try:
+                env["REVERIFY_DEFAULT_PROVIDER"] = _get_reverify_default_provider(conn)
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    result = subprocess.run(cmd, cwd=str(ROOT), env=env)
     return result.returncode == 0
 
 
@@ -1742,6 +1836,8 @@ Examples:
                         help="Set the active model in the SQLite access-control store")
     parser.add_argument("--access-set-ttl", type=int,
                         help="Set the session TTL in minutes")
+    parser.add_argument("--access-set-reverify-provider", type=str, choices=REVERIFY_PROVIDER_OPTIONS,
+                        help="Set the default reverify provider in the SQLite access-control store")
     parser.add_argument("--access-password", type=str,
                         help="Password for --access-add-user")
     parser.add_argument("--access-role", type=str, choices=["user", "admin"], default="user",
