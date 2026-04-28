@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -10,7 +11,7 @@ ROOT_ENV_FILE = ROOT_DIR / ".env"
 DEFAULT_TIMEZONE = "UTC"
 
 
-def load_root_env(path: Path | None = None) -> None:
+def load_root_env(path: Optional[Path] = None) -> None:
     env_path = Path(path or ROOT_ENV_FILE)
     if not env_path.exists():
         return

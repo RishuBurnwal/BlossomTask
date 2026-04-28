@@ -145,6 +145,7 @@ export interface AuthState {
   activeModel: string;
   availableModels: string[];
   sessionTtlMinutes: number;
+  reverifyDefaultProvider?: "perplexity" | "openai";
   configuredTimezone?: string;
   databasePath?: string;
 }
@@ -160,6 +161,19 @@ export interface SessionSummary {
   expiresAt: string;
   lastSeenAt: string;
   revokedAt?: string | null;
+}
+
+export interface AlertEntry {
+  id: string;
+  type: "api" | "script" | "job";
+  title: string;
+  jobId: string;
+  scriptId: string;
+  status: string;
+  severity?: string;
+  createdAt: string;
+  message: string;
+  raw: string;
 }
 
 export interface UsageMetrics {
@@ -245,6 +259,14 @@ export interface OrderModelBucket {
 
 export interface OrderProcessingStats {
   summary: OrderProcessingSummary;
+  reconciliation?: {
+    mainRows: number;
+    foundFileRows: number;
+    notFoundFileRows: number;
+    reviewFileRows: number;
+    statusFileTotal: number;
+    matchedToStatusFiles: number;
+  };
   byDate: OrderDateBucket[];
   byModel: OrderModelBucket[];
 }

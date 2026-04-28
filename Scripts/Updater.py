@@ -592,6 +592,11 @@ def main():
     print(f"  📁 Total      : {total}")
     print(f"  🆕 Processed  : {new_count}")
     print(f"{'═'*60}")
+    print(
+        f"[{SCRIPT_NAME}] RUN SUMMARY | "
+        f"Success={success_count} | Errors={error_count} | Skipped={skipped_count} | "
+        f"Total={total} | Processed={new_count} | Mode={run_mode}"
+    )
 
     print(f"\n[{SCRIPT_NAME}] Output folder : {OUTPUT_DIR}")
     print(f"[{SCRIPT_NAME}] Files created :")

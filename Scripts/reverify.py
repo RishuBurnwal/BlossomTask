@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-verify Funeral Finder output records with multi-strategy Perplexity queries."""
+"""Re-verify Funeral Finder output records with multi-strategy dual-provider queries."""
 
 from __future__ import annotations
 
@@ -13,12 +13,15 @@ import sys
 from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Optional, Tuple, Union
 from urllib.parse import unquote, urlparse
 
 import requests
 from runtime_config import get_date_key, get_now_iso as runtime_now_iso, load_root_env
 
 PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-pro")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-search-preview")
+REVERIFY_DEFAULT_PROVIDER = os.getenv("REVERIFY_DEFAULT_PROVIDER", "perplexity")
 
 try:
     import openpyxl
@@ -48,6 +51,7 @@ def _configure_windows_stdout_utf8() -> None:
 _configure_windows_stdout_utf8()
 
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 TIMEOUT_SECONDS = 120
 SCRIPT_NAME = "Reverify"
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -116,7 +120,7 @@ def _run_date_key() -> str:
     return get_date_key()
 
 
-def get_date_wise_output_path(filename: str, date_key: str | None = None) -> Path:
+def get_date_wise_output_path(filename: str, date_key: Optional[str] = None) -> Path:
     """Return the requested file path inside the date-wise folder."""
     key = date_key or _run_date_key()
     return DATE_WISE_DIR / key / filename
@@ -131,6 +135,22 @@ def _required_env(name: str) -> str:
     if not value:
         raise SystemExit(f"[{SCRIPT_NAME}] Missing required env var: {name}")
     return value
+
+
+def _is_openai_model(model_name: str) -> bool:
+    normalized = _safe_str(model_name).lower()
+    return normalized.startswith("gpt-") or normalized.startswith("o")
+
+
+def _normalize_reverify_provider(provider: Optional[str] = None) -> str:
+    normalized = _safe_str(provider or REVERIFY_DEFAULT_PROVIDER).lower()
+    return "openai" if normalized == "openai" else "perplexity"
+
+
+def _provider_order() -> list[str]:
+    primary = _normalize_reverify_provider()
+    secondary = "openai" if primary == "perplexity" else "perplexity"
+    return [primary, secondary]
 
 
 def get_now_iso() -> str:
@@ -159,13 +179,13 @@ def _partial_timing_note(service_date: str, service_time: str, visitation_date: 
     return ""
 
 
-def get_reverify_daily_log_path(date_key: str | None = None) -> Path:
+def get_reverify_daily_log_path(date_key: Optional[str] = None) -> Path:
     """Return daily processed log file path for reverify."""
     key = date_key or _run_date_key()
     return REVERIFY_LOGS_BY_DATE_DIR / f"reverify_processed_{key}.txt"
 
 
-def ensure_reverify_log_files(date_key: str | None = None) -> Path:
+def ensure_reverify_log_files(date_key: Optional[str] = None) -> Path:
     """Ensure global and date-wise reverify log files exist."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     REVERIFY_LOGS_BY_DATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -180,7 +200,7 @@ def ensure_reverify_log_files(date_key: str | None = None) -> Path:
     return daily_log_path
 
 
-def append_reverify_daily_log(order_id: str, status: str, source_name: str, date_key: str | None = None):
+def append_reverify_daily_log(order_id: str, status: str, source_name: str, date_key: Optional[str] = None):
     """Write timestamped reverify processing audit entries per day."""
     normalized_order_id = _normalize_order_id(order_id)
     if not normalized_order_id:
@@ -979,7 +999,7 @@ def write_records(csv_path: Path, rows: list):
             writer.writerow({field: _safe_str(row.get(field)) for field in FIELDNAMES})
 
 
-def _coerce_row_number(value) -> int | None:
+def _coerce_row_number(value) -> Optional[int]:
     try:
         row_number = int(str(value).strip())
     except (AttributeError, TypeError, ValueError):
@@ -1002,7 +1022,7 @@ def _rows_share_identity(existing_row: dict, record: dict) -> bool:
     return matched_fields >= 2
 
 
-def upsert_record(csv_path: Path, record: dict, row_number: int | None = None):
+def upsert_record(csv_path: Path, record: dict, row_number: Optional[int] = None):
     rows = load_records(csv_path)
     order_id = _normalize_order_id(record.get("order_id"))
     row_index_by_order_id = None
@@ -1090,11 +1110,11 @@ def rebuild_excel_from_csv(csv_path: Path, excel_path: Path, sheet_name: str) ->
     workbook.save(excel_path)
 
 
-def append_main_record(record: dict, row_number: int | None = None):
+def append_main_record(record: dict, row_number: Optional[int] = None):
     upsert_record(MAIN_CSV_PATH, record, row_number=row_number)
 
 
-def save_record_to_status_outputs(record: dict, status: str, date_key: str | None = None):
+def save_record_to_status_outputs(record: dict, status: str, date_key: Optional[str] = None):
     normalized_status = _safe_str(status)
     if normalized_status == "Found":
         upsert_record(FOUND_CSV_PATH, record)
@@ -1237,6 +1257,9 @@ def apply_business_rules(record: dict, parsed: dict) -> dict:
     score = float(adjusted.get("ai_accuracy_score") or 0)
     instruction_has_schedule = has_schedule_hint(customer_instructions)
     has_schedule_text = has_schedule_hint(adjusted.get("special_instructions"))
+    has_confirmed_identity = name_match_status in {"exact", "minor", "fuzzy"}
+    has_identity_anchor = has_confirmed_identity or instruction_has_schedule
+    has_person_level_evidence = has_confirmed_identity or has_obituary_url or instruction_has_schedule
 
     if name_match_status == "mismatch" and (has_source_evidence or has_any_timing or instruction_has_schedule):
         adjusted["match_status"] = "Review"
@@ -1256,6 +1279,14 @@ def apply_business_rules(record: dict, parsed: dict) -> dict:
     elif date_verification_status == "invalid":
         adjusted["match_status"] = "Review"
         adjusted["ai_accuracy_score"] = min(max(score, 55.0), 84.0)
+    elif not has_person_level_evidence:
+        adjusted["match_status"] = "NotFound"
+        adjusted["ai_accuracy_score"] = min(score, 49.0)
+        notes = append_note(notes, "NotFound: no valid obituary or person-level identity confirmation")
+    elif not has_identity_anchor and has_source_evidence and not has_any_timing:
+        adjusted["match_status"] = "NotFound"
+        adjusted["ai_accuracy_score"] = min(score, 49.0)
+        notes = append_note(notes, "NotFound: venue-level evidence exists but no valid person match was confirmed")
     elif has_obituary_url or has_legacy_source or has_source_evidence or has_any_timing or instruction_has_schedule or has_schedule_text:
         adjusted["match_status"] = "Review"
         adjusted["ai_accuracy_score"] = min(max(score, 55.0), 84.0)
@@ -1382,42 +1413,65 @@ def get_strategy_order(record: dict) -> list:
     return [(name, build_prompt(record, name)) for name in strategy_names]
 
 
-def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
-    api_payload = {
-        "model": PERPLEXITY_MODEL,
+def _build_search_api_request(provider: str, prompt: str, api_key_override: Optional[str] = None) -> Tuple[str, Dict, Dict]:
+    normalized_provider = _normalize_reverify_provider(provider)
+    model_name = OPENAI_MODEL if normalized_provider == "openai" else PERPLEXITY_MODEL
+    system_content = (
+        "You are an assistant that finds funeral and memorial service details. "
+        "Return your findings in valid JSON format with these keys: matched_name, funeral_home_name, "
+        "funeral_address, funeral_phone, service_type, funeral_date, funeral_time, "
+        "visitation_date, visitation_time, ceremony_date, ceremony_time, delivery_recommendation_date, "
+        "delivery_recommendation_time, delivery_recommendation_location, "
+        "special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), "
+        "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
+        "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
+        "No source URL means score should usually be <=65 unless identity evidence is strong. For very common names without unique identifiers, keep score below 60. "
+        "Always return the exact obituary or memorial permalink you relied on when one exists; do not return only a funeral-home directory or homepage if a deeper obituary URL is available. "
+        "Return matched_name exactly as found on the obituary, funeral page, or customer-provided schedule you relied on. "
+        "Set Found when matched_name aligns with the input person and at least one valid date OR time exists in funeral/service, visitation, or ceremony fields together with identity confirmation (name + funeral home OR name + source URL OR trusted customer-provided schedule). "
+        "Set Review, not NotFound, for date-only/time-only evidence with identity confirmation. "
+        "Set Review when names or dates conflict between source evidence and customer instructions. "
+        "Set NotFound only when timing evidence is absent and identity confirmation is weak or missing. "
+        "Do not use delivery recommendation fields as service datetime fallback."
+    )
+    payload = {
+        "model": model_name,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are an assistant that finds funeral and memorial service details. "
-                    "Return your findings in valid JSON format with these keys: matched_name, funeral_home_name, "
-                    "funeral_address, funeral_phone, service_type, funeral_date, funeral_time, "
-                    "visitation_date, visitation_time, ceremony_date, ceremony_time, delivery_recommendation_date, "
-                    "delivery_recommendation_time, delivery_recommendation_location, "
-                    "special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), "
-                    "source_urls (list), notes. Scoring guidance: 85-100 exact match with source URL and concrete service details; "
-                    "70-84 strong match with URL and partial details; 50-69 partial/uncertain; 0-49 weak or no reliable match. "
-                    "No source URL means score should usually be <=65 unless identity evidence is strong. For very common names without unique identifiers, keep score below 60. "
-                    "Always return the exact obituary or memorial permalink you relied on when one exists; do not return only a funeral-home directory or homepage if a deeper obituary URL is available. "
-                    "Return matched_name exactly as found on the obituary, funeral page, or customer-provided schedule you relied on. "
-                    "Set Found when matched_name aligns with the input person and at least one valid date OR time exists in funeral/service, visitation, or ceremony fields together with identity confirmation (name + funeral home OR name + source URL OR trusted customer-provided schedule). "
-                    "Set Review, not NotFound, for date-only/time-only evidence with identity confirmation. "
-                    "Set Review when names or dates conflict between source evidence and customer instructions. "
-                    "Set NotFound only when timing evidence is absent and identity confirmation is weak or missing. "
-                    "Do not use delivery recommendation fields as service datetime fallback."
-                ),
-            },
+            {"role": "system", "content": system_content},
             {"role": "user", "content": prompt},
         ],
     }
 
+    if normalized_provider == "openai":
+        api_key = _safe_str(api_key_override) or _required_env("OPENAI_API_KEY")
+        if "search" in model_name.lower():
+            payload["web_search_options"] = {"search_context_size": "high"}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        return OPENAI_URL, headers, payload
+
+    api_key = _safe_str(api_key_override) or _required_env("PERPLEXITY_API_KEY")
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    return PERPLEXITY_URL, headers, payload
+
+
+def query_provider(provider: str, api_key: Optional[str] = None, prompt: Optional[str] = None) -> Tuple[str, Dict, Dict]:
+    api_key_override = None
+    if prompt is None:
+        prompt_text = _safe_str(api_key)
+    else:
+        api_key_override = _safe_str(api_key)
+        prompt_text = prompt
+
+    request_url, headers, api_payload = _build_search_api_request(provider, prompt_text, api_key_override)
 
     response = requests.post(
-        PERPLEXITY_URL,
+        request_url,
         headers=headers,
         json=api_payload,
         timeout=TIMEOUT_SECONDS,
@@ -1434,49 +1488,108 @@ def query_perplexity(api_key: str, prompt: str) -> tuple[str, dict, dict]:
     return ai_text, parsed, api_payload
 
 
-def process_record(api_key: str, record: dict, max_attempts: int = 1) -> dict:
+def query_perplexity(api_key: Optional[str] = None, prompt: Optional[str] = None) -> Tuple[str, Dict, Dict]:
+    return query_provider(_normalize_reverify_provider(), api_key, prompt)
+
+
+STATUS_PRIORITY = {
+    "NotFound": 0,
+    "Review": 1,
+    "Found": 2,
+}
+
+
+def _result_sort_key(result: dict) -> tuple[int, float, int, int]:
+    status = _safe_str(result.get("match_status")) or "NotFound"
+    score = float(result.get("ai_accuracy_score") or 0)
+    source_count = len(_normalize_url_list(result.get("source_urls")))
+    timing_count = sum(
+        1
+        for key in ("service_date", "service_time", "visitation_date", "visitation_time", "ceremony_date", "ceremony_time")
+        if _safe_str(result.get(key))
+    )
+    return (
+        STATUS_PRIORITY.get(status, 0),
+        score,
+        source_count,
+        timing_count,
+    )
+
+
+def process_record(api_key: Optional[Union[str, dict]] = None, record: Optional[dict] = None, max_attempts: int = 1) -> dict:
+    api_key_override = None
+    if record is None and isinstance(api_key, dict):
+        record = api_key
+        api_key = None
+    elif record is None:
+        record = {}
+    else:
+        api_key_override = _safe_str(api_key)
+
     strategies = get_strategy_order(record)
     attempt_limit = max(1, min(int(max_attempts or len(strategies)), len(strategies)))
     template_text = _load_prompt_template()
     attempts = []
     best = None
+    provider_order = _provider_order()
 
     for strategy_name, _ in strategies[:attempt_limit]:
         prompt = build_prompt(record, strategy_name)
         if template_text:
             prompt = f"{template_text}\n\n{prompt}"
-        try:
-            ai_text, parsed, payload = query_perplexity(api_key, prompt)
-            attempts.append({
-                "strategy": strategy_name,
-                "prompt": prompt,
-                "raw_ai_response": ai_text,
-                "parsed_result": parsed,
-                "sent": payload,
-            })
-            best = parsed.copy()
-            best["_strategy"] = strategy_name
-            if best.get("match_status") == "Found" and (
-                _safe_str(best.get("funeral_home_name"))
-                or _safe_str(best.get("source_urls"))
-                or _safe_str(best.get("service_date"))
-                or _safe_str(best.get("visitation_date"))
-                or _safe_str(best.get("ceremony_date"))
-            ):
-                best["notes"] = append_note(best.get("notes"), f"reverified via strategy={strategy_name}")
-                break
-        except Exception as exc:
-            attempts.append({
-                "strategy": strategy_name,
-                "prompt": prompt,
-                "error": str(exc),
-            })
+        strategy_best = None
+
+        for provider_name in provider_order:
+            try:
+                if api_key_override:
+                    ai_text, parsed, payload = query_provider(provider_name, api_key_override, prompt)
+                else:
+                    ai_text, parsed, payload = query_provider(provider_name, prompt)
+                candidate = apply_business_rules(record, parsed)
+                candidate["_strategy"] = strategy_name
+                candidate["_provider"] = provider_name
+                candidate["_business_rules_applied"] = True
+
+                attempts.append({
+                    "strategy": strategy_name,
+                    "provider": provider_name,
+                    "prompt": prompt,
+                    "raw_ai_response": ai_text,
+                    "parsed_result": candidate,
+                    "sent": payload,
+                })
+
+                if strategy_best is None or _result_sort_key(candidate) > _result_sort_key(strategy_best):
+                    strategy_best = candidate
+            except Exception as exc:
+                attempts.append({
+                    "strategy": strategy_name,
+                    "provider": provider_name,
+                    "prompt": prompt,
+                    "error": str(exc),
+                })
+
+        if strategy_best is not None and (best is None or _result_sort_key(strategy_best) > _result_sort_key(best)):
+            best = strategy_best.copy()
+
+        if best and best.get("match_status") == "Found" and (
+            _safe_str(best.get("funeral_home_name"))
+            or _safe_str(best.get("source_urls"))
+            or _safe_str(best.get("service_date"))
+            or _safe_str(best.get("visitation_date"))
+            or _safe_str(best.get("ceremony_date"))
+        ):
+            best["notes"] = append_note(
+                best.get("notes"),
+                f"reverified via strategy={strategy_name} provider={_safe_str(best.get('_provider'))}",
+            )
+            break
 
     if best is None:
         best = {
-            "match_status": "Review",
+            "match_status": "NotFound",
             "ai_accuracy_score": 0,
-            "notes": "Multi-strategy reverify search failed",
+            "notes": "NotFound: multi-strategy reverify search failed to find a valid person or obituary",
             "funeral_home_name": "",
             "funeral_address": "",
             "funeral_phone": "",
@@ -1508,9 +1621,11 @@ def update_record_for_result(record: dict, result: dict, source_name: str) -> di
 
     status = result.get("match_status", "NotFound")
     strategy_name = _safe_str(result.get("_strategy"))
+    provider_name = _safe_str(result.get("_provider"))
     notes = _safe_str(result.get("notes"))
     if strategy_name:
-        notes = append_note(notes, f"reverified via strategy={strategy_name}")
+        provider_suffix = f" provider={provider_name}" if provider_name else ""
+        notes = append_note(notes, f"reverified via strategy={strategy_name}{provider_suffix}")
     updated["notes"] = notes
     updated["ai_accuracy_score"] = result.get("ai_accuracy_score", 0)
     updated["match_status"] = status
@@ -1530,7 +1645,6 @@ def main():
     args = parser.parse_args()
 
     load_dotenv_file()
-    api_key = _required_env("PERPLEXITY_API_KEY")
     run_date_key = _run_date_key()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1550,9 +1664,10 @@ def main():
         if started_at_text:
             try:
                 started_dt = datetime.fromisoformat(started_at_text)
-                age_seconds = (datetime.now() - started_dt).total_seconds()
+                current_dt = datetime.now(started_dt.tzinfo) if started_dt.tzinfo else datetime.now()
+                age_seconds = (current_dt - started_dt).total_seconds()
                 guard_is_fresh = age_seconds < 3 * 60 * 60
-            except ValueError:
+            except (TypeError, ValueError):
                 guard_is_fresh = False
 
         if same_config and guard_is_fresh and not args.force:
@@ -1619,8 +1734,9 @@ def main():
                 break
 
             print(f"[{SCRIPT_NAME}] Checking {order_id} [{source_name}]")
-            result = process_record(api_key, row, max_attempts=args.attempts)
-            result = apply_business_rules(row, result)
+            result = process_record(row, max_attempts=args.attempts)
+            if not result.get("_business_rules_applied"):
+                result = apply_business_rules(row, result)
             status = result.get("match_status", "NotFound")
             updated = update_record_for_result(row, result, source_name)
             source_row_number = _coerce_row_number(row.get("_source_row_number"))

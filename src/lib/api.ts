@@ -1,5 +1,6 @@
 import type {
   AuthState,
+  AlertEntry,
   CompareDifference,
   CompareSummaryItem,
   DataRow,
@@ -41,6 +42,33 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function clearAlertsRequest(): Promise<{ ok: boolean; clearedAt: string }> {
+  const localFallback = { ok: true, clearedAt: new Date().toISOString() };
+
+  try {
+    return await request<{ ok: boolean; clearedAt: string }>("/alerts", { method: "DELETE" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!message.includes("404")) {
+      return localFallback;
+    }
+  }
+
+  try {
+    return await request<{ ok: boolean; clearedAt: string }>("/alerts/clear", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!message.includes("404")) {
+      return localFallback;
+    }
+  }
+
+  return localFallback;
+}
+
 export const api = {
   health: () => request<{ ok: boolean; service: string }>("/health"),
 
@@ -80,6 +108,9 @@ export const api = {
   revokeSession: (sessionId: string) =>
     request<{ ok: boolean }>(`/auth/sessions/${sessionId}`, { method: "DELETE" }),
 
+  purgeInactiveSessions: () =>
+    request<{ ok: boolean; removed: number }>("/auth/sessions/inactive", { method: "DELETE" }),
+
   revokeUserSessions: (userId: string) =>
     request<{ ok: boolean; message: string }>(`/auth/users/${userId}/sessions`, { method: "DELETE" }),
 
@@ -101,6 +132,12 @@ export const api = {
       body: JSON.stringify({ timeZone }),
     }),
 
+  setReverifyProvider: (provider: "perplexity" | "openai") =>
+    request<{ reverifyDefaultProvider: "perplexity" | "openai" }>("/auth/settings/reverify-provider", {
+      method: "PUT",
+      body: JSON.stringify({ provider }),
+    }),
+
   pipelineStatus: () => request<PipelineStatus>("/pipeline/status"),
 
   orderProcessingStats: () => request<OrderProcessingStats>("/stats/order-processing"),
@@ -113,6 +150,10 @@ export const api = {
   },
 
   modelPerformance: () => request<ModelPerformanceStats>("/stats/model-performance"),
+
+  alerts: (limit = 50) => request<{ alerts: AlertEntry[] }>(`/alerts?limit=${limit}`),
+
+  clearAlerts: () => clearAlertsRequest(),
 
   scripts: () => request<{ scripts: ScriptConfig[] }>("/scripts"),
 

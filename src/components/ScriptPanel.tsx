@@ -160,6 +160,18 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
   const logLines = useMemo(() => displayJob?.logs ?? [], [displayJob?.logs]);
 
   const displayProgress = displayJob?.progress ?? progress;
+  const runSummary = useMemo(() => {
+    const summaryLine = [...logLines].reverse().find((line) => line.includes("RUN SUMMARY |"));
+    if (!summaryLine) return null;
+    const payload = summaryLine.split("RUN SUMMARY |")[1] || "";
+    return payload.split("|").reduce<Record<string, string>>((accumulator, part) => {
+      const [key, value] = part.split("=", 2);
+      if (key && value) {
+        accumulator[key.trim()] = value.trim();
+      }
+      return accumulator;
+    }, {});
+  }, [logLines]);
   const displayStatus = displayJob
     ? (displayJob.status === "running" || displayJob.status === "queued"
         ? "running"
@@ -283,6 +295,14 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
             {elapsedStr && (
               <span>{elapsedStr}</span>
             )}
+          </div>
+        )}
+
+        {runSummary && (
+          <div className="mb-3 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {"Found" in runSummary || "Review" in runSummary || "NotFound" in runSummary
+              ? `Summary: found ${runSummary.Found ?? "0"} · review ${runSummary.Review ?? "0"} · not found ${runSummary.NotFound ?? "0"} · updated ${runSummary.UpdatedMain ?? "0"} · skipped ${runSummary.SkippedLogged ?? "0"}`
+              : `Summary: status ${runSummary.status ?? displayJob?.status ?? "n/a"} · exit ${runSummary.exitCode ?? displayJob?.exitCode ?? "n/a"} · duration ${runSummary.durationSec ?? "n/a"}s · logs ${runSummary.logLines ?? logLines.length}`}
           </div>
         )}
 

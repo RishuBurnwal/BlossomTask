@@ -33,3 +33,20 @@ def test_load_updater_data_requires_exact_found_match(tmp_path: Path, monkeypatc
     rows = ClosingTask.load_updater_data()
 
     assert [row["order_id"] for row in rows] == ["1"]
+
+
+def test_load_updater_data_accepts_match_status_found(tmp_path: Path, monkeypatch):
+    input_csv = tmp_path / "updater.csv"
+    _write_csv(
+        input_csv,
+        [
+            {"order_id": "1", "upload_status": "SUCCESS", "match_status": "Found", "trResult": ""},
+            {"order_id": "2", "upload_status": "SUCCESS", "match_status": "Review", "trResult": "Review"},
+        ],
+    )
+
+    monkeypatch.setattr(ClosingTask, "INPUT_CSV", input_csv)
+
+    rows = ClosingTask.load_updater_data()
+
+    assert [row["order_id"] for row in rows] == ["1"]

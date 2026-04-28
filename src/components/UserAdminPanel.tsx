@@ -125,6 +125,15 @@ export function UserAdminPanel() {
     onError: (error) => toast.error(error.message || "Failed to revoke user sessions"),
   });
 
+  const purgeInactiveSessionsMutation = useMutation({
+    mutationFn: () => api.purgeInactiveSessions(),
+    onSuccess: (data) => {
+      toast.success(`${data.removed} inactive sessions removed`);
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+    onError: (error) => toast.error(error.message || "Failed to remove inactive sessions"),
+  });
+
   if (authData?.user?.role !== "admin") {
     return null;
   }
@@ -336,9 +345,20 @@ export function UserAdminPanel() {
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold">Sessions</h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Sessions</h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => purgeInactiveSessionsMutation.mutate()}
+                  disabled={purgeInactiveSessionsMutation.isPending}
+                >
+                  Remove Expired
+                </Button>
+              </div>
               <div className="space-y-2">
-                {(sessionsData?.sessions ?? []).slice(0, 12).map((session) => {
+                {(sessionsData?.sessions ?? []).map((session) => {
                   const active = isSessionActive(session);
                   return (
                     <div key={session.id} className="rounded-lg border px-3 py-2 text-sm">
