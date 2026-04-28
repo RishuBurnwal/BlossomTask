@@ -123,7 +123,7 @@ def test_upsert_record_ignores_mismatched_row_number_when_order_id_differs(tmp_p
     assert rows[2]["funeral_home_name"] == "Bravo Updated"
 
 
-def test_upsert_record_uses_row_number_when_order_id_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_upsert_record_appends_when_order_id_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     csv_path = tmp_path / "main.csv"
     _write_csv(
         csv_path,
@@ -144,8 +144,20 @@ def test_upsert_record_uses_row_number_when_order_id_changed(tmp_path: Path, mon
     )
 
     rows = _read_csv(csv_path)
-    assert [row["order_id"] for row in rows] == ["A", "B-UPDATED", "C"]
-    assert rows[1]["funeral_home_name"] == "Bravo Updated"
+    assert [row["order_id"] for row in rows] == ["A", "B", "C", "B-UPDATED"]
+    assert rows[3]["funeral_home_name"] == "Bravo Updated"
+
+
+def test_extract_json_from_text_handles_nested_objects():
+    text = (
+        "Here is the answer: "
+        '{"outer": {"inner": {"value": 42}}, "status": "Found", "source_urls": ["https://example.com"]}'
+    )
+
+    parsed = reverify._extract_json_from_text(text)
+
+    assert parsed["outer"]["inner"]["value"] == 42
+    assert parsed["status"] == "Found"
 
 
 def test_upsert_record_appends_when_row_number_hits_unrelated_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -196,3 +208,94 @@ def test_upsert_record_appends_when_target_row_is_sparse(tmp_path: Path, monkeyp
     assert [row["order_id"] for row in rows] == ["A", "B"]
     assert rows[0]["funeral_home_name"] == "Alpha"
     assert rows[1]["funeral_home_name"] == "Bravo"
+
+
+def test_upsert_record_keeps_existing_non_empty_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    csv_path = tmp_path / "main.csv"
+    _write_csv(
+        csv_path,
+        [
+            {
+                "order_id": "A",
+                "funeral_home_name": "Fisher & Sons",
+                "funeral_address": "123 Main St",
+                "source_urls": "https://legacy.example/obit",
+                "match_status": "Review",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(reverify, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(reverify, "MAIN_CSV_PATH", csv_path)
+
+    reverify.upsert_record(
+        csv_path,
+        {
+            "order_id": "A",
+            "funeral_home_name": "",
+            "funeral_address": "",
+            "source_urls": "",
+            "match_status": "Found",
+            "ai_accuracy_score": 91,
+            "notes": "reverified via strategy=care_of",
+        },
+        row_number=1,
+    )
+
+    rows = _read_csv(csv_path)
+    assert rows[0]["funeral_home_name"] == "Fisher & Sons"
+    assert rows[0]["funeral_address"] == "123 Main St"
+    assert rows[0]["source_urls"] == "https://legacy.example/obit"
+    assert rows[0]["match_status"] == "Found"
+    assert rows[0]["ai_accuracy_score"] == "91"
+
+
+def test_update_record_for_result_keeps_existing_non_empty_values():
+    record = {
+        "order_id": "A",
+        "funeral_home_name": "Fisher & Sons",
+        "funeral_address": "123 Main St",
+        "source_urls": "https://legacy.example/obit",
+        "match_status": "Review",
+        "notes": "original note",
+    }
+    result = {
+        "funeral_home_name": "",
+        "funeral_address": "",
+        "source_urls": "",
+        "match_status": "Found",
+        "ai_accuracy_score": 91,
+        "notes": "reverified via strategy=care_of",
+    }
+
+    updated = reverify.update_record_for_result(record, result, "review")
+
+    assert updated["funeral_home_name"] == "Fisher & Sons"
+    assert updated["funeral_address"] == "123 Main St"
+    assert updated["source_urls"] == "https://legacy.example/obit"
+    assert updated["match_status"] == "Found"
+    assert updated["ai_accuracy_score"] == 91
+    assert updated["notes"] == "reverified via strategy=care_of"
+
+
+def test_update_record_for_result_always_overwrites_notes_and_status_fields():
+    record = {
+        "order_id": "A",
+        "funeral_home_name": "Fisher & Sons",
+        "notes": "old note",
+        "match_status": "Review",
+        "ai_accuracy_score": "77",
+    }
+    result = {
+        "funeral_home_name": "",
+        "notes": "",
+        "match_status": "NotFound",
+        "ai_accuracy_score": 0,
+    }
+
+    updated = reverify.update_record_for_result(record, result, "review")
+
+    assert updated["funeral_home_name"] == "Fisher & Sons"
+    assert updated["notes"] == ""
+    assert updated["match_status"] == "NotFound"
+    assert updated["ai_accuracy_score"] == 0

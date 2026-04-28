@@ -568,11 +568,11 @@ FUNERAL_MAX_ROWS=0
 CLOSE_TASK_DRY_RUN=true
 ```
 
-### Scripts `.env` (`Scripts/.env`)
+### Single `.env` Source
 
-Same format as root `.env`. Python scripts load from this file automatically. The backend server reads this file for preflight checks.
+BlossomTask now uses a single root-level `.env` file only. Both the backend server and all Python scripts load configuration from `/.env`.
 
-> **Important**: Both `.env` files are listed in `.gitignore` and should never be committed. Copy them from a secure source or create from the template above.
+> **Important**: Only the root `.env` should exist. Keep it out of version control and do not create a second `Scripts/.env` file.
 
 ---
 
@@ -722,6 +722,13 @@ Expected results:
 - Health endpoint returns JSON like `{ "ok": true, "service": "webui-backend" }`
 - Domain returns `HTTP/2 200` (or `HTTP/1.1 200`) instead of `502`
 
+### Cloudways Auth + Static Deploy Notes
+
+- If the server is still on Node.js 18, use the repo's JSON-backed auth store and restart the backend after deploying backend changes.
+- If the login page loads but `/api/auth/login` or `/api/auth/me` returns `404`, the backend process is usually running older code. Restart `node backend/server.js` from `public_html`.
+- If the site HTML loads but built JS/CSS returns `404`, copy the latest `dist/index.html` into root `index.html` and sync `dist/assets/` into root `assets/`.
+- If `favicon.ico` returns `404`, make sure the root `public_html` copy includes the built static files from the latest deploy sync.
+
 ### Checking Logs
 
 ```bash
@@ -799,7 +806,7 @@ A: No, Docker is optional. You can run everything natively with Python 3.10+ and
 A: This means no cron schedules are enabled. Create or enable a schedule in the dashboard header to start automated runs.
 
 **Q: Scripts fail with "Missing required env var"**
-A: Check that both `.env` files exist (`root/.env` and `Scripts/.env`) and contain all required API keys and URLs.
+A: Check that the root `.env` exists at the project root and contains all required API keys and URLs.
 
 **Q: How do I clear all processed data and start fresh?**
 A: Delete the contents of `Scripts/outputs/*/logs.txt` to reset processing state, or use the `--force` flag.

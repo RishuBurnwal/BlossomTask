@@ -4,7 +4,7 @@ import { FileSpreadsheet, FolderOpen, ChevronRight, ChevronLeft, BadgeCheck } fr
 import { api } from "@/lib/api";
 import type { DataRow } from "@/lib/types";
 
-type FileTab = "main" | "all";
+type FileTab = "main" | "not_found" | "review" | "all";
 
 export function DataViewer() {
   const queryClient = useQueryClient();
@@ -98,24 +98,42 @@ export function DataViewer() {
   };
 
   const datasets = datasetsData?.datasets;
-  const tabs: { id: FileTab; label: string; icon: React.ReactNode; data: DataRow[] }[] = [
+  const categoryTabs: Array<{ id: Exclude<FileTab, "all">; label: string; icon: React.ReactNode; rows: DataRow[]; summary?: { total: number; matched: number; needs_review: number; unmatched: number; last_processed_at: string | null } }> = [
     {
       id: "main",
       label: "Main Data",
       icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
-      data: normalizeRows(datasets?.main?.rows),
+      rows: normalizeRows(datasets?.main?.rows),
+      summary: datasets?.main?.summary,
     },
     {
-      id: "all",
-      label: "All Files",
+      id: "not_found",
+      label: "Not Found",
       icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
-      data: normalizeRows(selectedFileData?.parsed),
+      rows: normalizeRows(datasets?.not_found?.rows),
+      summary: datasets?.not_found?.summary,
+    },
+    {
+      id: "review",
+      label: "Review",
+      icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
+      rows: normalizeRows(datasets?.review?.rows),
+      summary: datasets?.review?.summary,
     },
   ];
+  const allTab = {
+    id: "all" as const,
+    label: "All Files",
+    icon: <FileSpreadsheet className="h-3.5 w-3.5" />,
+    rows: normalizeRows(selectedFileData?.parsed),
+  };
+  const tabs = [...categoryTabs, allTab];
 
   const current = tabs.find((t) => t.id === activeTab)!;
+  const currentRows = current.rows;
+  const currentSummary = current.id === "all" ? datasets?.main?.summary : current.summary;
   const filteredRows = useMemo(() => {
-    const rows = Array.isArray(current.data) ? current.data : [];
+    const rows = Array.isArray(currentRows) ? currentRows : [];
     const needle = searchQuery.trim().toLowerCase();
     if (!needle) return rows;
     return rows.filter((row) => {
@@ -124,15 +142,15 @@ export function DataViewer() {
         `${key} ${String(value ?? "")}`.toLowerCase().includes(needle),
       );
     });
-  }, [current.data, searchQuery]);
+  }, [currentRows, searchQuery]);
 
   const tableHeaders = useMemo(() => {
     const headers = new Set<string>();
-    (Array.isArray(current.data) ? current.data : []).forEach((row) => {
+    (Array.isArray(currentRows) ? currentRows : []).forEach((row) => {
       Object.keys(row).forEach((key) => headers.add(key));
     });
     return [...headers];
-  }, [current.data]);
+  }, [currentRows]);
 
   const rawContent = selectedFileData?.raw ?? "";
   const runtimeJobs = (jobsData?.jobs ?? []).filter((job) => job.kind === "script" || job.kind === "pipeline");
@@ -228,13 +246,13 @@ export function DataViewer() {
           <div className="flex flex-col leading-tight">
             <span className="font-semibold">Status summary</span>
             <span className="text-muted-foreground">
-              {datasets?.main?.summary?.total ?? 0} rows · matched {datasets?.main?.summary?.matched ?? 0} · needs review {datasets?.main?.summary?.needs_review ?? 0} · unmatched {datasets?.main?.summary?.unmatched ?? 0}
+              {currentSummary?.total ?? 0} rows · matched {currentSummary?.matched ?? 0} · needs review {currentSummary?.needs_review ?? 0} · unmatched {currentSummary?.unmatched ?? 0}
             </span>
           </div>
         </div>
-        {datasets?.main?.summary?.last_processed_at && (
+        {currentSummary?.last_processed_at && (
           <span className="rounded-lg border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-            Last processed: {new Date(datasets.main.summary.last_processed_at).toLocaleString()}
+            Last processed: {new Date(currentSummary.last_processed_at).toLocaleString()}
           </span>
         )}
       </div>
@@ -254,7 +272,7 @@ export function DataViewer() {
             <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] ${
               activeTab === tab.id ? "bg-primary-foreground/20" : "bg-muted"
             }`}>
-              {tab.data.length}
+              {tab.rows.length}
             </span>
           </button>
         ))}

@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type Job, type ScriptConfig } from "@/lib/types";
 import { api } from "@/lib/api";
+import { formatDateTime } from "@/lib/time";
 import { toast } from "sonner";
 import { ViewOptionsModal } from "./ViewOptionsModal";
 
 interface ScriptPanelProps {
   script: ScriptConfig;
-  cronMode: "default" | "custom";
   liveJob?: Job;
   executionLocked?: boolean;
 }
@@ -40,17 +40,22 @@ function formatDuration(startedAt?: string | null, finishedAt?: string | null): 
   return `${min}m ${s}s`;
 }
 
-export function ScriptPanel({ script, cronMode, liveJob, executionLocked = false }: ScriptPanelProps) {
+export function ScriptPanel({ script, liveJob, executionLocked = false }: ScriptPanelProps) {
   const [status, setStatus] = useState<"idle" | "running" | "success" | "error">("idle");
   const [selectedOption, setSelectedOption] = useState(script.options?.[0] ?? "");
   const [showViewOptions, setShowViewOptions] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [customTiming, setCustomTiming] = useState("10");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
   const [elapsedTick, setElapsedTick] = useState(0);
   const terminalRef = useRef<HTMLPreElement | null>(null);
+  const { data: authData } = useQuery({
+    queryKey: ["auth"],
+    queryFn: api.authMe,
+    staleTime: 30_000,
+  });
+  const configuredTimezone = authData?.configuredTimezone;
 
   // Elapsed time ticker while running
   useEffect(() => {
@@ -155,6 +160,18 @@ export function ScriptPanel({ script, cronMode, liveJob, executionLocked = false
   const logLines = useMemo(() => displayJob?.logs ?? [], [displayJob?.logs]);
 
   const displayProgress = displayJob?.progress ?? progress;
+  const runSummary = useMemo(() => {
+    const summaryLine = [...logLines].reverse().find((line) => line.includes("RUN SUMMARY |"));
+    if (!summaryLine) return null;
+    const payload = summaryLine.split("RUN SUMMARY |")[1] || "";
+    return payload.split("|").reduce<Record<string, string>>((accumulator, part) => {
+      const [key, value] = part.split("=", 2);
+      if (key && value) {
+        accumulator[key.trim()] = value.trim();
+      }
+      return accumulator;
+    }, {});
+  }, [logLines]);
   const displayStatus = displayJob
     ? (displayJob.status === "running" || displayJob.status === "queued"
         ? "running"
@@ -268,32 +285,24 @@ export function ScriptPanel({ script, cronMode, liveJob, executionLocked = false
           </div>
         )}
 
-        {/* Custom timing */}
-        {cronMode === "custom" && (
-          <div className="mb-3 flex items-center gap-2 text-xs">
-            <Clock className="h-3 w-3 text-muted-foreground" />
-            <span className="text-muted-foreground">Timing:</span>
-            <input
-              type="number"
-              value={customTiming}
-              onChange={(e) => setCustomTiming(e.target.value)}
-              className="w-14 rounded border bg-background px-2 py-1 text-xs"
-              min="1"
-            />
-            <span className="text-muted-foreground">min</span>
-          </div>
-        )}
-
         {/* Meta info */}
         {displayJob?.updatedAt && displayStatus !== "running" && (
           <div className="mb-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" />
-              {new Date(displayJob.updatedAt).toLocaleString()}
+              {formatDateTime(displayJob.updatedAt, configuredTimezone)}
             </span>
             {elapsedStr && (
               <span>{elapsedStr}</span>
             )}
+          </div>
+        )}
+
+        {runSummary && (
+          <div className="mb-3 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {"Found" in runSummary || "Review" in runSummary || "NotFound" in runSummary
+              ? `Summary: found ${runSummary.Found ?? "0"} · review ${runSummary.Review ?? "0"} · not found ${runSummary.NotFound ?? "0"} · updated ${runSummary.UpdatedMain ?? "0"} · skipped ${runSummary.SkippedLogged ?? "0"}`
+              : `Summary: status ${runSummary.status ?? displayJob?.status ?? "n/a"} · exit ${runSummary.exitCode ?? displayJob?.exitCode ?? "n/a"} · duration ${runSummary.durationSec ?? "n/a"}s · logs ${runSummary.logLines ?? logLines.length}`}
           </div>
         )}
 

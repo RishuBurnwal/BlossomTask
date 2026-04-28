@@ -4,7 +4,9 @@ import sys
 import io
 import csv
 import argparse
+import subprocess
 from pathlib import Path
+from runtime_config import load_root_env
 from datetime import datetime
 
 # Ensure UTF-8 output for Windows terminals.
@@ -77,21 +79,7 @@ EXCLUDE_FIELDS = {
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_dotenv_file(path=None):
-    if path is None:
-        path = SCRIPTS_DIR / ".env"
-    path = Path(path)
-    if not path.exists():
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key   = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+    load_root_env(Path(path) if path is not None else None)
 
 
 def _required_env(name: str) -> str:
@@ -111,6 +99,33 @@ def _normalize_api_base(url: str) -> str:
     if cleaned.split("/")[-1].isdigit():
         cleaned = "/".join(cleaned.split("/")[:-1])
     return cleaned
+
+
+def _bootstrap_gettask_output() -> bool:
+    """Try to generate GetTask output when the expected input file is missing."""
+    gettask_script = SCRIPTS_DIR / "GetTask.py"
+    if not gettask_script.exists():
+        return False
+
+    print(f"[{SCRIPT_NAME}] GetTask output missing; attempting to run GetTask.py first.")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(gettask_script)],
+            cwd=str(SCRIPTS_DIR),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception as exc:
+        print(f"[{SCRIPT_NAME}] ERROR: Could not launch GetTask.py: {exc}")
+        return False
+
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+
+    return GETTASK_CSV.exists()
 
 
 # ── logs.txt helpers ─────────────────────────────────────────────────────────
@@ -139,7 +154,12 @@ def load_order_ids_from_gettask() -> list:
     """Read order_id + task_id rows from GetTask's data.csv."""
     if not GETTASK_CSV.exists():
         print(f"[{SCRIPT_NAME}] ERROR: GetTask output not found: {GETTASK_CSV}")
-        print(f"[{SCRIPT_NAME}]   → Run GetTask.py first.")
+        if _bootstrap_gettask_output():
+            print(f"[{SCRIPT_NAME}] GetTask output recovered; continuing.")
+        else:
+            print(f"[{SCRIPT_NAME}]   → Run GetTask.py first.")
+            return None
+    if not GETTASK_CSV.exists():
         return None
     rows = []
     with open(GETTASK_CSV, "r", newline="", encoding="utf-8") as f:

@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import XLSX from "xlsx";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readFileContent } from "../../backend/lib/files.js";
+import { getDefaultDatasets, readFileContent } from "../../backend/lib/files.js";
 
 const OUTPUTS_ROOT = path.resolve(process.cwd(), "Scripts", "outputs");
 const TEST_OUTPUT_DIR = path.join(OUTPUTS_ROOT, "vitest-normalization");
@@ -12,6 +12,7 @@ const TEST_XLSX_PATH = path.join(TEST_OUTPUT_DIR, "legacy_funeral.xlsx");
 
 afterEach(() => {
   fs.rmSync(TEST_OUTPUT_DIR, { recursive: true, force: true });
+  vi.restoreAllMocks();
 });
 
 describe("backend file readers", () => {
@@ -40,5 +41,36 @@ describe("backend file readers", () => {
       trText: "Legacy workbook row",
       trEndDate: "April 15, 2026 10:00 AM",
     });
+  });
+
+  it("loads all funeral datasets from the category CSV files", () => {
+    const workspaceRoot = path.join(TEST_OUTPUT_DIR, "workspace");
+    const outputsRoot = path.join(workspaceRoot, "Scripts", "outputs", "Funeral_Finder");
+    vi.spyOn(process, "cwd").mockReturnValue(workspaceRoot);
+    fs.mkdirSync(outputsRoot, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(outputsRoot, "Funeral_data.csv"),
+      "order_id,match_status\n1001,Found\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(outputsRoot, "Funeral_data_not_found.csv"),
+      "order_id,match_status\n1002,NotFound\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(outputsRoot, "Funeral_data_review.csv"),
+      "order_id,match_status\n1003,Review\n",
+      "utf-8",
+    );
+
+    const datasets = getDefaultDatasets(20);
+
+    expect(datasets.main.rows).toHaveLength(1);
+    expect(datasets.not_found.rows).toHaveLength(1);
+    expect(datasets.review.rows).toHaveLength(1);
+    expect(datasets.not_found.file).toContain("Funeral_data_not_found.csv");
+    expect(datasets.review.file).toContain("Funeral_data_review.csv");
   });
 });

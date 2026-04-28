@@ -59,3 +59,20 @@ Scripts/.qoder/
 # =========================
 *.lock
 backend/data/run_history_logs.jsonl
+
+# User-requested local artifacts
+/tests/test_pipeline_requirements.py
+/Prompt.md
+/Prompt2.md
+/Review.txt
+/deploy_sync.tar
+/funeral_Apr_15.xlsx
+/public/favicon.ico
+# Ignore DB + large files
+backend/data/*.sqlite*
+backend/data/*.db
+backend/data/*.jsonl
+backend/data/run_history_logs*.jsonl
+*.log
+*.tmp
+graphify-out/

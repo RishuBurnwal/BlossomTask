@@ -14,7 +14,9 @@ Usage:
 """
 
 import argparse
+import builtins
 import json
+import hashlib
 import subprocess
 import sys
 import os
@@ -24,6 +26,8 @@ import signal
 import shutil
 import platform
 import socket
+import sqlite3
+import secrets
 from urllib.parse import urlparse
 from urllib.request import urlopen
 from pathlib import Path
@@ -35,9 +39,31 @@ BACKEND_DIR = ROOT / "backend"
 REQUIREMENTS_TXT = ROOT / "requirements.txt"
 PACKAGE_JSON = ROOT / "package.json"
 ENV_FILE = ROOT / ".env"
-SCRIPTS_ENV_FILE = SCRIPTS_DIR / ".env"
 DOCKERFILE = ROOT / "Dockerfile"
 DOCKER_COMPOSE = ROOT / "docker-compose.yml"
+AUTH_DB_PATH = BACKEND_DIR / "data" / "blossomtask.sqlite"
+DEFAULT_SESSION_MINUTES = int(os.getenv("SESSION_TTL_MINUTES", "480"))
+AVAILABLE_MODELS = [
+    "sonar-pro",
+    "sonar",
+    "sonar-reasoning",
+    "gpt-4o-search-preview",
+    "gpt-4.1-mini",
+]
+DEFAULT_OPENAI_MODEL = "gpt-4o-search-preview"
+DEFAULT_PERPLEXITY_MODEL = "sonar-pro"
+REVERIFY_PROVIDER_OPTIONS = ["perplexity", "openai"]
+
+
+def _safe_input(prompt=""):
+    try:
+        return builtins.input(prompt)
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
+        sys.exit(0)
+
+
+input = _safe_input
 
 # ── Version & Branding ──────────────────────────────────────────────────────
 VERSION = "2.0.0"
@@ -579,6 +605,440 @@ def find_python():
     return sys.executable
 
 
+def _utc_now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".000Z"
+
+
+def _auth_db_connection():
+    AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(AUTH_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+          active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          revoked_at TEXT,
+          user_agent TEXT,
+          ip_address TEXT,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        """
+    )
+    _seed_default_admin(conn)
+    _ensure_setting(conn, "default_model", _get_setting(conn, "default_model", AVAILABLE_MODELS[0]))
+    _ensure_setting(conn, "session_ttl_minutes", str(DEFAULT_SESSION_MINUTES))
+    _ensure_setting(conn, "reverify_default_provider", _get_setting(conn, "reverify_default_provider", REVERIFY_PROVIDER_OPTIONS[0]))
+    return conn
+
+
+def _hash_password(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    derived = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), bytes.fromhex(salt), 120000).hex()
+    return f"{salt}:{derived}"
+
+
+def _verify_password(password, stored_hash):
+    try:
+        salt, digest = str(stored_hash).split(":", 1)
+    except ValueError:
+        return False
+    return _hash_password(password, salt) == f"{salt}:{digest}"
+
+
+def _ensure_setting(conn, key, value):
+    existing = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    if existing is None:
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, str(value), _utc_now_iso()),
+        )
+    else:
+        conn.execute(
+            "UPDATE settings SET value = ?, updated_at = ? WHERE key = ?",
+            (str(value), _utc_now_iso(), key),
+        )
+    conn.commit()
+
+
+def _get_setting(conn, key, default=""):
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return str(row["value"]) if row else default
+
+
+def _seed_default_admin(conn):
+    count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+    if count:
+        return
+    username = os.getenv("BLOSSOMTASK_ADMIN_USERNAME", "admin").strip() or "admin"
+    password = os.getenv("BLOSSOMTASK_ADMIN_PASSWORD") or secrets.token_urlsafe(18)
+    timestamp = _utc_now_iso()
+    conn.execute(
+        "INSERT INTO users (id, username, password_hash, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (f"user_{int(time.time() * 1000)}", username.lower(), _hash_password(password), "admin", 1, timestamp, timestamp),
+    )
+    conn.commit()
+    print_warn(f"Bootstrapped default admin user '{username.lower()}'")
+
+
+def _list_users(conn):
+    return conn.execute(
+        "SELECT id, username, role, active, created_at AS createdAt, updated_at AS updatedAt FROM users ORDER BY created_at ASC",
+    ).fetchall()
+
+
+def _list_sessions(conn):
+    return conn.execute(
+        """
+        SELECT s.id, s.user_id AS userId, s.created_at AS createdAt, s.expires_at AS expiresAt,
+               s.last_seen_at AS lastSeenAt, s.revoked_at AS revokedAt,
+               u.username, u.role
+        FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        ORDER BY s.created_at DESC
+        """
+    ).fetchall()
+
+
+def _create_user(conn, username, password, role="user"):
+    normalized_username = str(username or "").strip().lower()
+    if not normalized_username:
+        raise ValueError("username is required")
+    if not str(password or "").strip():
+        raise ValueError("password is required")
+    if conn.execute("SELECT 1 FROM users WHERE username = ?", (normalized_username,)).fetchone():
+        raise ValueError("username already exists")
+    timestamp = _utc_now_iso()
+    conn.execute(
+        "INSERT INTO users (id, username, password_hash, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (f"user_{int(time.time() * 1000)}", normalized_username, _hash_password(password), role, 1, timestamp, timestamp),
+    )
+    conn.commit()
+
+
+def _delete_user(conn, username):
+    normalized_username = str(username or "").strip().lower()
+    if not normalized_username:
+        raise ValueError("username is required")
+    row = conn.execute("SELECT id, role FROM users WHERE username = ?", (normalized_username,)).fetchone()
+    if row is None:
+        raise ValueError("user not found")
+    admins_remaining = conn.execute(
+        "SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND id != ?",
+        (row["id"],),
+    ).fetchone()["count"]
+    if row["role"] == "admin" and admins_remaining <= 0:
+        raise ValueError("at least one admin account must remain")
+    conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
+    conn.commit()
+
+
+def _update_user_password(conn, username, password):
+    normalized_username = str(username or "").strip().lower()
+    if not normalized_username:
+        raise ValueError("username is required")
+    if not str(password or "").strip():
+        raise ValueError("password is required")
+    row = conn.execute("SELECT id FROM users WHERE username = ?", (normalized_username,)).fetchone()
+    if row is None:
+        raise ValueError("user not found")
+    timestamp = _utc_now_iso()
+    conn.execute(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        (_hash_password(password), timestamp, row["id"]),
+    )
+    conn.commit()
+
+
+def _set_active_model(conn, model_name):
+    normalized = str(model_name or "").strip()
+    if normalized not in AVAILABLE_MODELS:
+        raise ValueError("unsupported model")
+    _ensure_setting(conn, "default_model", normalized)
+
+
+def _is_openai_model(model_name):
+    normalized = str(model_name or "").strip().lower()
+    return normalized.startswith("gpt-") or normalized.startswith("o")
+
+
+def _resolve_provider_model(provider, selected_model):
+    normalized_provider = str(provider or "").strip().lower()
+    normalized_model = str(selected_model or "").strip()
+    if normalized_provider == "openai":
+        return normalized_model if _is_openai_model(normalized_model) else DEFAULT_OPENAI_MODEL
+    return DEFAULT_PERPLEXITY_MODEL if _is_openai_model(normalized_model) else (normalized_model or DEFAULT_PERPLEXITY_MODEL)
+
+
+def _normalize_reverify_provider(provider):
+    normalized = str(provider or "").strip().lower()
+    return "openai" if normalized == "openai" else "perplexity"
+
+
+def _get_reverify_default_provider(conn):
+    return _normalize_reverify_provider(_get_setting(conn, "reverify_default_provider", REVERIFY_PROVIDER_OPTIONS[0]))
+
+
+def _set_reverify_default_provider(conn, provider):
+    selected = _normalize_reverify_provider(provider)
+    _ensure_setting(conn, "reverify_default_provider", selected)
+    return selected
+
+
+def _set_session_ttl(conn, minutes):
+    value = max(5, int(minutes))
+    _ensure_setting(conn, "session_ttl_minutes", str(value))
+
+
+def _build_script_env(extra_env=None):
+    env = os.environ.copy()
+    try:
+        conn = _auth_db_connection()
+        try:
+            active_model = _get_setting(conn, "default_model", AVAILABLE_MODELS[0])
+            reverify_provider = _get_reverify_default_provider(conn)
+        finally:
+            conn.close()
+        env["OPENAI_MODEL"] = _resolve_provider_model("openai", active_model)
+        env["PERPLEXITY_MODEL"] = _resolve_provider_model("perplexity", active_model)
+        env["REVERIFY_DEFAULT_PROVIDER"] = reverify_provider
+    except Exception:
+        env.setdefault("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        env.setdefault("PERPLEXITY_MODEL", DEFAULT_PERPLEXITY_MODEL)
+        env.setdefault("REVERIFY_DEFAULT_PROVIDER", REVERIFY_PROVIDER_OPTIONS[0])
+
+    if extra_env:
+        for key, value in extra_env.items():
+            if value is not None:
+                env[str(key)] = str(value)
+
+    return env
+
+
+def manage_access_controls():
+    """Manage users, sessions, and model settings from SQLite."""
+    while True:
+        print_section("Access Control Manager", "🔐")
+        with _auth_db_connection() as conn:
+            active_model = _get_setting(conn, "default_model", AVAILABLE_MODELS[0])
+            ttl = _get_setting(conn, "session_ttl_minutes", str(DEFAULT_SESSION_MINUTES))
+            reverify_provider = _get_reverify_default_provider(conn)
+            users = _list_users(conn)
+            sessions = _list_sessions(conn)
+
+            print(f"  Active model: {C.BOLD}{active_model}{C.RESET}")
+            print(f"  Session TTL : {C.BOLD}{ttl} minutes{C.RESET}")
+            print(f"  Reverify    : {C.BOLD}{reverify_provider}{C.RESET}")
+            print(f"  Users       : {C.BOLD}{len(users)}{C.RESET}")
+            print(f"  Sessions    : {C.BOLD}{len(sessions)}{C.RESET}")
+            print()
+            for idx, user in enumerate(users, 1):
+                status = "active" if user["active"] else "disabled"
+                print(f"    {idx}. {user['username']} ({user['role']}, {status})")
+
+        print()
+        print(f"    {C.CYAN}[1]{C.RESET}  ➕  Add user")
+        print(f"    {C.CYAN}[2]{C.RESET}  🗑️  Delete user")
+        print(f"    {C.CYAN}[3]{C.RESET}  🔑  Change password")
+        print(f"    {C.CYAN}[4]{C.RESET}  🎛️  Switch active model")
+        print(f"    {C.CYAN}[5]{C.RESET}  ⏱️  Set session TTL")
+        print(f"    {C.CYAN}[6]{C.RESET}  ♻️  Set reverify provider")
+        print(f"    {C.CYAN}[7]{C.RESET}  📜  View sessions")
+        print(f"    {C.CYAN}[0]{C.RESET}  ↩️  Back")
+        choice = input(f"  {C.BOLD}➤ Select option: {C.RESET}").strip()
+
+        if choice == "1":
+            username = input("  Username: ").strip()
+            password = input("  Password: ").strip()
+            role = input("  Role [user/admin] [user]: ").strip().lower() or "user"
+            try:
+                with _auth_db_connection() as conn:
+                    _create_user(conn, username, password, role if role in {"user", "admin"} else "user")
+                print_success(f"Created user '{username.lower()}'")
+            except Exception as error:
+                print_error(str(error))
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "2":
+            username = input("  Username to delete: ").strip()
+            try:
+                with _auth_db_connection() as conn:
+                    _delete_user(conn, username)
+                print_success(f"Deleted user '{username.lower()}'")
+            except Exception as error:
+                print_error(str(error))
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "3":
+            username = input("  Username to change password for: ").strip()
+            new_password = input("  New password: ").strip()
+            confirm_password = input("  Confirm new password: ").strip()
+            if new_password != confirm_password:
+                print_error("Passwords do not match")
+            elif not new_password:
+                print_error("Password cannot be empty")
+            else:
+                try:
+                    with _auth_db_connection() as conn:
+                        _update_user_password(conn, username, new_password)
+                    print_success(f"Password updated for '{username.lower()}'. All active sessions for this user have been revoked.")
+                except Exception as error:
+                    print_error(str(error))
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "4":
+            print("\n  Available models:")
+            for idx, model in enumerate(AVAILABLE_MODELS, 1):
+                print(f"    {idx}. {model}")
+            model_choice = input("  Enter model number or name: ").strip()
+            selected_model = model_choice
+            if model_choice.isdigit() and 1 <= int(model_choice) <= len(AVAILABLE_MODELS):
+                selected_model = AVAILABLE_MODELS[int(model_choice) - 1]
+            try:
+                with _auth_db_connection() as conn:
+                    _set_active_model(conn, selected_model)
+                print_success(f"Active model set to {selected_model}")
+            except Exception as error:
+                print_error(str(error))
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "5":
+            ttl_value = input(f"  Session TTL minutes [{DEFAULT_SESSION_MINUTES}]: ").strip() or str(DEFAULT_SESSION_MINUTES)
+            try:
+                with _auth_db_connection() as conn:
+                    _set_session_ttl(conn, int(ttl_value))
+                print_success(f"Session TTL set to {int(ttl_value)} minutes")
+            except Exception as error:
+                print_error(str(error))
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "6":
+            print("\n  Reverify provider options:")
+            for idx, provider in enumerate(REVERIFY_PROVIDER_OPTIONS, 1):
+                print(f"    {idx}. {provider}")
+            provider_choice = input("  Enter provider number or name: ").strip().lower()
+            selected_provider = provider_choice
+            if provider_choice.isdigit() and 1 <= int(provider_choice) <= len(REVERIFY_PROVIDER_OPTIONS):
+                selected_provider = REVERIFY_PROVIDER_OPTIONS[int(provider_choice) - 1]
+            try:
+                with _auth_db_connection() as conn:
+                    _set_reverify_default_provider(conn, selected_provider)
+                print_success(f"Reverify provider set to {selected_provider}")
+            except Exception as error:
+                print_error(str(error))
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "7":
+            with _auth_db_connection() as conn:
+                sessions = _list_sessions(conn)
+            print()
+            for session in sessions:
+                print(f"  {session['username']:<16} {session['role']:<5} expires {session['expiresAt']} revoked={bool(session['revokedAt'])}")
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice in {"0", "b", "back"}:
+            return
+        else:
+            print_error("Invalid option")
+            time.sleep(1)
+
+
+def access_control_command(args):
+    """Run access-control operations non-interactively."""
+    with _auth_db_connection() as conn:
+        if args.access_list_users:
+            users = _list_users(conn)
+            for user in users:
+                status = "active" if user["active"] else "disabled"
+                print(f"{user['username']}\t{user['role']}\t{status}")
+            return 0
+
+        if args.access_show_sessions:
+            sessions = _list_sessions(conn)
+            for session in sessions:
+                revoked = bool(session["revokedAt"])
+                print(f"{session['username']}\t{session['role']}\t{session['expiresAt']}\t{revoked}")
+            return 0
+
+        if args.access_add_user:
+            username = args.access_add_user
+            password = args.access_password
+            if not password:
+                print_error("--access-password is required when adding a user")
+                return 1
+            role = args.access_role if args.access_role in {"user", "admin"} else "user"
+            try:
+                _create_user(conn, username, password, role)
+            except Exception as error:
+                print_error(str(error))
+                return 1
+            print_success(f"Created user '{username.lower()}'")
+            return 0
+
+        if args.access_delete_user:
+            try:
+                _delete_user(conn, args.access_delete_user)
+            except Exception as error:
+                print_error(str(error))
+                return 1
+            print_success(f"Deleted user '{args.access_delete_user.lower()}'")
+            return 0
+
+        if args.access_set_password:
+            if not args.access_password:
+                print_error("--access-password is required when updating a password")
+                return 1
+            try:
+                _update_user_password(conn, args.access_set_password, args.access_password)
+            except Exception as error:
+                print_error(str(error))
+                return 1
+            print_success(f"Updated password for '{args.access_set_password.lower()}'")
+            return 0
+
+        if args.access_set_model:
+            try:
+                _set_active_model(conn, args.access_set_model)
+            except Exception as error:
+                print_error(str(error))
+                return 1
+            print_success(f"Active model set to {args.access_set_model}")
+            return 0
+
+        if args.access_set_ttl is not None:
+            try:
+                _set_session_ttl(conn, int(args.access_set_ttl))
+            except Exception as error:
+                print_error(str(error))
+                return 1
+            print_success(f"Session TTL set to {int(args.access_set_ttl)} minutes")
+            return 0
+
+        if args.access_set_reverify_provider:
+            try:
+                _set_reverify_default_provider(conn, args.access_set_reverify_provider)
+            except Exception as error:
+                print_error(str(error))
+                return 1
+            print_success(f"Reverify provider set to {_normalize_reverify_provider(args.access_set_reverify_provider)}")
+            return 0
+
+    return None
+
+
 # ── Pipeline Functions ───────────────────────────────────────────────────────
 
 PIPELINE_STAGES = [
@@ -589,6 +1049,39 @@ PIPELINE_STAGES = [
     ("Updater",          "Prepare and upload results to CRM",       "📤"),
     ("ClosingTask",      "Close processed CRM tasks",               "✅"),
 ]
+
+UPDATER_MODES = ["complete", "found_only", "not_found", "review"]
+
+
+def _ask_yes_no(prompt, default=False):
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        choice = input(f"  {prompt} {suffix}: ").strip().lower()
+        if not choice:
+            return default
+        if choice in {"y", "yes"}:
+            return True
+        if choice in {"n", "no"}:
+            return False
+        print_warn("Please answer y or n.")
+
+
+def _ask_updater_mode(default="complete"):
+    print()
+    print(f"  {C.BOLD}Updater mode:{C.RESET}")
+    for idx, mode in enumerate(UPDATER_MODES, 1):
+        marker = " (default)" if mode == default else ""
+        print(f"    {C.CYAN}[{idx}]{C.RESET} {mode}{marker}")
+
+    while True:
+        choice = input(f"  Select updater mode [1-{len(UPDATER_MODES)}] [{default}]: ").strip().lower()
+        if not choice:
+            return default
+        if choice in {"1", "2", "3", "4"}:
+            return UPDATER_MODES[int(choice) - 1]
+        if choice in UPDATER_MODES:
+            return choice
+        print_warn("Please choose a valid updater mode.")
 
 
 def run_script(name, args=None):
@@ -604,13 +1097,40 @@ def run_script(name, args=None):
         cmd.extend(args)
 
     print(f"\n  {C.BOLD}>>> Running {name}...{C.RESET}")
-    result = subprocess.run(cmd, cwd=str(ROOT), env=os.environ.copy())
+    env = _build_script_env()
+    if name == "reverify":
+        try:
+            conn = _auth_db_connection()
+            try:
+                env["REVERIFY_DEFAULT_PROVIDER"] = _get_reverify_default_provider(conn)
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    result = subprocess.run(cmd, cwd=str(ROOT), env=env)
     return result.returncode == 0
 
 
-def run_pipeline(force=False, dry_run=False, limit=0, stage=None):
+def run_pipeline(force=False, dry_run=False, limit=0, stage=None, updater_mode=None, reverify_source="both", prompt_preflight=True):
     """Run the full data processing pipeline."""
     print_section("Pipeline Execution", "🚀")
+
+    included_stage_names = [name for name, _description, _icon in PIPELINE_STAGES if not stage or stage.lower() in name.lower()]
+    reprocess_get_order = force
+    rerun_funeral_finder = force
+    skip_reverify = False
+
+    if prompt_preflight:
+        print_info("Pipeline pre-flight checks")
+        if "GetOrderInquiry" in included_stage_names:
+            reprocess_get_order = _ask_yes_no("Re-run GetOrderInquiry for already-fetched orders?", default=False)
+        if "Funeral_Finder" in included_stage_names:
+            rerun_funeral_finder = _ask_yes_no("Re-run Funeral_Finder for already-processed orders?", default=False)
+        if "reverify" in included_stage_names:
+            skip_reverify = _ask_yes_no("Skip reverify this run?", default=False)
+
+    if "Updater" in included_stage_names and updater_mode is None:
+        updater_mode = _ask_updater_mode()
 
     common_args = []
     if force:
@@ -625,14 +1145,37 @@ def run_pipeline(force=False, dry_run=False, limit=0, stage=None):
         crm_args.append("--dry-run")
         print_warn("Dry-run mode: NO actual CRM updates will be made")
 
+    stage_args = {}
+    for name, _description, _icon in PIPELINE_STAGES:
+        if stage and stage.lower() not in name.lower():
+            continue
+        stage_args[name] = list(common_args)
+
+    if "GetOrderInquiry" in stage_args and not reprocess_get_order:
+        stage_args["GetOrderInquiry"] = [arg for arg in stage_args["GetOrderInquiry"] if arg != "--force"]
+    if "Funeral_Finder" in stage_args and not rerun_funeral_finder:
+        stage_args["Funeral_Finder"] = [arg for arg in stage_args["Funeral_Finder"] if arg != "--force"]
+    if "reverify" in stage_args:
+        if skip_reverify:
+            print_info("Skipping reverify stage for this run")
+            stage_args.pop("reverify", None)
+        else:
+            stage_args["reverify"] = list(common_args) + ["--source", reverify_source]
+    if "Updater" in stage_args:
+        stage_args["Updater"] = list(crm_args)
+        if updater_mode:
+            stage_args["Updater"].extend(["--mode", updater_mode])
+
     print()
     total = len(PIPELINE_STAGES)
     for idx, (name, description, icon) in enumerate(PIPELINE_STAGES, 1):
         if stage and stage.lower() not in name.lower():
             continue
+        if name not in stage_args:
+            continue
 
         print(f"  {C.BLUE}[{idx}/{total}]{C.RESET} {icon}  {C.BOLD}{name}{C.RESET} — {description}")
-        current_args = crm_args if name in ["Updater", "ClosingTask"] else common_args
+        current_args = stage_args.get(name, crm_args if name in ["Updater", "ClosingTask"] else common_args)
         success = run_script(name, current_args)
         if not success:
             print_error(f"Stage '{name}' failed. Pipeline stopped.")
@@ -926,7 +1469,7 @@ def list_and_install_dependencies():
 
     # ── Environment Files ──
     print(f"  {C.BOLD}{C.YELLOW}Environment Configuration:{C.RESET}")
-    for label, env_path in [("Root .env", ENV_FILE), ("Scripts/.env", SCRIPTS_ENV_FILE)]:
+    for label, env_path in [("Root .env", ENV_FILE)]:
         exists = env_path.exists()
         status = f"{C.GREEN}✓ found{C.RESET}" if exists else f"{C.RED}✗ missing{C.RESET}"
         print(f"    {label:<20} {status}")
@@ -1055,9 +1598,6 @@ def system_health_check():
     # Environment files
     root_env_ok = ENV_FILE.exists()
     checks.append(("Root .env", root_env_ok, str(ENV_FILE)))
-
-    scripts_env_ok = SCRIPTS_ENV_FILE.exists()
-    checks.append(("Scripts/.env", scripts_env_ok, str(SCRIPTS_ENV_FILE)))
 
     # node_modules
     nm_ok = (ROOT / "node_modules").exists()
@@ -1188,6 +1728,7 @@ def interactive_menu():
         print(f"    {C.CYAN}[9]{C.RESET}  🧭  Terminal Pipeline Runner      {C.DIM}(Interactive/Resume/Cron){C.RESET}")
         print(f"    {C.CYAN}[10]{C.RESET} 🚀  One-Click Server Setup      {C.DIM}(Install + Build + Run backend){C.RESET}")
         print(f"    {C.CYAN}[11]{C.RESET} ☠️  Program Killer               {C.DIM}(Kill ports + programs){C.RESET}")
+        print(f"    {C.CYAN}[12]{C.RESET} 🔐  Access Control Manager       {C.DIM}(Users / Sessions / Model){C.RESET}")
         print()
         print(f"    {C.RED}[0]{C.RESET}  🚪  Exit")
         print()
@@ -1234,6 +1775,8 @@ def interactive_menu():
         elif choice == "11":
             _program_killer_menu()
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
+        elif choice == "12":
+            manage_access_controls()
         elif choice in ["0", "q", "quit", "exit"]:
             print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
             sys.exit(0)
@@ -1278,6 +1821,28 @@ Examples:
     parser.add_argument("--terminal-runner", action="store_true",
                         help="Run interactive terminal pipeline runner")
 
+    # Access control options
+    parser.add_argument("--access-list-users", action="store_true",
+                        help="List users from the SQLite access-control store")
+    parser.add_argument("--access-show-sessions", action="store_true",
+                        help="List sessions from the SQLite access-control store")
+    parser.add_argument("--access-add-user", type=str,
+                        help="Create a new user in the SQLite access-control store")
+    parser.add_argument("--access-delete-user", type=str,
+                        help="Delete a user from the SQLite access-control store")
+    parser.add_argument("--access-set-password", type=str,
+                        help="Update a user's password in the SQLite access-control store")
+    parser.add_argument("--access-set-model", type=str,
+                        help="Set the active model in the SQLite access-control store")
+    parser.add_argument("--access-set-ttl", type=int,
+                        help="Set the session TTL in minutes")
+    parser.add_argument("--access-set-reverify-provider", type=str, choices=REVERIFY_PROVIDER_OPTIONS,
+                        help="Set the default reverify provider in the SQLite access-control store")
+    parser.add_argument("--access-password", type=str,
+                        help="Password for --access-add-user")
+    parser.add_argument("--access-role", type=str, choices=["user", "admin"], default="user",
+                        help="Role for --access-add-user")
+
     # Pipeline options
     parser.add_argument("--force", action="store_true",
                         help="Force re-processing of all stages")
@@ -1301,7 +1866,11 @@ Examples:
 
     # No arguments → interactive menu
     if len(sys.argv) == 1:
-        interactive_menu()
+        try:
+            interactive_menu()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
+            sys.exit(0)
         return
 
     if args.background and not args.ui:
@@ -1344,8 +1913,16 @@ Examples:
 
         sys.exit(run_terminal_pipeline())
 
+    access_result = access_control_command(args)
+    if access_result is not None:
+        sys.exit(access_result)
+
     # Fallback to interactive menu
-    interactive_menu()
+    try:
+        interactive_menu()
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

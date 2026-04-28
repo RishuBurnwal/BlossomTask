@@ -5,6 +5,7 @@ import io
 import csv
 import argparse
 from pathlib import Path
+from runtime_config import load_root_env
 from datetime import datetime
 
 import requests
@@ -95,22 +96,8 @@ STATIC_PAYLOAD = {
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_dotenv_file(path=None):
-    """Load a .env file from the Scripts directory (or given path)."""
-    if path is None:
-        path = SCRIPTS_DIR / ".env"
-    path = Path(path)
-    if not path.exists():
-        return
-    with open(path, "r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key   = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
+    """Load environment variables from the root .env file."""
+    load_root_env(Path(path) if path is not None else None)
 
 
 def _required_env(name: str) -> str:
@@ -605,6 +592,11 @@ def main():
     print(f"  📁 Total      : {total}")
     print(f"  🆕 Processed  : {new_count}")
     print(f"{'═'*60}")
+    print(
+        f"[{SCRIPT_NAME}] RUN SUMMARY | "
+        f"Success={success_count} | Errors={error_count} | Skipped={skipped_count} | "
+        f"Total={total} | Processed={new_count} | Mode={run_mode}"
+    )
 
     print(f"\n[{SCRIPT_NAME}] Output folder : {OUTPUT_DIR}")
     print(f"[{SCRIPT_NAME}] Files created :")
