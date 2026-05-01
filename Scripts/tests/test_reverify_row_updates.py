@@ -299,3 +299,114 @@ def test_update_record_for_result_always_overwrites_notes_and_status_fields():
     assert updated["notes"] == ""
     assert updated["match_status"] == "NotFound"
     assert updated["ai_accuracy_score"] == 0
+
+
+def test_should_stop_reverify_attempts_for_strong_found_match():
+    result = {
+        "match_status": "Found",
+        "ai_accuracy_score": 91,
+        "funeral_home_name": "Sunset Chapel",
+        "service_date": "2026-05-01",
+        "service_time": "11:00 AM",
+        "source_urls": "https://example.com/obit",
+    }
+
+    assert reverify.should_stop_reverify_attempts(result) is True
+
+
+def test_should_stop_reverify_attempts_keeps_searching_for_weak_review():
+    result = {
+        "match_status": "Review",
+        "ai_accuracy_score": 60,
+        "funeral_home_name": "",
+        "service_date": "",
+        "service_time": "",
+        "source_urls": "",
+    }
+
+    assert reverify.should_stop_reverify_attempts(result) is False
+
+
+def test_apply_business_rules_marks_customer_when_only_order_instructions_confirm_schedule():
+    record = {
+        "order_id": "A",
+        "ship_name": "Martha Lane",
+        "ship_city": "Austin",
+        "ship_state": "TX",
+        "ship_zip": "78701",
+        "ship_care_of": "",
+        "ship_address": "",
+        "ship_address_unit": "",
+        "ship_country": "USA",
+        "ord_instruct": "Memorial service Friday May 2 at 11:00 AM",
+    }
+    parsed = {
+        "matched_name": "Martha Lane",
+        "funeral_home_name": "",
+        "funeral_address": "",
+        "funeral_phone": "",
+        "service_type": "",
+        "service_date": "",
+        "service_time": "",
+        "visitation_date": "",
+        "visitation_time": "",
+        "ceremony_date": "",
+        "ceremony_time": "",
+        "delivery_recommendation_date": "",
+        "delivery_recommendation_time": "",
+        "delivery_recommendation_location": "",
+        "special_instructions": "",
+        "source_urls": "",
+        "notes": "",
+        "match_status": "Review",
+        "ai_accuracy_score": 60,
+    }
+
+    adjusted = reverify.apply_business_rules(record, parsed)
+
+    assert adjusted["match_status"] == "Customer"
+    assert "Customer:" in adjusted["notes"]
+
+
+def test_apply_business_rules_formats_customer_instruction_schedule_fields():
+    expected_year = reverify.get_now_iso()[:4]
+    record = {
+        "order_id": "A",
+        "ship_name": "Martha Lane",
+        "ship_city": "Austin",
+        "ship_state": "TX",
+        "ship_zip": "78701",
+        "ship_care_of": "",
+        "ship_address": "",
+        "ship_address_unit": "",
+        "ship_country": "USA",
+        "ord_instruct": "Viewing on May 2 at 11:00 AM at the chapel",
+    }
+    parsed = {
+        "matched_name": "",
+        "funeral_home_name": "",
+        "funeral_address": "",
+        "funeral_phone": "",
+        "service_type": "",
+        "service_date": "",
+        "service_time": "",
+        "visitation_date": "",
+        "visitation_time": "",
+        "ceremony_date": "",
+        "ceremony_time": "",
+        "delivery_recommendation_date": "",
+        "delivery_recommendation_time": "",
+        "delivery_recommendation_location": "",
+        "special_instructions": "",
+        "source_urls": "",
+        "notes": "",
+        "match_status": "NotFound",
+        "ai_accuracy_score": 40,
+    }
+
+    adjusted = reverify.apply_business_rules(record, parsed)
+
+    assert adjusted["match_status"] == "Customer"
+    assert adjusted["visitation_date"] == f"{expected_year}-05-02"
+    assert adjusted["visitation_time"] == "11:00 AM"
+    assert "customer instructions" in adjusted["special_instructions"].lower()

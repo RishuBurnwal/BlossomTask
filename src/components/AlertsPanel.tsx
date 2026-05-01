@@ -32,9 +32,45 @@ function extractJsonBlock(value: string): string {
   return text.slice(firstBrace).trim();
 }
 
+function summarizeTraceback(value: string): string {
+  const text = stripAlertNoise(value);
+  if (!/traceback \(most recent call last\):/i.test(text)) {
+    return "";
+  }
+
+  const locationMatches = [...text.matchAll(/File\s+"([^"]+)",\s+line\s+(\d+),\s+in\s+([^\r\n]+)/g)];
+  const headline = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reverse()
+    .find((line) => /error|exception/i.test(line) && !/^traceback/i.test(line));
+
+  const summarizedLocations = locationMatches.slice(0, 2).map((match) => {
+    const fullPath = match[1] || "";
+    const fileName = fullPath.split(/[/\\]/).pop() || fullPath;
+    const lineNumber = match[2] || "";
+    const functionName = (match[3] || "").trim();
+    return `${fileName}:${lineNumber}${functionName ? ` (${functionName})` : ""}`;
+  });
+
+  const parts = [];
+  if (headline) {
+    parts.push(headline);
+  }
+  if (summarizedLocations.length > 0) {
+    parts.push(`Traceback at ${summarizedLocations.join(" -> ")}`);
+  }
+  return parts.join(" | ").trim();
+}
+
 function formatAlertMessage(value: string): string {
   const text = stripAlertNoise(value);
   const jsonBlock = extractJsonBlock(text);
+  const tracebackSummary = summarizeTraceback(text);
+  if (tracebackSummary) {
+    return tracebackSummary;
+  }
 
   try {
     const parsed = JSON.parse(jsonBlock);
@@ -166,7 +202,7 @@ export function AlertsPanel() {
                       </Badge>
                       <Badge variant="secondary">{alert.status}</Badge>
                     </div>
-                    <p className="mt-2 break-words text-sm leading-6 text-foreground">
+                    <p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-foreground">
                       {formattedMessage}
                     </p>
                   </div>

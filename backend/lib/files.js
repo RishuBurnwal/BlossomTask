@@ -6,7 +6,54 @@ function getOutputsRoot() {
   return path.resolve(process.cwd(), "Scripts", "outputs");
 }
 
-const STATUS_FIELDS = ["perplexity_status", "pplx_status", "status", "match_status", "trResult"];
+export const STATUS_FIELDS = ["perplexity_status", "pplx_status", "status", "match_status", "trResult"];
+
+export const DATASET_CANDIDATES = {
+  main: [
+    "Funeral_Finder/Funeral_data.xlsx",
+    "Funeral_Finder/Funeral_data.csv",
+    "master/master_records.csv",
+  ],
+  found: [
+    "Funeral_Finder/Funeral_data_found.xlsx",
+    "Funeral_Finder/Funeral_data_found.csv",
+  ],
+  customer: [
+    "Funeral_Finder/Funeral_data_customer.xlsx",
+    "Funeral_Finder/Funeral_data_customer.csv",
+  ],
+  not_found: [
+    "Funeral_Finder/Funeral_data_not_found.xlsx",
+    "Funeral_Finder/Funeral_data_not_found.csv",
+  ],
+  review: [
+    "Funeral_Finder/Funeral_data_review.xlsx",
+    "Funeral_Finder/Funeral_data_review.csv",
+  ],
+};
+
+const STATUS_NORMALIZATION = new Map([
+  ["matched", "found"],
+  ["found", "found"],
+  ["confirmed", "found"],
+  ["customer", "customer"],
+  ["customer_defined", "customer"],
+  ["customer-defined", "customer"],
+  ["customer provided", "customer"],
+  ["customer-provided", "customer"],
+  ["instruction_only", "customer"],
+  ["instruction-only", "customer"],
+  ["needs_review", "review"],
+  ["needs-review", "review"],
+  ["needs review", "review"],
+  ["review", "review"],
+  ["uncertain", "review"],
+  ["mismatched", "notfound"],
+  ["unmatched", "notfound"],
+  ["notfound", "notfound"],
+  ["not_found", "notfound"],
+  ["not found", "notfound"],
+]);
 
 function sanitizeRelativePath(inputPath = "") {
   const normalized = path.normalize(inputPath).replace(/^([/\\])+/, "");
@@ -14,6 +61,19 @@ function sanitizeRelativePath(inputPath = "") {
     throw new Error("Invalid path");
   }
   return normalized;
+}
+
+function normalizeLimit(limit = 200) {
+  const parsed = Number(limit);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return Math.max(1, Math.floor(parsed));
+}
+
+function applyLimit(items = [], limit = 200) {
+  const normalized = normalizeLimit(limit);
+  return normalized > 0 ? items.slice(0, normalized) : items;
 }
 
 export function resolveOutputPath(inputPath = "") {
@@ -134,9 +194,8 @@ function parseCsv(content, limit = 200) {
     return cleaned || `column_${index + 1}`;
   });
 
-  const boundedLimit = Number(limit);
-  const dataRows = Number.isFinite(boundedLimit) && boundedLimit > 0
-    ? rows.slice(1, 1 + boundedLimit)
+  const dataRows = normalizeLimit(limit) > 0
+    ? rows.slice(1, 1 + normalizeLimit(limit))
     : rows.slice(1);
   return dataRows.map((cells) => {
     const rowObject = {};
@@ -148,7 +207,7 @@ function parseCsv(content, limit = 200) {
         rowObject[`extra_${index - headers.length + 1}`] = cells[index] ?? "";
       }
     }
-    return rowObject;
+    return normalizeRowObject(rowObject);
   });
 }
 
@@ -187,10 +246,7 @@ function parseXlsx(buffer, limit = 200) {
 
   const worksheet = workbook.Sheets[firstSheet];
   const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
-  const boundedLimit = Number(limit);
-  const parsedRows = Number.isFinite(boundedLimit) && boundedLimit > 0
-    ? rows.slice(0, boundedLimit)
-    : rows;
+  const parsedRows = normalizeLimit(limit) > 0 ? rows.slice(0, normalizeLimit(limit)) : rows;
   return parsedRows.map((row) => normalizeRowObject(row));
 }
 
@@ -210,7 +266,6 @@ export function readFileContent(inputPath, limit = 200) {
         return { type: "xlsx", raw: `[xlsx:${path.basename(targetPath)}]`, parsed };
       }
 
-      // Fallback to sibling CSV when xlsx exists but contains no usable rows.
       const csvFallbackPath = targetPath.replace(/\.xlsx$/i, ".csv");
       if (fs.existsSync(csvFallbackPath) && fs.statSync(csvFallbackPath).isFile()) {
         const csvRaw = fs.readFileSync(csvFallbackPath, "utf-8");
@@ -222,7 +277,6 @@ export function readFileContent(inputPath, limit = 200) {
 
       return { type: "xlsx", raw: `[xlsx:${path.basename(targetPath)}]`, parsed };
     } catch {
-      // Fallback to sibling CSV if xlsx parsing fails.
       const csvFallbackPath = targetPath.replace(/\.xlsx$/i, ".csv");
       if (fs.existsSync(csvFallbackPath) && fs.statSync(csvFallbackPath).isFile()) {
         const csvRaw = fs.readFileSync(csvFallbackPath, "utf-8");
@@ -238,22 +292,23 @@ export function readFileContent(inputPath, limit = 200) {
     return {
       type: "json",
       raw,
-      parsed: Array.isArray(json) ? json.slice(0, limit).map((row) => normalizeRowObject(row)) : normalizeRowObject(json),
+      parsed: Array.isArray(json)
+        ? applyLimit(json, limit).map((row) => normalizeRowObject(row))
+        : normalizeRowObject(json),
     };
   }
 
   if (ext === ".jsonl") {
-    const parsed = raw
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .slice(0, limit)
-      .map((line) => {
-        try {
-          return normalizeRowObject(JSON.parse(line));
-        } catch {
-          return { line };
-        }
-      });
+    const parsed = applyLimit(
+      raw.split(/\r?\n/).filter(Boolean),
+      limit,
+    ).map((line) => {
+      try {
+        return normalizeRowObject(JSON.parse(line));
+      } catch {
+        return { line };
+      }
+    });
     return { type: "jsonl", raw, parsed };
   }
 
@@ -263,7 +318,6 @@ export function readFileContent(inputPath, limit = 200) {
       return { type: "csv", raw, parsed };
     }
 
-    // Fallback to sibling XLSX when csv exists but contains no usable rows.
     const xlsxFallbackPath = targetPath.replace(/\.csv$/i, ".xlsx");
     if (fs.existsSync(xlsxFallbackPath) && fs.statSync(xlsxFallbackPath).isFile()) {
       try {
@@ -280,27 +334,48 @@ export function readFileContent(inputPath, limit = 200) {
     return { type: "csv", raw, parsed };
   }
 
-  return { type: "text", raw, parsed: raw.split(/\r?\n/).slice(0, limit) };
+  return { type: "text", raw, parsed: applyLimit(raw.split(/\r?\n/), limit) };
 }
 
-function summarizeRows(rows = []) {
+export function normalizeStatusValue(value = "") {
+  const key = String(value || "").trim().toLowerCase();
+  return STATUS_NORMALIZATION.get(key) || "unknown";
+}
+
+export function getRowStatus(row = {}) {
+  const statusValue = STATUS_FIELDS.map((key) => row?.[key]).find((value) => String(value || "").trim());
+  return normalizeStatusValue(statusValue);
+}
+
+export function summarizeRows(rows = []) {
   if (!Array.isArray(rows) || rows.length === 0) {
-    return { total: 0, matched: 0, needs_review: 0, unmatched: 0, last_processed_at: null };
+    return {
+      total: 0,
+      customer: 0,
+      found: 0,
+      notfound: 0,
+      review: 0,
+      unknown: 0,
+      last_processed_at: null,
+    };
   }
 
-  let matched = 0;
-  let needs_review = 0;
-  let unmatched = 0;
+  let customer = 0;
+  let found = 0;
+  let notfound = 0;
+  let review = 0;
+  let unknown = 0;
   let lastProcessedAt = null;
 
   rows.forEach((row) => {
-    const status = STATUS_FIELDS.map((key) => row?.[key]).find((value) => Boolean(value)) || "";
-    const norm = String(status || "").trim().toLowerCase();
-    if (norm === "matched" || norm === "found") matched += 1;
-    else if (norm === "needs_review" || norm === "needs-review" || norm === "needs review" || norm === "review") needs_review += 1;
-    else if (norm === "mismatched" || norm === "unmatched" || norm === "notfound" || norm === "not_found" || norm === "not found") unmatched += 1;
+    const normalizedStatus = getRowStatus(row);
+    if (normalizedStatus === "customer") customer += 1;
+    else if (normalizedStatus === "found") found += 1;
+    else if (normalizedStatus === "notfound") notfound += 1;
+    else if (normalizedStatus === "review") review += 1;
+    else unknown += 1;
 
-    const processed = row?.processed_at_utc || row?.processedAtUtc || row?.processedAt;
+    const processed = row?.last_processed_at || row?.processed_at_utc || row?.processedAtUtc || row?.processedAt;
     if (processed) {
       const parsedDate = new Date(processed);
       if (!Number.isNaN(parsedDate.getTime())) {
@@ -314,15 +389,44 @@ function summarizeRows(rows = []) {
 
   return {
     total: rows.length,
-    matched,
-    needs_review,
-    unmatched,
+    customer,
+    found,
+    notfound,
+    review,
+    unknown,
     last_processed_at: lastProcessedAt,
   };
 }
 
-function readDataset(candidatePaths, limit) {
-  for (const candidatePath of candidatePaths) {
+function sortDatasetCandidates(candidatePaths = []) {
+  return [...candidatePaths]
+    .map((candidatePath, index) => {
+      const absolutePath = resolveOutputPath(candidatePath);
+      if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+        return null;
+      }
+      return {
+        candidatePath,
+        index,
+        updatedAtMs: fs.statSync(absolutePath).mtimeMs,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (right.updatedAtMs !== left.updatedAtMs) {
+        return right.updatedAtMs - left.updatedAtMs;
+      }
+      return left.index - right.index;
+    });
+}
+
+export function readDataset(candidatePaths, limit) {
+  const sortedCandidates = sortDatasetCandidates(candidatePaths);
+  const attemptOrder = sortedCandidates.length > 0
+    ? sortedCandidates.map((entry) => entry.candidatePath)
+    : candidatePaths;
+
+  for (const candidatePath of attemptOrder) {
     try {
       const content = readFileContent(candidatePath, limit);
       const rows = Array.isArray(content.parsed) ? content.parsed : [];
@@ -334,26 +438,20 @@ function readDataset(candidatePaths, limit) {
     }
   }
 
-  return { file: candidatePaths[0] || "", rows: [], summary: summarizeRows([]) };
+  return { file: attemptOrder[0] || candidatePaths[0] || "", rows: [], summary: summarizeRows([]) };
 }
 
 export function getDefaultDatasets(limit = 200) {
-  const main = readDataset([
-    "Funeral_Finder/Funeral_data.csv",
-    "Funeral_Finder/Funeral_data.xlsx",
-    "master/master_records.csv",
-  ], limit);
-  const notFound = readDataset([
-    "Funeral_Finder/Funeral_data_not_found.csv",
-    "Funeral_Finder/Funeral_data_not_found.xlsx",
-  ], limit);
-  const review = readDataset([
-    "Funeral_Finder/Funeral_data_review.csv",
-    "Funeral_Finder/Funeral_data_review.xlsx",
-  ], limit);
+  const main = readDataset(DATASET_CANDIDATES.main, limit);
+  const found = readDataset(DATASET_CANDIDATES.found, limit);
+  const customer = readDataset(DATASET_CANDIDATES.customer, limit);
+  const notFound = readDataset(DATASET_CANDIDATES.not_found, limit);
+  const review = readDataset(DATASET_CANDIDATES.review, limit);
 
   return {
     main,
+    found,
+    customer,
     not_found: notFound,
     review,
     error: notFound,

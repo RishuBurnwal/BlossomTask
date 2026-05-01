@@ -1,5 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -13,6 +13,7 @@ import NotFound from "./pages/NotFound.tsx";
 const queryClient = new QueryClient();
 
 const AuthGate = () => {
+  const appQueryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["auth"],
     queryFn: api.authMe,
@@ -20,6 +21,15 @@ const AuthGate = () => {
     refetchOnWindowFocus: false,
     staleTime: 30_000,
   });
+
+  useEffect(() => {
+    const handleSessionExpiry = () => {
+      appQueryClient.setQueryData(["auth"], null);
+      appQueryClient.invalidateQueries();
+    };
+    window.addEventListener("blossom-auth-expired", handleSessionExpiry);
+    return () => window.removeEventListener("blossom-auth-expired", handleSessionExpiry);
+  }, [appQueryClient]);
 
   if (isLoading) {
     return (

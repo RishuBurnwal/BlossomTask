@@ -7,6 +7,8 @@ import type {
   FileEntry,
   Job,
   FuneralDatasets,
+  GoogleSyncRunResult,
+  GoogleSyncState,
   ModelPerformanceStats,
   OrderDateBucket,
   OrderProcessingStats,
@@ -35,6 +37,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
       if (body?.error) message = body.error;
     } catch {
       // ignore
+    }
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("blossom-auth-expired", { detail: { message } }));
     }
     throw new Error(message);
   }
@@ -85,6 +90,11 @@ export const api = {
     }),
 
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+
+  logoutAll: () => request<{ ok: boolean }>("/auth/logout-all", { method: "POST" }),
+
+  clearOtherSessions: () =>
+    request<{ ok: boolean; removed: number }>("/auth/me/sessions/others", { method: "DELETE" }),
 
   users: () => request<{ users: UserSummary[] }>("/auth/users"),
 
@@ -229,5 +239,19 @@ export const api = {
     }>("/compare/order-id", {
       method: "POST",
       body: JSON.stringify({ orderId, files }),
+    }),
+
+  googleSync: () => request<GoogleSyncState>("/google-sync"),
+
+  saveGoogleSyncConfig: (payload: { enabled?: boolean; folderName?: string; credentialsPath?: string; credentialsJson?: string }) =>
+    request<GoogleSyncState>("/google-sync/config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  runGoogleSync: (payload?: { target?: "workspace" | "outputs"; scope?: string; mode?: "approved-runtime" }) =>
+    request<GoogleSyncRunResult>("/google-sync/run", {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
     }),
 };

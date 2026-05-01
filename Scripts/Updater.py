@@ -73,6 +73,8 @@ FIELDNAMES = [
     "upload_status", "last_processed_at",
 ]
 
+CSV_READ_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+
 # Static payload fields (same for every request)
 STATIC_PAYLOAD = {
     "fremail": "",
@@ -116,6 +118,23 @@ def _safe_str(val) -> str:
     if val is None:
         return ""
     return str(val).strip()
+
+
+def _read_csv_dict_rows(csv_path: Path) -> tuple[list[str], list[dict], str]:
+    last_error = None
+    for encoding in CSV_READ_ENCODINGS:
+        try:
+            with open(csv_path, "r", newline="", encoding=encoding) as f:
+                reader = csv.DictReader(f)
+                fieldnames = [_safe_str(field) for field in (reader.fieldnames or []) if _safe_str(field)]
+                rows = list(reader)
+            return fieldnames, rows, encoding
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    return [], [], CSV_READ_ENCODINGS[0]
 
 
 def _choose_service_datetime(order: dict) -> tuple[str, str, str]:
@@ -206,29 +225,31 @@ def load_funeral_data(run_mode: str = "complete") -> list:
     orders = []
     seen_ids = set()
 
-    with open(source_csv, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            oid = _safe_str(row.get("order_id"))
-            if not oid or oid in seen_ids:
+    _, rows, encoding_used = _read_csv_dict_rows(source_csv)
+    if encoding_used not in {"utf-8-sig", "utf-8"}:
+        print(f"[{SCRIPT_NAME}] INFO: Read {source_csv.name} using {encoding_used} fallback")
+
+    for row in rows:
+        oid = _safe_str(row.get("order_id"))
+        if not oid or oid in seen_ids:
+            continue
+
+        # Apply status filter for found_only mode from the main CSV
+        if run_mode == "found_only":
+            status = _safe_str(row.get("match_status")).lower()
+            if status != "found":
+                continue
+        elif run_mode == "not_found" and source_csv == INPUT_CSV:
+            status = _safe_str(row.get("match_status")).lower()
+            if status != "notfound" and status != "not_found" and status != "not found":
+                continue
+        elif run_mode == "review" and source_csv == INPUT_CSV:
+            status = _safe_str(row.get("match_status")).lower()
+            if status != "review":
                 continue
 
-            # Apply status filter for found_only mode from the main CSV
-            if run_mode == "found_only":
-                status = _safe_str(row.get("match_status")).lower()
-                if status != "found":
-                    continue
-            elif run_mode == "not_found" and source_csv == INPUT_CSV:
-                status = _safe_str(row.get("match_status")).lower()
-                if status != "notfound" and status != "not_found" and status != "not found":
-                    continue
-            elif run_mode == "review" and source_csv == INPUT_CSV:
-                status = _safe_str(row.get("match_status")).lower()
-                if status != "review":
-                    continue
-
-            seen_ids.add(oid)
-            orders.append(row)
+        seen_ids.add(oid)
+        orders.append(row)
 
     return orders
 
@@ -345,10 +366,11 @@ def rebuild_excel_from_csv():
     """Rebuild data.xlsx from the current data.csv."""
     if not OPENPYXL_AVAILABLE or not CSV_PATH.exists():
         return
-    with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames or FIELDNAMES
-        all_rows = list(reader)
+    fieldnames, all_rows, encoding_used = _read_csv_dict_rows(CSV_PATH)
+    if not fieldnames:
+        fieldnames = list(FIELDNAMES)
+    if encoding_used not in {"utf-8-sig", "utf-8"}:
+        print(f"[{SCRIPT_NAME}] INFO: Rebuilt Excel from {CSV_PATH.name} using {encoding_used} fallback")
 
     wb = openpyxl.Workbook()
     ws = wb.active

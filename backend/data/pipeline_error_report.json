@@ -1,0 +1,27 @@
+{
+  "status": "failed",
+  "kind": "pipeline",
+  "jobId": "job_1777594124453_klhx3f",
+  "parentJobId": null,
+  "scriptId": null,
+  "exitCode": 1,
+  "createdAt": "2026-05-01T00:08:53.762Z",
+  "startedAt": "2026-05-01T00:08:44.477Z",
+  "finishedAt": "2026-05-01T00:08:53.704Z",
+  "progress": 100,
+  "message": "Pipeline failed at updater",
+  "scheduleId": null,
+  "scheduleName": null,
+  "trigger": {
+    "type": "manual"
+  },
+  "logs": [
+    "[2026-05-01T00:08:44.499Z] Pipeline started with 6 steps",
+    "[2026-05-01T00:08:44.517Z] Active model: sonar-pro",
+    "[2026-05-01T00:08:44.555Z] Step 1/6 -> get-task (job_1777594124538_jv917r)",
+    "[2026-05-01T00:08:47.134Z] Step 2/6 -> get-order-inquiry (job_1777594127106_w8hjig)",
+    "[2026-05-01T00:08:50.952Z] Step 3/6 -> funeral-finder (job_1777594130926_iy3xg0)",
+    "[2026-05-01T00:08:51.866Z] Step 4/6 -> reverify (job_1777594131852_u544on)",
+    "[2026-05-01T00:08:52.838Z] Step 5/6 -> updater (job_1777594132809_oetgsi)"
+  ]
+}

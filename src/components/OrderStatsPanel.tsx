@@ -1,47 +1,67 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   BarChart3,
   CalendarDays,
   CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  TrendingUp,
-  Cpu,
   Filter,
-  ChevronDown,
-  ChevronUp,
+  SearchCheck,
+  UserRound,
+  XCircle,
 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 
-function ProgressBar({
-  value,
-  max,
-  color,
-  label,
-}: {
-  value: number;
-  max: number;
-  color: string;
+type SummaryCardProps = {
   label: string;
+  value: number;
+  percent?: number;
+  tone: string;
+  icon: ReactNode;
+};
+
+function SummaryCard({ label, value, percent, tone, icon }: SummaryCardProps) {
+  return (
+    <Card className="border-border/70">
+      <CardHeader className="space-y-1 pb-2">
+        <CardDescription className={`flex items-center gap-2 ${tone}`}>
+          {icon}
+          {label}
+        </CardDescription>
+        <CardTitle className={`text-3xl tabular-nums ${tone}`}>
+          {value}
+          {typeof percent === "number" ? (
+            <span className="ml-2 text-sm font-normal text-muted-foreground">{percent}%</span>
+          ) : null}
+        </CardTitle>
+      </CardHeader>
+    </Card>
+  );
+}
+
+function ProgressRow({
+  label,
+  value,
+  total,
+  className,
+}: {
+  label: string;
+  value: number;
+  total: number;
+  className: string;
 }) {
-  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  const width = total > 0 ? Math.min((value / total) * 100, 100) : 0;
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium">{label}</span>
-        <span className="tabular-nums text-muted-foreground">
-          {value} ({pct.toFixed(1)}%)
-        </span>
+        <span>{label}</span>
+        <span className="text-muted-foreground">{value}</span>
       </div>
-      <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
-        <div
-          className={`h-full rounded-full transition-all duration-700 ease-out ${color}`}
-          style={{ width: `${pct}%` }}
-        />
+      <div className="h-2.5 overflow-hidden rounded-full bg-secondary">
+        <div className={`h-full rounded-full ${className}`} style={{ width: `${width}%` }} />
       </div>
     </div>
   );
@@ -50,9 +70,7 @@ function ProgressBar({
 export function OrderStatsPanel() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [selectedDay, setSelectedDay] = useState("");
   const [showDateFilter, setShowDateFilter] = useState(false);
-  const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [showAllDates, setShowAllDates] = useState(false);
 
   const { data: statsData, isLoading: statsLoading } = useQuery({
@@ -64,428 +82,155 @@ export function OrderStatsPanel() {
   const { data: dateData } = useQuery({
     queryKey: ["order-processing-by-date", dateFrom, dateTo],
     queryFn: () => api.orderProcessingByDate(dateFrom || undefined, dateTo || undefined),
-    refetchInterval: 30_000,
+    refetchInterval: 15_000,
   });
 
   const { data: modelPerf } = useQuery({
     queryKey: ["model-performance"],
     queryFn: api.modelPerformance,
-    refetchInterval: 15_000,
+    refetchInterval: 20_000,
   });
 
   const summary = statsData?.summary;
   const reconciliation = statsData?.reconciliation;
   const byDate = dateData?.days ?? statsData?.byDate ?? [];
-  const byModel = statsData?.byModel ?? [];
-  const models = modelPerf?.models ?? [];
-  const activeModel = modelPerf?.activeModel || summary?.activeModel || "n/a";
-
   const visibleDates = showAllDates ? byDate : byDate.slice(0, 7);
-
-  const applyQuickDay = (mode: "today" | "yesterday" | "single") => {
-    const now = new Date();
-    const target = new Date(now);
-    if (mode === "yesterday") {
-      target.setDate(target.getDate() - 1);
-    }
-    const iso = target.toISOString().slice(0, 10);
-    const resolved = mode === "single" ? selectedDay : iso;
-    setDateFrom(resolved);
-    setDateTo(resolved);
-  };
+  const models = modelPerf?.models ?? [];
 
   return (
-    <section>
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-        Order Processing Analytics
-      </h2>
-
-      {/* Summary Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Card className="border-emerald-500/20">
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4" /> Total Processed
-            </CardDescription>
-            <CardTitle className="text-3xl tabular-nums">
-              {statsLoading ? "—" : summary?.total ?? 0}
-            </CardTitle>
-          </CardHeader>
-        </Card>
-
-        <Card className="border-green-500/20">
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-              <CheckCircle2 className="h-4 w-4" /> Found
-            </CardDescription>
-            <CardTitle className="text-2xl tabular-nums text-emerald-600 dark:text-emerald-400">
-              {summary?.found ?? 0}
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {summary?.foundPct ?? 0}%
-              </span>
-            </CardTitle>
-          </CardHeader>
-        </Card>
-
-        <Card className="border-red-500/20">
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2 text-red-500">
-              <XCircle className="h-4 w-4" /> Not Found
-            </CardDescription>
-            <CardTitle className="text-2xl tabular-nums text-red-500">
-              {summary?.notfound ?? 0}
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {summary?.notfoundPct ?? 0}%
-              </span>
-            </CardTitle>
-          </CardHeader>
-        </Card>
-
-        <Card className="border-amber-500/20">
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2 text-amber-500">
-              <AlertTriangle className="h-4 w-4" /> Review
-            </CardDescription>
-            <CardTitle className="text-2xl tabular-nums text-amber-500">
-              {summary?.review ?? 0}
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {summary?.reviewPct ?? 0}%
-              </span>
-            </CardTitle>
-          </CardHeader>
-        </Card>
-
-        <Card className="border-blue-500/20">
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2 text-blue-500">
-              <Cpu className="h-4 w-4" /> Active Model
-            </CardDescription>
-            <CardTitle className="text-base">{activeModel}</CardTitle>
-          </CardHeader>
-        </Card>
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Daily Breakdown</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Live order status totals now come from the freshest output files, including customer-defined matches.
+        </p>
       </div>
 
-      {/* Overall progress bars */}
-      {summary && summary.total > 0 && (
-        <Card className="mt-4">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" /> Overall Processing Breakdown
-            </CardTitle>
-            <CardDescription>
-              Real-time distribution of {summary.total} processed orders
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <ProgressBar
-              value={summary.found}
-              max={summary.total}
-              color="bg-gradient-to-r from-emerald-500 to-emerald-400"
-              label="✅ Found"
-            />
-            <ProgressBar
-              value={summary.notfound}
-              max={summary.total}
-              color="bg-gradient-to-r from-red-500 to-red-400"
-              label="❌ Not Found"
-            />
-            <ProgressBar
-              value={summary.review}
-              max={summary.total}
-              color="bg-gradient-to-r from-amber-500 to-amber-400"
-              label="⚠️ Review"
-            />
-            {summary.unknown > 0 && (
-              <ProgressBar
-                value={summary.unknown}
-                max={summary.total}
-                color="bg-gradient-to-r from-zinc-500 to-zinc-400"
-                label="❓ Unknown"
-              />
-            )}
-            {reconciliation && (
-              <div className="rounded-lg border bg-background px-3 py-2 text-xs text-muted-foreground">
-                Offline sync check: main {reconciliation.mainRows} · found {reconciliation.foundFileRows} · not found {reconciliation.notFoundFileRows} · review {reconciliation.reviewFileRows}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <SummaryCard label="Total" value={statsLoading ? 0 : summary?.total ?? 0} icon={<BarChart3 className="h-4 w-4" />} tone="text-foreground" />
+        <SummaryCard label="Customer" value={summary?.customer ?? 0} percent={summary?.customerPct ?? 0} icon={<UserRound className="h-4 w-4" />} tone="text-sky-600 dark:text-sky-400" />
+        <SummaryCard label="Found" value={summary?.found ?? 0} percent={summary?.foundPct ?? 0} icon={<CheckCircle2 className="h-4 w-4" />} tone="text-emerald-600 dark:text-emerald-400" />
+        <SummaryCard label="Not Found" value={summary?.notfound ?? 0} percent={summary?.notfoundPct ?? 0} icon={<XCircle className="h-4 w-4" />} tone="text-rose-600 dark:text-rose-400" />
+        <SummaryCard label="Review" value={summary?.review ?? 0} percent={summary?.reviewPct ?? 0} icon={<AlertTriangle className="h-4 w-4" />} tone="text-amber-600 dark:text-amber-400" />
+      </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        {/* Date-wise breakdown */}
+      <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <CalendarDays className="h-4 w-4" /> Daily Breakdown
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <CalendarDays className="h-4 w-4" />
+                  Daily Status Breakdown
                 </CardTitle>
-                <CardDescription>Orders processed per day with status distribution</CardDescription>
+                <CardDescription>See which day produced customer, found, review, and not found records.</CardDescription>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                onClick={() => setShowDateFilter(!showDateFilter)}
-              >
-                <Filter className="h-3 w-3" />
+              <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowDateFilter((current) => !current)}>
+                <Filter className="h-3.5 w-3.5" />
                 Filter
               </Button>
             </div>
 
-            {showDateFilter && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border bg-background p-3 animate-in fade-in">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    From
-                  </label>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    To
-                  </label>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
-                  />
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-4 text-xs"
-                  onClick={() => {
-                    setDateFrom("");
-                    setDateTo("");
-                    setSelectedDay("");
-                  }}
-                >
+            {showDateFilter ? (
+              <div className="mt-4 flex flex-wrap gap-2 rounded-lg border bg-background p-3">
+                <InputBlock label="From" value={dateFrom} onChange={setDateFrom} />
+                <InputBlock label="To" value={dateTo} onChange={setDateTo} />
+                <Button variant="ghost" size="sm" className="mt-auto" onClick={() => { setDateFrom(""); setDateTo(""); }}>
                   Clear
                 </Button>
-                <Button variant="outline" size="sm" className="mt-4 text-xs" onClick={() => applyQuickDay("today")}>
-                  Today
-                </Button>
-                <Button variant="outline" size="sm" className="mt-4 text-xs" onClick={() => applyQuickDay("yesterday")}>
-                  Yesterday
-                </Button>
-                <div className="mt-1 space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Single Day
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="date"
-                      value={selectedDay}
-                      onChange={(e) => setSelectedDay(e.target.value)}
-                      className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs"
-                      disabled={!selectedDay}
-                      onClick={() => applyQuickDay("single")}
-                    >
-                      Apply
-                    </Button>
-                  </div>
-                </div>
               </div>
-            )}
+            ) : null}
           </CardHeader>
-          <CardContent className="space-y-2">
-            {visibleDates.length === 0 && (
-              <p className="text-xs text-muted-foreground">No date-wise data available yet.</p>
-            )}
+          <CardContent className="space-y-3">
+            {visibleDates.length === 0 ? <p className="text-sm text-muted-foreground">No daily data available yet.</p> : null}
             {visibleDates.map((day) => (
-              <div key={day.date} className="rounded-lg border bg-background px-3 py-2.5">
-                <div className="flex items-center justify-between text-xs font-medium">
-                  <span className="flex items-center gap-2">
-                    <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
-                    {day.date}
-                  </span>
-                  <Badge variant="outline" className="text-[10px]">
-                    {day.total} orders
-                  </Badge>
+              <div key={day.date} className="rounded-xl border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium">{day.date}</div>
+                  <Badge variant="outline">{day.total} rows</Badge>
                 </div>
-                {day.total > 0 && (
-                  <div className="mt-2 flex gap-1">
-                    {day.found > 0 && (
-                      <div
-                        className="h-2 rounded-full bg-emerald-500 transition-all duration-500"
-                        style={{ width: `${(day.found / day.total) * 100}%` }}
-                        title={`Found: ${day.found}`}
-                      />
-                    )}
-                    {day.notfound > 0 && (
-                      <div
-                        className="h-2 rounded-full bg-red-500 transition-all duration-500"
-                        style={{ width: `${(day.notfound / day.total) * 100}%` }}
-                        title={`Not Found: ${day.notfound}`}
-                      />
-                    )}
-                    {day.review > 0 && (
-                      <div
-                        className="h-2 rounded-full bg-amber-500 transition-all duration-500"
-                        style={{ width: `${(day.review / day.total) * 100}%` }}
-                        title={`Review: ${day.review}`}
-                      />
-                    )}
-                  </div>
-                )}
-                <div className="mt-1.5 flex gap-3 text-[10px] text-muted-foreground">
-                  <span className="text-emerald-500">✅ {day.found}</span>
-                  <span className="text-red-500">❌ {day.notfound}</span>
-                  <span className="text-amber-500">⚠️ {day.review}</span>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  <ProgressRow label="Customer" value={day.customer} total={day.total} className="bg-sky-500" />
+                  <ProgressRow label="Found" value={day.found} total={day.total} className="bg-emerald-500" />
+                  <ProgressRow label="Not Found" value={day.notfound} total={day.total} className="bg-rose-500" />
+                  <ProgressRow label="Review" value={day.review} total={day.total} className="bg-amber-500" />
                 </div>
               </div>
             ))}
-            {byDate.length > 7 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full gap-1 text-xs"
-                onClick={() => setShowAllDates(!showAllDates)}
-              >
-                {showAllDates ? (
-                  <>
-                    <ChevronUp className="h-3 w-3" /> Show Less
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown className="h-3 w-3" /> Show All {byDate.length} Days
-                  </>
-                )}
+            {byDate.length > 7 ? (
+              <Button variant="ghost" size="sm" className="w-full" onClick={() => setShowAllDates((current) => !current)}>
+                {showAllDates ? "Show Less" : `Show All ${byDate.length} Days`}
               </Button>
-            )}
+            ) : null}
           </CardContent>
         </Card>
 
-        {/* Model Performance */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Cpu className="h-4 w-4" /> Model Performance
+            <CardTitle className="flex items-center gap-2 text-base">
+              <SearchCheck className="h-4 w-4" />
+              Live Validation
             </CardTitle>
-            <CardDescription>
-              How each AI model is performing — switch models to see varied data
-            </CardDescription>
+            <CardDescription>Cross-check the main dataset against category files.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {models.length === 0 && byModel.length === 0 && (
-              <p className="text-xs text-muted-foreground">No model run data available yet.</p>
-            )}
-
-            {/* Model runs from model_runs table */}
-            {models.map((m) => {
-              const isActive = m.model === activeModel;
-              const isExpanded = expandedModel === m.model;
-              return (
-                <div
-                  key={m.model}
-                  className={`rounded-lg border px-3 py-2.5 transition-colors ${
-                    isActive ? "border-blue-500/30 bg-blue-500/5" : "bg-background"
-                  }`}
-                >
-                  <button
-                    className="flex w-full items-center justify-between text-xs font-medium"
-                    onClick={() => setExpandedModel(isExpanded ? null : m.model)}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
-                      {m.model}
-                      {isActive && (
-                        <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 text-[9px] px-1.5">
-                          ACTIVE
-                        </Badge>
-                      )}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-[10px]">
-                        {m.totalRuns} runs
-                      </Badge>
-                      {isExpanded ? (
-                        <ChevronUp className="h-3.5 w-3.5" />
-                      ) : (
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      )}
-                    </span>
-                  </button>
-
-                  {isExpanded && (
-                    <div className="mt-2 space-y-2 animate-in fade-in slide-in-from-top-1">
-                      <div className="grid grid-cols-4 gap-2 text-[10px]">
-                        <div className="rounded border bg-emerald-500/10 p-1.5 text-center">
-                          <div className="font-semibold text-emerald-600 dark:text-emerald-400">
-                            {m.success}
-                          </div>
-                          <div className="text-muted-foreground">Success</div>
-                        </div>
-                        <div className="rounded border bg-red-500/10 p-1.5 text-center">
-                          <div className="font-semibold text-red-500">{m.failed}</div>
-                          <div className="text-muted-foreground">Failed</div>
-                        </div>
-                        <div className="rounded border bg-zinc-500/10 p-1.5 text-center">
-                          <div className="font-semibold">{m.cancelled}</div>
-                          <div className="text-muted-foreground">Cancelled</div>
-                        </div>
-                        <div className="rounded border bg-blue-500/10 p-1.5 text-center">
-                          <div className="font-semibold text-blue-500">{m.running}</div>
-                          <div className="text-muted-foreground">Running</div>
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-muted-foreground">Success Rate</span>
-                          <span className="font-medium">{m.successRate}%</span>
-                        </div>
-                        <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
-                            style={{ width: `${m.successRate}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Order-level model stats (from funeral data CSV) */}
-            {byModel.length > 0 && (
-              <div className="mt-3 border-t pt-3">
-                <p className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Order Processing by Model
-                </p>
-                {byModel.map((m) => (
-                  <div
-                    key={m.model}
-                    className="mb-2 rounded-md border bg-background px-3 py-2 text-xs"
-                  >
-                    <div className="flex items-center justify-between font-medium">
-                      <span>{m.model}</span>
-                      <span>{m.total} runs</span>
-                    </div>
-                    <div className="mt-1 flex gap-3 text-[10px] text-muted-foreground">
-                      <span className="text-emerald-500">✅ {m.success} success</span>
-                      <span className="text-red-500">❌ {m.failed} failed</span>
-                    </div>
-                  </div>
-                ))}
+          <CardContent className="space-y-3">
+            <ProgressRow label="Customer" value={summary?.customer ?? 0} total={summary?.total ?? 0} className="bg-sky-500" />
+            <ProgressRow label="Found" value={summary?.found ?? 0} total={summary?.total ?? 0} className="bg-emerald-500" />
+            <ProgressRow label="Not Found" value={summary?.notfound ?? 0} total={summary?.total ?? 0} className="bg-rose-500" />
+            <ProgressRow label="Review" value={summary?.review ?? 0} total={summary?.total ?? 0} className="bg-amber-500" />
+            {summary?.unknown ? <ProgressRow label="Unknown" value={summary.unknown} total={summary.total} className="bg-zinc-500" /> : null}
+            {reconciliation ? (
+              <div className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                Main {reconciliation.mainRows} | customer {reconciliation.customerFileRows ?? 0} | found {reconciliation.foundFileRows} | not found {reconciliation.notFoundFileRows} | review {reconciliation.reviewFileRows}
               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Model Performance</CardTitle>
+          <CardDescription>Run-level model history stays available without duplicating the active model in the top summary.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {models.length === 0 ? <p className="text-sm text-muted-foreground">No model run data available yet.</p> : null}
+          {models.map((model) => (
+            <div key={model.model} className="rounded-xl border p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-medium">{model.model}</div>
+                <Badge variant="outline">{model.totalRuns} runs</Badge>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                Success {model.success} | Failed {model.failed} | Running {model.running}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">Success rate {model.successRate}%</div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
     </section>
+  );
+}
+
+function InputBlock({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
+      <input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 rounded-md border bg-background px-3 text-sm"
+      />
+    </div>
   );
 }

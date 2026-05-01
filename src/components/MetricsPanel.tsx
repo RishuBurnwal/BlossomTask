@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, CalendarDays, Clock3, Cpu, ListChecks } from "lucide-react";
+import { BarChart3, CalendarDays, Clock3, ListChecks, TimerReset } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 
@@ -28,8 +28,8 @@ export function MetricsPanel() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2"><Cpu className="h-4 w-4" /> Active Model</CardDescription>
-            <CardTitle className="text-base">{summary?.activeModel ?? "n/a"}</CardTitle>
+            <CardDescription className="flex items-center gap-2"><TimerReset className="h-4 w-4" /> Session Window</CardDescription>
+            <CardTitle className="text-base">{summary?.sessionTtlMinutes ?? 0} min</CardTitle>
           </CardHeader>
         </Card>
         <Card>

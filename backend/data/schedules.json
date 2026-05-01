@@ -3,7 +3,7 @@
     "id": "schedule_1774486613530_jv1cv9",
     "name": "Default Sequential Pipeline",
     "cron": "*/30 * * * *",
-    "enabled": false,
+    "enabled": true,
     "sequence": [
       {
         "scriptId": "get-task"
@@ -16,6 +16,10 @@
         "option": "batch"
       },
       {
+        "scriptId": "reverify",
+        "option": "both"
+      },
+      {
         "scriptId": "updater"
       },
       {
@@ -23,6 +27,13 @@
       }
     ],
     "createdAt": "2026-03-26T00:56:53.530Z",
-    "updatedAt": "2026-04-27T21:53:29.931Z"
+    "updatedAt": "2026-05-01T00:49:22.570Z",
+    "nextRunAt": "2026-05-01T01:19:22.567Z",
+    "lastTriggeredAt": "2026-05-01T00:49:10.438Z",
+    "lastStatus": "success",
+    "lastJobId": "job_1777596550516_ve58ab",
+    "lastStartedAt": "2026-05-01T00:49:10.438Z",
+    "lastFinishedAt": "2026-05-01T00:49:22.567Z",
+    "lastCooldownStartedAt": "2026-05-01T00:49:22.567Z"
   }
 ]

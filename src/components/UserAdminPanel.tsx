@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, UserPlus, ShieldCheck, KeyRound, Ban, Timer, Globe2, LogOut } from "lucide-react";
+import { Trash2, UserPlus, ShieldCheck, KeyRound, Ban, Timer, Globe2, LogOut, CloudUpload, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +21,8 @@ export function UserAdminPanel() {
   const [newPassword, setNewPassword] = useState("");
   const [sessionTtl, setSessionTtl] = useState<number | null>(null);
   const [configuredTimezone, setConfiguredTimezone] = useState("UTC");
+  const [syncFolderName, setSyncFolderName] = useState("Blossom flower");
+  const [syncCredentialsPath, setSyncCredentialsPath] = useState("");
 
   const { data: authData } = useQuery({
     queryKey: ["auth"],
@@ -41,6 +43,13 @@ export function UserAdminPanel() {
     refetchInterval: 15_000,
   });
 
+  const { data: googleSyncData } = useQuery({
+    queryKey: ["google-sync"],
+    queryFn: api.googleSync,
+    enabled: authData?.user?.role === "admin",
+    refetchInterval: 20_000,
+  });
+
   const currentTtl = authData?.sessionTtlMinutes ?? 480;
   const currentTimezone = authData?.configuredTimezone || "UTC";
 
@@ -53,6 +62,15 @@ export function UserAdminPanel() {
   useEffect(() => {
     setConfiguredTimezone(currentTimezone);
   }, [currentTimezone]);
+
+  useEffect(() => {
+    if (googleSyncData?.folderName) {
+      setSyncFolderName(googleSyncData.folderName);
+    }
+    if (googleSyncData?.credentialsPath !== undefined) {
+      setSyncCredentialsPath(googleSyncData.credentialsPath);
+    }
+  }, [googleSyncData]);
 
   const createUserMutation = useMutation({
     mutationFn: () => api.createUser({ username, password, role }),
@@ -80,7 +98,7 @@ export function UserAdminPanel() {
     mutationFn: ({ userId, password }: { userId: string; password: string }) =>
       api.updateUserPassword(userId, password),
     onSuccess: () => {
-      toast.success("Password updated â€” all sessions for this user have been revoked");
+      toast.success("Password updated, and all sessions for this user have been revoked");
       setPasswordChangeUserId(null);
       setNewPassword("");
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -105,6 +123,29 @@ export function UserAdminPanel() {
       queryClient.invalidateQueries({ queryKey: ["auth"] });
     },
     onError: (error) => toast.error(error.message || "Failed to update timezone"),
+  });
+
+  const saveGoogleSyncMutation = useMutation({
+    mutationFn: () =>
+      api.saveGoogleSyncConfig({
+        enabled: true,
+        folderName: syncFolderName,
+        credentialsPath: syncCredentialsPath,
+      }),
+    onSuccess: () => {
+      toast.success("Google Drive sync saved");
+      queryClient.invalidateQueries({ queryKey: ["google-sync"] });
+    },
+    onError: (error) => toast.error(error.message || "Failed to save Google sync"),
+  });
+
+  const runGoogleSyncMutation = useMutation({
+    mutationFn: () => api.runGoogleSync({ mode: "approved-runtime" }),
+    onSuccess: (data) => {
+      toast.success(`Google sync complete: ${data.uploadedFiles ?? data.lastSyncedFiles} files`);
+      queryClient.invalidateQueries({ queryKey: ["google-sync"] });
+    },
+    onError: (error) => toast.error(error.message || "Failed to run Google sync"),
   });
 
   const revokeSessionMutation = useMutation({
@@ -144,7 +185,7 @@ export function UserAdminPanel() {
   };
 
   return (
-    <section className="mx-auto max-w-7xl px-4 pt-6 lg:px-6">
+    <section>
       <Card className="border-emerald-500/20 bg-card/95 shadow-lg">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -157,12 +198,12 @@ export function UserAdminPanel() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-            <div className="space-y-3 rounded-lg border p-4">
+            <div className="min-w-0 space-y-3 rounded-lg border p-4">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <UserPlus className="h-4 w-4" />
                 Add User
               </div>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 lg:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="new-username">Username</Label>
                   <Input id="new-username" value={username} onChange={(event) => setUsername(event.target.value)} />
@@ -185,6 +226,7 @@ export function UserAdminPanel() {
                 </div>
               </div>
               <Button
+                className="w-full lg:w-auto"
                 onClick={() => createUserMutation.mutate()}
                 disabled={createUserMutation.isPending || !username || !password}
               >
@@ -222,7 +264,7 @@ export function UserAdminPanel() {
                   </Button>
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  Current: {currentTtl} min ({(currentTtl / 60).toFixed(1)} hours). Sessions expire after inactivity.
+                  Current: {currentTtl} min ({(currentTtl / 60).toFixed(1)} hours). Sessions now expire after this sign-in window even if the dashboard keeps refreshing.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -262,6 +304,54 @@ export function UserAdminPanel() {
                     Save
                   </Button>
                 </div>
+              </div>
+              <div className="space-y-3 rounded-lg border bg-background px-3 py-3">
+                <div className="flex items-center gap-2 text-foreground">
+                  <CloudUpload className="h-4 w-4" />
+                  Google Drive Sync
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Drive Folder</Label>
+                  <Input value={syncFolderName} onChange={(event) => setSyncFolderName(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Service JSON Path</Label>
+                  <Input value={syncCredentialsPath} onChange={(event) => setSyncCredentialsPath(event.target.value)} />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant={googleSyncData?.configured ? "default" : "secondary"}>
+                    {googleSyncData?.configured ? "Configured" : "Missing JSON"}
+                  </Badge>
+                  <Badge variant={googleSyncData?.enabled ? "default" : "secondary"}>
+                    {googleSyncData?.enabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  <p>Service: {googleSyncData?.serviceEmail || "Not detected yet"}</p>
+                  <p>Last sync: {formatDateTime(googleSyncData?.lastSyncAt, currentTimezone)}</p>
+                  <p>Last scope: {googleSyncData?.lastSyncScope || "/"}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => saveGoogleSyncMutation.mutate()}
+                    disabled={saveGoogleSyncMutation.isPending || !syncFolderName || !syncCredentialsPath}
+                  >
+                    Save Sync
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => runGoogleSyncMutation.mutate()}
+                    disabled={runGoogleSyncMutation.isPending || !googleSyncData?.configured}
+                  >
+                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${runGoogleSyncMutation.isPending ? "animate-spin" : ""}`} />
+                    Sync Now
+                  </Button>
+                </div>
+                {googleSyncData?.lastError ? (
+                  <p className="text-[10px] text-destructive">{googleSyncData.lastError}</p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -392,7 +482,7 @@ export function UserAdminPanel() {
                         </div>
                       </div>
                       <p className="mt-1 text-[10px] text-muted-foreground">
-                        Created: {formatDateTime(session.createdAt, currentTimezone)} Â· Last seen: {formatDateTime(session.lastSeenAt, currentTimezone)}
+                        Created: {formatDateTime(session.createdAt, currentTimezone)} | Last seen: {formatDateTime(session.lastSeenAt, currentTimezone)}
                       </p>
                     </div>
                   );

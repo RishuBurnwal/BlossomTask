@@ -2,51 +2,98 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
-  ChevronDown,
-  ChevronUp,
-  Clock,
+  Bot,
   Globe2,
+  LayoutPanelLeft,
+  LogOut,
   Moon,
   Play,
-  Power,
-  Settings2,
+  RefreshCw,
+  Save,
   ShieldCheck,
   Sun,
-  Trash2,
-  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Slider } from "@/components/ui/slider";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { useTheme } from "@/contexts/ThemeContext";
 import { api } from "@/lib/api";
-import { formatDateTime, formatTimeZoneLabel, GMT_TIMEZONE_OPTIONS } from "@/lib/time";
+import { formatCountdown, formatDateTime, formatTimeZoneLabel, GMT_TIMEZONE_OPTIONS } from "@/lib/time";
+import type { PipelineStatus } from "@/lib/types";
 import { toast } from "sonner";
-import type { Job, PipelineStatus } from "@/lib/types";
 
-function lastScheduleTimestamp(job: Job): string | null {
-  return job.finishedAt || job.startedAt || job.createdAt || null;
+type OverviewCardProps = {
+  label: string;
+  value: string;
+  detail: string;
+};
+
+function OverviewCard({ label, value, detail }: OverviewCardProps) {
+  return (
+    <Card className="border-border/70 bg-card/90">
+      <CardHeader className="space-y-1 pb-2">
+        <CardDescription className="text-[11px] uppercase tracking-[0.22em]">{label}</CardDescription>
+        <CardTitle className="text-xl">{value}</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0 text-xs text-muted-foreground">{detail}</CardContent>
+    </Card>
+  );
+}
+
+function buildPipelineSequence(reverifySource: string) {
+  return [
+    { scriptId: "get-task" },
+    { scriptId: "get-order-inquiry" },
+    { scriptId: "funeral-finder" },
+    { scriptId: "reverify", option: reverifySource || "both" },
+    { scriptId: "updater", option: "complete" },
+    { scriptId: "closing-task" },
+  ];
+}
+
+function buildScheduleCron(intervalValue: string, intervalUnit: "minutes" | "seconds") {
+  const normalizedValue = Math.max(1, Number(intervalValue || "1"));
+  return intervalUnit === "seconds"
+    ? `*/${normalizedValue} * * * * *`
+    : `*/${normalizedValue} * * * *`;
+}
+
+function parseScheduleCron(cron: string) {
+  const parts = String(cron || "").trim().split(/\s+/);
+  if (parts.length === 6) {
+    const match = parts[0]?.match(/^\*\/(\d{1,3})$/);
+    if (match?.[1]) {
+      return { value: match[1], unit: "seconds" as const };
+    }
+  }
+  if (parts.length === 5) {
+    const match = parts[0]?.match(/^\*\/(\d{1,3})$/);
+    if (match?.[1]) {
+      return { value: match[1], unit: "minutes" as const };
+    }
+  }
+  return { value: "30", unit: "minutes" as const };
+}
+
+function describeScheduleInterval(schedule: { intervalUnit?: "minutes" | "seconds"; intervalValue?: number; cron: string }) {
+  const parsed = parseScheduleCron(schedule.cron);
+  const unit = schedule.intervalUnit || parsed.unit;
+  const value = schedule.intervalValue || Number(parsed.value || "1");
+  return `Every ${value} ${value === 1 ? unit.slice(0, -1) : unit}`;
 }
 
 export function DashboardHeader() {
   const queryClient = useQueryClient();
-  const { isDark, toggleDark, darknessLevel, setDarknessLevel } = useTheme();
+  const { isDark, toggleDark } = useTheme();
   const [cronFrequency, setCronFrequency] = useState("30");
-  const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
-  const [selectedHistoryJobId, setSelectedHistoryJobId] = useState<string | null>(null);
-  const [showPreflight, setShowPreflight] = useState(false);
+  const [cronUnit, setCronUnit] = useState<"minutes" | "seconds">("minutes");
   const [pipelineReverifySource, setPipelineReverifySource] = useState("both");
   const [selectedModel, setSelectedModel] = useState("sonar-pro");
-  const [reverifyDefaultProvider, setReverifyDefaultProvider] = useState<"perplexity" | "openai">("perplexity");
   const [configuredTimezone, setConfiguredTimezone] = useState("UTC");
-  const [liveClock, setLiveClock] = useState(new Date().toISOString());
-
-  // Tick live clock every second
-  useEffect(() => {
-    const interval = setInterval(() => setLiveClock(new Date().toISOString()), 1000);
-    return () => clearInterval(interval);
-  }, []);
+  const [reverifyDefaultProvider, setReverifyDefaultProvider] = useState<"perplexity" | "openai">("perplexity");
 
   const { data: authData } = useQuery({
     queryKey: ["auth"],
@@ -57,27 +104,24 @@ export function DashboardHeader() {
   const { data: pipelineStatusData } = useQuery({
     queryKey: ["pipeline-status"],
     queryFn: api.pipelineStatus,
-    refetchInterval: 3000,
+    refetchInterval: 2000,
   });
 
   const { data: scheduleData } = useQuery({
     queryKey: ["schedules"],
     queryFn: api.schedules,
-    refetchInterval: 3000,
+    refetchInterval: 5000,
   });
 
+  const pipelineStatus = pipelineStatusData as PipelineStatus | undefined;
+  const schedules = scheduleData?.schedules ?? [];
   const authUser = authData?.user;
   const isAdmin = authUser?.role === "admin";
   const activeModel = authData?.activeModel || "sonar-pro";
   const availableModels = authData?.availableModels ?? [activeModel];
   const currentTimezone = authData?.configuredTimezone || "UTC";
   const currentReverifyDefaultProvider = authData?.reverifyDefaultProvider || "perplexity";
-  const pipelineStatus = pipelineStatusData as PipelineStatus | undefined;
-  const pipelineState = pipelineStatus?.state ?? "idle";
   const executionLocked = (pipelineStatus?.activeWorkloads ?? 0) > 0;
-  const schedules = scheduleData?.schedules ?? [];
-  const activeScheduleId = selectedScheduleId || schedules[0]?.id || "";
-  const selectedSchedule = schedules.find((item) => item.id === activeScheduleId) || schedules[0] || null;
 
   useEffect(() => {
     setSelectedModel(activeModel);
@@ -91,64 +135,45 @@ export function DashboardHeader() {
     setReverifyDefaultProvider(currentReverifyDefaultProvider);
   }, [currentReverifyDefaultProvider]);
 
-  const { data: scheduleHistoryData } = useQuery({
-    queryKey: ["schedule-history", activeScheduleId],
-    queryFn: () => api.scheduleHistory(activeScheduleId),
-    enabled: Boolean(activeScheduleId),
-    refetchInterval: 8000,
-  });
-
-  const { data: selectedJobData } = useQuery({
-    queryKey: ["job", selectedHistoryJobId],
-    queryFn: () => api.job(selectedHistoryJobId as string),
-    enabled: Boolean(selectedHistoryJobId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.job?.status;
-      if (!status || ["success", "failed", "cancelled"].includes(status)) {
-        return false;
-      }
-      return 2000;
-    },
-  });
-
-  const runHistoryItems = useMemo(() => scheduleHistoryData?.history ?? [], [scheduleHistoryData?.history]);
+  useEffect(() => {
+    const firstCron = schedules[0]?.cron || "";
+    const parsed = parseScheduleCron(firstCron);
+    setCronFrequency(parsed.value);
+    setCronUnit(parsed.unit);
+  }, [schedules]);
 
   const runPipeline = useMutation({
-    mutationFn: () => api.runPipeline([
-      { scriptId: "get-task" },
-      { scriptId: "get-order-inquiry" },
-      { scriptId: "funeral-finder" },
-      { scriptId: "reverify", option: pipelineReverifySource },
-      { scriptId: "updater", option: "complete" },
-      { scriptId: "closing-task" },
-    ]),
-    onSuccess: ({ jobId }) => toast.success(`Pipeline started (${jobId})`),
+    mutationFn: () => api.runPipeline(buildPipelineSequence(pipelineReverifySource)),
+    onSuccess: ({ jobId }) => {
+      toast.success(`Pipeline started (${jobId})`);
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
+    },
     onError: (error) => toast.error(error.message || "Failed to start pipeline"),
   });
 
   const saveSchedule = useMutation({
     mutationFn: async () => {
-      const cronExpression = `*/${Math.max(1, Number(cronFrequency || "30"))} * * * *`;
-      const payload = {
-        name: selectedSchedule?.name || "Default Sequential Pipeline",
-        cron: cronExpression,
-        enabled: selectedSchedule?.enabled ?? true,
-      };
-
-      if (selectedSchedule) {
-        return api.updateSchedule(selectedSchedule.id, payload);
+      const cron = buildScheduleCron(cronFrequency, cronUnit);
+      const current = schedules[0];
+      if (current) {
+        return api.updateSchedule(current.id, {
+          cron,
+          enabled: current.enabled,
+          sequence: buildPipelineSequence(pipelineReverifySource),
+        });
       }
-
-      const existingDefault = schedules.find((item) => item.name === "Default Sequential Pipeline");
-      if (existingDefault) {
-        return api.updateSchedule(existingDefault.id, { ...payload, enabled: existingDefault.enabled });
-      }
-
-      return api.createSchedule(payload);
+      return api.createSchedule({
+        name: "Default Sequential Pipeline",
+        cron,
+        enabled: true,
+        sequence: buildPipelineSequence(pipelineReverifySource),
+      });
     },
     onSuccess: () => {
-      toast.success("Cron schedule saved");
+      toast.success("Cooldown schedule saved");
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
     },
     onError: (error) => toast.error(error.message || "Failed to save schedule"),
   });
@@ -157,59 +182,57 @@ export function DashboardHeader() {
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.updateSchedule(id, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
-      queryClient.invalidateQueries({ queryKey: ["schedule-history"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
     },
     onError: (error) => toast.error(error.message || "Failed to update schedule"),
-  });
-
-  const deleteSchedule = useMutation({
-    mutationFn: (id: string) => api.deleteSchedule(id),
-    onSuccess: () => {
-      toast.success("Schedule deleted");
-      setSelectedScheduleId(null);
-      queryClient.invalidateQueries({ queryKey: ["schedules"] });
-      queryClient.invalidateQueries({ queryKey: ["schedule-history"] });
-    },
-    onError: (error) => toast.error(error.message || "Failed to delete schedule"),
   });
 
   const triggerSchedule = useMutation({
     mutationFn: (id: string) => api.triggerSchedule(id),
     onSuccess: ({ jobId, started, skipped, activeJobId }) => {
       if (!started || skipped) {
-        toast.info(
-          activeJobId
-            ? `Schedule skipped because another workload is active (${activeJobId})`
-            : `Schedule skipped because another workload is active (${jobId})`,
-        );
+        toast.info(`Schedule delayed because another workload is active (${activeJobId || jobId || "busy"})`);
       } else {
         toast.success(`Schedule triggered (${jobId})`);
       }
-      queryClient.invalidateQueries({ queryKey: ["schedule-history"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
     },
     onError: (error) => toast.error(error.message || "Failed to trigger schedule"),
   });
 
-  const clearHistory = useMutation({
-    mutationFn: () => api.clearJobs(),
+  const setModelMutation = useMutation({
+    mutationFn: (model: string) => api.setModel(model),
     onSuccess: () => {
-      setSelectedHistoryJobId(null);
-      toast.success("Run history cleared");
-      queryClient.invalidateQueries({ queryKey: ["schedule-history"] });
+      toast.success("Model updated");
+      queryClient.invalidateQueries({ queryKey: ["auth"] });
     },
-    onError: (error) => toast.error(error.message || "Failed to clear run history"),
+    onError: (error) => toast.error(error.message || "Failed to update model"),
+  });
+
+  const setTimezoneMutation = useMutation({
+    mutationFn: (timeZone: string) => api.setTimezone(timeZone),
+    onSuccess: () => {
+      toast.success("Timezone updated");
+      queryClient.invalidateQueries({ queryKey: ["auth"] });
+    },
+    onError: (error) => toast.error(error.message || "Failed to update timezone"),
+  });
+
+  const setReverifyProviderMutation = useMutation({
+    mutationFn: (provider: "perplexity" | "openai") => api.setReverifyProvider(provider),
+    onSuccess: () => {
+      toast.success("Reverify preference updated");
+      queryClient.invalidateQueries({ queryKey: ["auth"] });
+    },
+    onError: (error) => toast.error(error.message || "Failed to update reverify preference"),
   });
 
   const preflightMutation = useMutation({
     mutationFn: () => api.preflight(),
     onSuccess: (report) => {
-      setShowPreflight(true);
-      if (report.ok) {
-        toast.success("Preflight passed");
-      } else {
-        toast.error("Preflight found blocking issues");
-      }
+      toast[report.ok ? "success" : "error"](report.ok ? "Preflight passed" : "Preflight needs attention");
     },
     onError: (error) => toast.error(error.message || "Failed to run preflight"),
   });
@@ -217,412 +240,357 @@ export function DashboardHeader() {
   const logoutMutation = useMutation({
     mutationFn: () => api.logout(),
     onSuccess: () => {
-      queryClient.removeQueries({ queryKey: ["auth"] });
+      queryClient.setQueryData(["auth"], null);
       queryClient.invalidateQueries();
-      toast.success("Signed out");
     },
     onError: (error) => toast.error(error.message || "Failed to sign out"),
   });
 
-  const setModelMutation = useMutation({
-    mutationFn: (model: string) => api.setModel(model),
-    onSuccess: (response) => {
+  const clearOtherSessionsMutation = useMutation({
+    mutationFn: () => api.clearOtherSessions(),
+    onSuccess: ({ removed }) => {
+      toast.success(removed > 0 ? `${removed} other sessions cleared` : "No other sessions were active");
       queryClient.invalidateQueries({ queryKey: ["auth"] });
-      toast.success(`Active model set to ${response.activeModel}`);
     },
-    onError: (error) => toast.error(error.message || "Failed to update model"),
+    onError: (error) => toast.error(error.message || "Failed to clear other sessions"),
   });
 
-  const setTimezoneMutation = useMutation({
-    mutationFn: (timeZone: string) => api.setTimezone(timeZone),
-    onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ["auth"] });
-      toast.success(`Timezone updated to ${response.configuredTimezone}`);
+  const logoutAllMutation = useMutation({
+    mutationFn: () => api.logoutAll(),
+    onSuccess: () => {
+      queryClient.setQueryData(["auth"], null);
+      queryClient.invalidateQueries();
     },
-    onError: (error) => toast.error(error.message || "Failed to update timezone"),
+    onError: (error) => toast.error(error.message || "Failed to clear all sessions"),
   });
 
-  const setReverifyProviderMutation = useMutation({
-    mutationFn: (provider: "perplexity" | "openai") => api.setReverifyProvider(provider),
-    onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ["auth"] });
-      toast.success(`Reverify default set to ${response.reverifyDefaultProvider}`);
-    },
-    onError: (error) => toast.error(error.message || "Failed to update reverify provider"),
-  });
+  const statusBadge = useMemo(() => {
+    const state = pipelineStatus?.state || "idle";
+    if (state === "running") return { label: "Running", className: "bg-blue-500/15 text-blue-600" };
+    if (state === "disabled") return { label: "Disabled", className: "bg-zinc-500/15 text-zinc-600" };
+    return { label: "Idle", className: "bg-emerald-500/15 text-emerald-600" };
+  }, [pipelineStatus?.state]);
 
-  const toggledScheduleId = toggleSchedule.variables?.id;
+  const nextScheduleLabel = pipelineStatus?.nextSchedule?.nextRunAt
+    ? pipelineStatus.nextSchedule.lastStatus === "running"
+      ? "Running now"
+      : formatDateTime(pipelineStatus.nextSchedule.nextRunAt, currentTimezone, {
+          month: "short",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+    : "Not scheduled";
+
+  const nextScheduleDetail = pipelineStatus?.nextSchedule?.name
+    ? pipelineStatus.nextSchedule.lastStatus === "running"
+      ? `${pipelineStatus.nextSchedule.name} cooldown starts after the current pipeline finishes`
+      : `${pipelineStatus.nextSchedule.name} in ${formatCountdown(pipelineStatus.nextScheduleInSeconds)}`
+    : "No enabled schedule";
 
   return (
-    <div className="relative z-10 border-b bg-background shadow-sm">
-      <header className="px-4 py-3 lg:px-6">
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-              <Settings2 className="h-5 w-5 text-primary-foreground" />
+    <section className="space-y-4">
+      <div className="rounded-2xl border bg-card/90 p-4 shadow-sm lg:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${statusBadge.className}`}>
+              <Activity className={`h-3.5 w-3.5 ${pipelineStatus?.state === "running" ? "animate-pulse" : ""}`} />
+              {statusBadge.label}
             </div>
-            <div>
-              <h1 className="text-lg font-semibold tracking-tight">DataFlow Pipeline</h1>
-              <p className="text-xs text-muted-foreground">Processing Dashboard</p>
+            <div className="rounded-full border px-3 py-1 text-xs text-muted-foreground">
+              {pipelineStatus?.activeWorkloads ?? 0} active workloads
             </div>
-            <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-              pipelineState === "running"
-                ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
-                : pipelineState === "disabled"
-                  ? "bg-zinc-500/15 text-zinc-500"
-                  : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-            }`}>
-              <Activity className={`h-3 w-3 ${pipelineState === "running" ? "animate-pulse" : ""}`} />
-              {pipelineState === "running" ? "Running" : pipelineState === "disabled" ? "All Disabled" : "Idle"}
-            </div>
-            <div className="rounded-lg bg-secondary px-3 py-2 text-xs text-muted-foreground">
-              Schedules: {schedules.length}
+            <div className="rounded-full border px-3 py-1 text-xs text-muted-foreground">
+              {nextScheduleDetail}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-            <div className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2">
-              <Clock className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs font-medium text-secondary-foreground">Cron</span>
-              <span className="text-xs text-muted-foreground">Every</span>
-              <input
-                type="number"
-                value={cronFrequency}
-                onChange={(e) => setCronFrequency(e.target.value)}
-                className="w-14 rounded-md border bg-background px-2 py-1 text-xs text-foreground"
-                min="1"
-              />
-              <span className="text-xs text-muted-foreground">min</span>
-              <Button onClick={() => saveSchedule.mutate()} variant="secondary" size="sm" className="h-7 px-2 text-[11px]">
-                Save Cron
-              </Button>
-            </div>
-
-            <Button onClick={() => runPipeline.mutate()} disabled={runPipeline.isPending || executionLocked} className="gap-2" size="sm">
-              <Play className="h-3.5 w-3.5" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => runPipeline.mutate()} disabled={runPipeline.isPending || executionLocked} className="gap-2">
+              <Play className="h-4 w-4" />
               {runPipeline.isPending ? "Starting..." : executionLocked ? "Pipeline Busy" : "Run Full Pipeline"}
             </Button>
-
-            <div className="flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5">
-              <span className="text-[10px] text-muted-foreground whitespace-nowrap">Reverify:</span>
-              <select
-                value={pipelineReverifySource}
-                onChange={(e) => setPipelineReverifySource(e.target.value)}
-                className="h-6 rounded border bg-background px-1.5 text-[10px] text-foreground"
-              >
-                <option value="both">Both</option>
-                <option value="not_found">Not Found Only</option>
-                <option value="review">Review Only</option>
-              </select>
-            </div>
-
-            {isAdmin && (
-              <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2">
-                <span className="text-[10px] uppercase tracking-[0.28em] text-muted-foreground">Reverify</span>
-                <Select value={reverifyDefaultProvider} onValueChange={(value) => setReverifyDefaultProvider(value as "perplexity" | "openai")}>
-                  <SelectTrigger className="h-8 w-[170px] text-xs">
-                    <SelectValue placeholder="Default provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="perplexity">Perplexity First</SelectItem>
-                    <SelectItem value="openai">OpenAI First</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setReverifyProviderMutation.mutate(reverifyDefaultProvider)}
-                  disabled={setReverifyProviderMutation.isPending || reverifyDefaultProvider === currentReverifyDefaultProvider}
-                >
-                  Save
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" className="gap-2">
+                  <LayoutPanelLeft className="h-4 w-4" />
+                  Controls
                 </Button>
-              </div>
-            )}
+              </SheetTrigger>
+              <SheetContent side="left" className="w-full overflow-y-auto sm:max-w-xl">
+                <SheetHeader>
+                  <SheetTitle>Dashboard Controls</SheetTitle>
+                  <SheetDescription>
+                    Scheduling, runtime settings, and the tools that used to sit across the header now live here.
+                  </SheetDescription>
+                </SheetHeader>
 
-            <Button
-              onClick={() => preflightMutation.mutate()}
-              disabled={preflightMutation.isPending}
-              variant="outline"
-              className="gap-2"
-              size="sm"
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              {preflightMutation.isPending ? "Checking..." : "Preflight Check"}
-            </Button>
-
-            {isAdmin && (
-              <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2">
-                <span className="text-[10px] uppercase tracking-[0.28em] text-muted-foreground">Model</span>
-                <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger className="h-8 w-[180px] text-xs">
-                    <SelectValue placeholder="Select model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableModels.map((model) => (
-                      <SelectItem key={model} value={model}>
-                        {model}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setModelMutation.mutate(selectedModel)}
-                  disabled={setModelMutation.isPending || selectedModel === activeModel}
-                >
-                  Save
-                </Button>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground">
-              <span>{authUser ? `${authUser.username} (${authUser.role})` : "Guest"}</span>
-              <span className="rounded-full border px-2 py-0.5">{activeModel}</span>
-              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => logoutMutation.mutate()}>
-                Sign out
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 xl:col-span-2">
-            <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground">
-              <Globe2 className="h-3.5 w-3.5" />
-              <span className="tabular-nums">{formatDateTime(liveClock, currentTimezone)}</span>
-              <span className="rounded-full border px-2 py-0.5 text-[10px]">
-                {formatTimeZoneLabel(currentTimezone)}
-              </span>
-            </div>
-
-            {isAdmin && (
-              <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2">
-                <Select value={configuredTimezone} onValueChange={setConfiguredTimezone}>
-                  <SelectTrigger className="h-8 w-[220px] text-xs">
-                    <SelectValue placeholder="Timezone" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GMT_TIMEZONE_OPTIONS.map((timeZone) => (
-                      <SelectItem key={timeZone} value={timeZone}>
-                        {formatTimeZoneLabel(timeZone)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setTimezoneMutation.mutate(configuredTimezone)}
-                  disabled={setTimezoneMutation.isPending || configuredTimezone === currentTimezone}
-                >
-                  Save TZ
-                </Button>
-              </div>
-            )}
-
-            <div className="ml-auto flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Sun className="h-4 w-4 text-muted-foreground" />
-                <Switch checked={isDark} onCheckedChange={toggleDark} />
-                <Moon className="h-4 w-4 text-muted-foreground" />
-              </div>
-              {isDark && (
-                <div className="flex items-center gap-2 animate-fade-in">
-                  <span className="text-xs text-muted-foreground">Darkness</span>
-                  <Slider
-                    value={[darknessLevel]}
-                    onValueChange={([v]) => setDarknessLevel(v)}
-                    min={0.5}
-                    max={1.5}
-                    step={0.1}
-                    className="w-24"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="border-t bg-background px-4 py-3 lg:px-6">
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div className="rounded-lg border bg-card p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-muted-foreground">Saved Schedules</h2>
-              {selectedScheduleId && (
-                <button
-                  onClick={() => setSelectedScheduleId(null)}
-                  className="text-[11px] text-muted-foreground hover:text-foreground"
-                >
-                  Clear Edit
-                </button>
-              )}
-            </div>
-            <div className="max-h-40 space-y-2 overflow-auto">
-              {schedules.length === 0 && (
-                <p className="text-xs text-muted-foreground">No schedules saved yet.</p>
-              )}
-              {schedules.map((schedule) => (
-                <div key={schedule.id} className="space-y-2 rounded-md border bg-background px-2 py-2 text-xs">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setSelectedScheduleId(schedule.id);
-                        const interval = Number(schedule.cron.split("/")[1]?.split(" ")[0] || "30");
-                        setCronFrequency(String(Number.isFinite(interval) ? interval : 30));
-                      }}
-                      className="font-medium hover:underline"
-                    >
-                      {schedule.name}
-                    </button>
-                    <span className="rounded-full border px-2 py-0.5 text-[10px]">{schedule.cron}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] ${
-                      schedule.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
-                    }`}>
-                      {schedule.enabled ? "enabled" : "disabled"}
-                    </span>
-                    <button onClick={() => triggerSchedule.mutate(schedule.id)} className="ml-auto rounded border px-1.5 py-0.5 hover:bg-accent">
-                      <Zap className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={() => toggleSchedule.mutate({ id: schedule.id, enabled: !schedule.enabled })}
-                      disabled={toggleSchedule.isPending && toggledScheduleId === schedule.id}
-                      className="rounded border px-1.5 py-0.5 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <div className="flex items-center gap-1">
-                        <Power className="h-3 w-3" />
-                        <span>{schedule.enabled ? "Stop Cron" : "Start Cron"}</span>
+                <div className="mt-6 space-y-5">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Pipeline</CardTitle>
+                      <CardDescription>Choose the reverify source and start a full run.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-muted-foreground">Reverify source</div>
+                        <Select value={pipelineReverifySource} onValueChange={setPipelineReverifySource}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select source" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="both">Both</SelectItem>
+                            <SelectItem value="not_found">Not Found Only</SelectItem>
+                            <SelectItem value="review">Review Only</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
-                    </button>
-                    <button onClick={() => deleteSchedule.mutate(schedule.id)} className="rounded border px-1.5 py-0.5 hover:bg-accent">
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                    <span>Last trigger: {formatDateTime(schedule.lastTriggeredAt, currentTimezone)}</span>
-                    <span>Last finish: {formatDateTime(schedule.lastFinishedAt, currentTimezone)}</span>
-                    <span>Status: {schedule.lastStatus || "Never"}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          <div className="rounded-lg border bg-card p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-muted-foreground">Run History</h2>
-              <button
-                onClick={() => clearHistory.mutate()}
-                className="rounded border bg-background px-2 py-1 text-[11px] hover:bg-accent"
-                disabled={clearHistory.isPending}
-              >
-                {clearHistory.isPending ? "Clearing..." : "Clear History"}
-              </button>
-            </div>
-            <div className="max-h-40 space-y-2 overflow-auto">
-              {runHistoryItems.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {selectedSchedule ? "No real runs recorded for this schedule yet." : "No schedules selected."}
-                </p>
-              )}
-              {runHistoryItems.map((job) => (
-                <button
-                  key={job.id}
-                  onClick={() => setSelectedHistoryJobId((current) => (current === job.id ? null : job.id))}
-                  className="flex w-full items-center gap-2 rounded-md border bg-background px-2 py-1.5 text-xs hover:bg-accent/40"
-                >
-                  <span className="font-mono">{job.id}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${
-                    job.status === "success"
-                      ? "bg-success/15 text-success"
-                      : job.status === "failed"
-                        ? "bg-destructive/15 text-destructive"
-                        : "bg-secondary text-secondary-foreground"
-                  }`}>
-                    {job.status}
-                  </span>
-                  {job.trigger?.skipped && (
-                    <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] text-warning">
-                      skipped
-                    </span>
-                  )}
-                  <span className="ml-auto text-muted-foreground">
-                    {formatDateTime(lastScheduleTimestamp(job), currentTimezone)}
-                  </span>
-                  {selectedHistoryJobId === job.id ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                </button>
-              ))}
-            </div>
+                      {isAdmin && (
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-muted-foreground">Model selection</div>
+                          <div className="flex gap-2">
+                            <Select value={selectedModel} onValueChange={setSelectedModel}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select model" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableModels.map((model) => (
+                                  <SelectItem key={model} value={model}>
+                                    {model}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              variant="secondary"
+                              onClick={() => setModelMutation.mutate(selectedModel)}
+                              disabled={setModelMutation.isPending || selectedModel === activeModel}
+                            >
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      )}
 
-            {selectedHistoryJobId && (
-              <div className="mt-2 rounded-md border bg-background p-2 text-xs">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className="font-medium">Logs: {selectedHistoryJobId}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${
-                    selectedJobData?.job?.status === "success"
-                      ? "bg-success/15 text-success"
-                      : selectedJobData?.job?.status === "failed"
-                        ? "bg-destructive/15 text-destructive"
-                        : "bg-secondary text-secondary-foreground"
-                  }`}>
-                    {selectedJobData?.job?.status || "loading"}
-                  </span>
-                  {selectedJobData?.job?.trigger?.skipped && (
-                    <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] text-warning">
-                      skipped: {selectedJobData.job.trigger.skippedReason || "overlap"}
-                    </span>
-                  )}
-                  {typeof selectedJobData?.job?.progress === "number" && (
-                    <span className="text-muted-foreground">{selectedJobData.job.progress}%</span>
-                  )}
+                      <Button onClick={() => runPipeline.mutate()} disabled={runPipeline.isPending || executionLocked} className="w-full gap-2">
+                        <Play className="h-4 w-4" />
+                        {runPipeline.isPending ? "Starting..." : "Run Pipeline"}
+                      </Button>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Cron Schedule</CardTitle>
+                      <CardDescription>Each next run waits for the full pipeline to finish, then starts the cooldown timer.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-end gap-2">
+                        <div className="flex-1 space-y-2">
+                          <div className="text-xs font-medium text-muted-foreground">Run every</div>
+                          <div className="flex gap-2">
+                            <Input
+                              type="number"
+                              min="1"
+                              value={cronFrequency}
+                              onChange={(event) => setCronFrequency(event.target.value)}
+                            />
+                            <Select value={cronUnit} onValueChange={(value) => setCronUnit(value as "minutes" | "seconds")}>
+                              <SelectTrigger className="w-32">
+                                <SelectValue placeholder="Unit" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="minutes">Minutes</SelectItem>
+                                <SelectItem value="seconds">Seconds</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <Button onClick={() => saveSchedule.mutate()} disabled={saveSchedule.isPending} className="gap-2">
+                          <Save className="h-4 w-4" />
+                          Save
+                        </Button>
+                      </div>
+
+                      <div className="space-y-3">
+                        {schedules.length === 0 && <p className="text-sm text-muted-foreground">No schedules saved yet.</p>}
+                        {schedules.map((schedule) => (
+                          <div key={schedule.id} className="rounded-lg border p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div className="font-medium">{schedule.name}</div>
+                                <div className="text-xs text-muted-foreground">{describeScheduleInterval(schedule)} • {schedule.cron}</div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button variant="outline" size="sm" onClick={() => triggerSchedule.mutate(schedule.id)}>
+                                  Trigger
+                                </Button>
+                                <Button
+                                  variant={schedule.enabled ? "secondary" : "outline"}
+                                  size="sm"
+                                  onClick={() => toggleSchedule.mutate({ id: schedule.id, enabled: !schedule.enabled })}
+                                >
+                                  {schedule.enabled ? "Pause" : "Enable"}
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+                              <div>Next run: {formatDateTime(schedule.nextRunAt, currentTimezone)}</div>
+                              <div>Last trigger: {formatDateTime(schedule.lastTriggeredAt, currentTimezone)}</div>
+                              <div>Last finish: {formatDateTime(schedule.lastFinishedAt, currentTimezone)}</div>
+                              <div>Status: {schedule.lastStatus || "Never"}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Preferences</CardTitle>
+                      <CardDescription>Timezone, theme, and reverify behavior.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                          <Globe2 className="h-3.5 w-3.5" />
+                          Timezone
+                        </div>
+                        <div className="flex gap-2">
+                          <Select value={configuredTimezone} onValueChange={setConfiguredTimezone}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select timezone" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {GMT_TIMEZONE_OPTIONS.map((timeZone) => (
+                                <SelectItem key={timeZone} value={timeZone}>
+                                  {formatTimeZoneLabel(timeZone)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="secondary"
+                            onClick={() => setTimezoneMutation.mutate(configuredTimezone)}
+                            disabled={setTimezoneMutation.isPending || configuredTimezone === currentTimezone}
+                          >
+                            Save
+                          </Button>
+                        </div>
+                      </div>
+
+                      {isAdmin && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                            <Bot className="h-3.5 w-3.5" />
+                            Reverify default
+                          </div>
+                          <div className="flex gap-2">
+                            <Select value={reverifyDefaultProvider} onValueChange={(value) => setReverifyDefaultProvider(value as "perplexity" | "openai")}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Provider" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="perplexity">Perplexity First</SelectItem>
+                                <SelectItem value="openai">OpenAI First</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              variant="secondary"
+                              onClick={() => setReverifyProviderMutation.mutate(reverifyDefaultProvider)}
+                              disabled={setReverifyProviderMutation.isPending || reverifyDefaultProvider === currentReverifyDefaultProvider}
+                            >
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+                        <div className="flex items-center gap-2 text-sm">
+                          {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                          Theme mode
+                        </div>
+                        <Switch checked={isDark} onCheckedChange={toggleDark} />
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Utilities</CardTitle>
+                      <CardDescription>Refresh data, sign out safely, and clear stuck sessions.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Button onClick={() => preflightMutation.mutate()} disabled={preflightMutation.isPending} variant="outline" className="w-full gap-2">
+                        <ShieldCheck className="h-4 w-4" />
+                        {preflightMutation.isPending ? "Checking..." : "Run Preflight"}
+                      </Button>
+                      <Button onClick={() => queryClient.invalidateQueries()} variant="outline" className="w-full gap-2">
+                        <RefreshCw className="h-4 w-4" />
+                        Refresh Live Data
+                      </Button>
+                      <Button
+                        onClick={() => clearOtherSessionsMutation.mutate()}
+                        variant="outline"
+                        className="w-full gap-2"
+                        disabled={clearOtherSessionsMutation.isPending}
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        {clearOtherSessionsMutation.isPending ? "Clearing..." : "Clear Other Sessions"}
+                      </Button>
+                      <Button onClick={() => logoutMutation.mutate()} variant="destructive" className="w-full gap-2">
+                        <LogOut className="h-4 w-4" />
+                        Sign Out
+                      </Button>
+                      <Button
+                        onClick={() => logoutAllMutation.mutate()}
+                        variant="destructive"
+                        className="w-full gap-2"
+                        disabled={logoutAllMutation.isPending}
+                      >
+                        <LogOut className="h-4 w-4" />
+                        {logoutAllMutation.isPending ? "Clearing..." : "Sign Out Everywhere"}
+                      </Button>
+                    </CardContent>
+                  </Card>
                 </div>
-                {selectedJobData?.job?.trigger?.activeJobId && (
-                  <p className="mb-2 text-[11px] text-muted-foreground">
-                    Active pipeline: {selectedJobData.job.trigger.activeJobId}
-                  </p>
-                )}
-                <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-card p-2 text-[11px] text-muted-foreground">
-                  {selectedJobData?.job?.logs?.slice(-20).join("\n") || "No logs available"}
-                </pre>
-              </div>
-            )}
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
 
-        {showPreflight && preflightMutation.data && (
-          <div className="mt-3 rounded-lg border bg-card p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-muted-foreground">Preflight Report</h2>
-              <button
-                onClick={() => setShowPreflight(false)}
-                className="text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                Hide
-              </button>
-            </div>
-            <div className="space-y-2 text-xs">
-              {preflightMutation.data.checks.map((check) => (
-                <div key={check.key} className="rounded-md border bg-background px-2 py-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{check.label}</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] ${
-                        check.status === "pass"
-                          ? "bg-success/15 text-success"
-                          : check.status === "warn"
-                            ? "bg-warning/15 text-warning"
-                            : "bg-destructive/15 text-destructive"
-                      }`}
-                    >
-                      {check.status}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{check.details}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <OverviewCard
+            label="Next Cron"
+            value={nextScheduleLabel}
+            detail={nextScheduleDetail}
+          />
+          <OverviewCard
+            label="Next Pipeline"
+            value={pipelineStatus?.nextPipeline?.status ? pipelineStatus.nextPipeline.status.toUpperCase() : "Idle"}
+            detail={pipelineStatus?.nextPipeline?.id ? `${pipelineStatus.nextPipeline.id} in ${formatCountdown(pipelineStatus.nextPipelineInSeconds)}` : `Starts in ${formatCountdown(pipelineStatus?.nextPipelineInSeconds)}`}
+          />
+          <OverviewCard
+            label="Next Script"
+            value={pipelineStatus?.nextScript?.scriptId || "Waiting"}
+            detail={pipelineStatus?.nextScript?.status ? `${pipelineStatus.nextScript.status} • ${formatCountdown(pipelineStatus.nextScriptInSeconds)}` : `Starts in ${formatCountdown(pipelineStatus?.nextScriptInSeconds)}`}
+          />
+          <OverviewCard
+            label="Queue"
+            value={`${pipelineStatus?.queuedPipelines ?? 0}/${pipelineStatus?.queuedScripts ?? 0}`}
+            detail={`${pipelineStatus?.runningPipelines ?? 0} pipelines and ${pipelineStatus?.runningScripts ?? 0} scripts active`}
+          />
+          <OverviewCard
+            label="Local Time"
+            value={formatDateTime(new Date().toISOString(), currentTimezone, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            detail={formatTimeZoneLabel(currentTimezone)}
+          />
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
+

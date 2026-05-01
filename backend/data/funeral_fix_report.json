@@ -1,0 +1,58 @@
+{
+  "updatedAt": "2026-05-01",
+  "scope": [
+    "Funeral_Finder",
+    "reverify",
+    "admin-ui",
+    "alerts-ui",
+    "pipeline",
+    "cron-ui"
+  ],
+  "issues": [
+    {
+      "id": "funeral-excel-rebuild-crash",
+      "status": "fixed",
+      "details": "Excel rebuild now reads UTF-8 BOM safely, writes to a temporary .tmp.xlsx file, replaces atomically, and records runtime errors instead of crashing the script."
+    },
+    {
+      "id": "customer-instruction-fallback",
+      "status": "fixed",
+      "details": "When web data is missing but ord_instruct contains a usable schedule, both Funeral_Finder and reverify now normalize that schedule into structured fields and save the record as Customer."
+    },
+    {
+      "id": "customer-promoted-to-found",
+      "status": "fixed",
+      "details": "Customer-only schedule evidence is now kept in Customer status unless separate outside evidence confirms the service strongly enough for Found."
+    },
+    {
+      "id": "updater-csv-unicode-crash",
+      "status": "fixed",
+      "details": "Updater, Funeral_Finder, and reverify now retry CSV reads with utf-8-sig, utf-8, cp1252, and latin-1 so older Windows-encoded rows no longer break the pipeline with UnicodeDecodeError."
+    },
+    {
+      "id": "pipeline-live-preview-stale-job-binding",
+      "status": "fixed",
+      "details": "Script cards now switch to the newest live pipeline child job instead of staying pinned to an older completed job id, so running state, real duration, and live logs stay visible."
+    },
+    {
+      "id": "cron-pipeline-sequence-drift",
+      "status": "fixed",
+      "details": "Saved schedules now persist the same full pipeline sequence used by the Run Pipeline button, including the selected reverify source, so cron stays attached to the actual pipeline flow."
+    },
+    {
+      "id": "admin-panel-overlap",
+      "status": "fixed",
+      "details": "The Add User form now stacks safely on tighter widths and no longer forces the three inputs into an overlapping row."
+    },
+    {
+      "id": "alert-traceback-readability",
+      "status": "fixed",
+      "details": "Traceback alerts now show a compact summary in the card while keeping full raw details behind the Raw expander."
+    },
+    {
+      "id": "cron-pipeline-demo-verification",
+      "status": "verified",
+      "details": "On 2026-05-01 a demo schedule using */1 * * * * * triggered the full six-step pipeline 4 times in sequence. Each rerun started about 1 second after the previous pipeline finished, and live pipeline/script preview data stayed populated while the run was active."
+    }
+  ]
+}

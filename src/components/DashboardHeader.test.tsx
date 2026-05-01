@@ -19,8 +19,11 @@ vi.mock("@/lib/api", () => ({
     clearJobs: vi.fn(),
     job: vi.fn(),
     logout: vi.fn(),
+    logoutAll: vi.fn(),
+    clearOtherSessions: vi.fn(),
     setModel: vi.fn(),
     setTimezone: vi.fn(),
+    setReverifyProvider: vi.fn(),
   },
 }));
 
@@ -102,18 +105,19 @@ describe("DashboardHeader cron controls", () => {
     vi.mocked(api.setTimezone).mockResolvedValue({ configuredTimezone: "UTC" });
   });
 
-  it("shows a Stop Cron button for enabled schedules and disables them through the API", async () => {
+  it("shows a Pause button for enabled schedules and disables them through the API", async () => {
     renderHeader();
 
-    const stopButton = await screen.findByRole("button", { name: /stop cron/i });
-    fireEvent.click(stopButton);
+    fireEvent.click(await screen.findByRole("button", { name: /controls/i }));
+    const pauseButton = await screen.findByRole("button", { name: /pause/i });
+    fireEvent.click(pauseButton);
 
     await waitFor(() => {
       expect(api.updateSchedule).toHaveBeenCalledWith("schedule-1", { enabled: false });
     });
   });
 
-  it("shows a Start Cron button for disabled schedules and enables them through the API", async () => {
+  it("shows an Enable button for disabled schedules and enables them through the API", async () => {
     vi.mocked(api.schedules).mockResolvedValueOnce({
       schedules: [
         {
@@ -129,8 +133,9 @@ describe("DashboardHeader cron controls", () => {
 
     renderHeader();
 
-    const startButton = await screen.findByRole("button", { name: /start cron/i });
-    fireEvent.click(startButton);
+    fireEvent.click(await screen.findByRole("button", { name: /controls/i }));
+    const enableButton = await screen.findByRole("button", { name: /enable/i });
+    fireEvent.click(enableButton);
 
     await waitFor(() => {
       expect(api.updateSchedule).toHaveBeenCalledWith("schedule-1", { enabled: true });

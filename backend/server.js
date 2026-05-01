@@ -1,13 +1,29 @@
 import express from "express";
 import cors from "cors";
-import cron from "node-cron";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFile, execSync, spawn } from "node:child_process";
 import { compareByOrderId } from "./lib/compare.js";
-import { getDefaultDatasets, listTree, readFileContent, resolveOutputPath } from "./lib/files.js";
+import {
+  getDefaultDatasets,
+  getRowStatus,
+  listTree,
+  normalizeStatusValue,
+  readFileContent,
+  resolveOutputPath,
+} from "./lib/files.js";
+import { getGoogleSyncState, saveGoogleSyncConfig, syncProjectToGoogleDrive, syncWorkspaceSelectionToGoogleDrive } from "./lib/google-sync.js";
 import { getScriptById, scriptCatalog } from "./lib/scripts.js";
+import {
+  parseScheduleIntervalFromCron,
+  buildErrorReport,
+  computeNextScheduleRunAt,
+  computePipelineProgress,
+  parseIntervalMinutesFromCron,
+  parseProgressSignal,
+  resolveScheduleIntervalMinutes,
+} from "./lib/pipeline-runtime.js";
 import { createId, readJson, writeJson } from "./lib/storage.js";
 import {
   authenticateUser,
@@ -48,15 +64,36 @@ const schedulesFile = "schedules.json";
 const alertsStateFile = "alerts_state.json";
 const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
 const runHistoryBackupFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.prev.jsonl");
+const pipelineErrorReportFile = path.resolve(process.cwd(), "backend", "data", "pipeline_error_report.json");
 const RUN_HISTORY_MAX_BYTES = Number(process.env.RUN_HISTORY_MAX_BYTES || 50 * 1024 * 1024);
 const runningProcesses = new Map();
 const scheduleTasks = new Map();
+const SCHEDULE_RETRY_DELAY_MS = Number(process.env.SCHEDULE_RETRY_DELAY_MS || 15_000);
+const DEMO_FAST_PIPELINE = process.env.BLOSSOM_DEMO_FAST_PIPELINE === "1";
 const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "reverify", "updater", "closing-task"];
 const AUTH_COOKIE_NAME = "blossom_session";
 const ROOT_ENV_PATH = path.resolve(process.cwd(), ".env");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-search-preview";
 const DEFAULT_PERPLEXITY_MODEL = "sonar-pro";
 const FUNERAL_OUTPUT_DIR = path.resolve(process.cwd(), "Scripts", "outputs", "Funeral_Finder");
+const SCRIPT_SYNC_SCOPES = {
+  "get-task": "Scripts/outputs/GetTask",
+  "get-order-inquiry": "Scripts/outputs/GetOrderInquiry",
+  "funeral-finder": "Scripts/outputs/Funeral_Finder",
+  reverify: "Scripts/outputs/Funeral_Finder",
+  updater: "Scripts/outputs/Updater",
+  "closing-task": "Scripts/outputs/ClosingTask",
+};
+const COMMON_RUNTIME_SYNC_PATHS = [
+  "pipeline_checkpoint.json",
+  "pipeline_last_summary.json",
+  "pipeline_logs.jsonl",
+  "pipeline_state.json",
+  "backend/data/jobs.json",
+  "backend/data/schedules.json",
+  "backend/data/run_history_logs.jsonl",
+  "backend/data/run_history_logs.prev.jsonl",
+];
 
 // Platform-aware Python binary detection
 let PYTHON_BIN = "python3";
@@ -232,6 +269,42 @@ function appendRunHistoryEntry(entry) {
   ensureRunHistoryFile();
   rotateRunHistoryIfNeeded();
   fs.appendFileSync(runHistoryFile, `${JSON.stringify(entry)}\n`, "utf-8");
+}
+
+function readPipelineErrorReport() {
+  if (!fs.existsSync(pipelineErrorReportFile)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(pipelineErrorReportFile, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function writePipelineErrorReport(report) {
+  fs.mkdirSync(path.dirname(pipelineErrorReportFile), { recursive: true });
+  fs.writeFileSync(pipelineErrorReportFile, JSON.stringify(report, null, 2), "utf-8");
+}
+
+function recordPipelineErrorReport(job, details = {}) {
+  writePipelineErrorReport({
+    status: "open",
+    ...buildErrorReport(job, details),
+  });
+}
+
+function resolvePipelineErrorReport(context = {}) {
+  const existing = readPipelineErrorReport();
+  if (!existing || existing.status !== "open") {
+    return;
+  }
+  writePipelineErrorReport({
+    ...existing,
+    status: "resolved",
+    resolvedAt: new Date().toISOString(),
+    resolution: context,
+  });
 }
 
 function seedRunHistoryFromExistingJobs() {
@@ -511,6 +584,8 @@ function createJob(payload) {
     id: createId("job"),
     kind: payload.kind,
     parentJobId: payload.parentJobId ?? null,
+    pipelineStepIndex: payload.pipelineStepIndex ?? null,
+    pipelineTotalSteps: payload.pipelineTotalSteps ?? null,
     scriptId: payload.scriptId ?? null,
     sequence: payload.sequence ?? null,
     option: payload.option ?? null,
@@ -519,6 +594,10 @@ function createJob(payload) {
     status: "queued",
     logs: [],
     progress: 0,
+    progressMode: payload.progressMode ?? (payload.kind === "pipeline" ? "determinate" : "indeterminate"),
+    progressCurrent: null,
+    progressTotal: null,
+    progressNote: payload.progressNote ?? "",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     startedAt: null,
@@ -569,69 +648,34 @@ function appendLog(jobId, line) {
   });
 }
 
-function updateProgressFromOutput(jobId, output) {
-  const text = String(output || "");
-  if (!text) {
+function syncPipelineProgressFromChild(job) {
+  if (!job?.parentJobId || job.kind !== "script") {
     return;
   }
 
-  let current = null;
-  let total = null;
-
-  // Pattern 1: "processed so far: N" (Funeral_Finder)
-  const processedMatch = text.match(/processed so far:\s*(\d+)/i);
-  if (processedMatch) {
-    current = Number(processedMatch[1]);
+  const pipelineJob = loadJobs().find((entry) => entry.id === job.parentJobId);
+  if (!pipelineJob || pipelineJob.kind !== "pipeline" || pipelineJob.status !== "running") {
+    return;
   }
 
-  // Pattern 2: "LIVE PROCESSING – N orders/tasks" (total count)
-  const totalMatch = text.match(/LIVE PROCESSING\s+[–-]\s+(\d+)\s+(?:tasks|orders)\b/i);
-  if (totalMatch) {
-    total = Number(totalMatch[1]);
-  }
+  const completedSteps = Math.max(0, Number(job.pipelineStepIndex || 0));
+  const childProgress = job.progressMode === "determinate" ? Number(job.progress || 0) : null;
+  const nextProgress = computePipelineProgress({
+    totalSteps: job.pipelineTotalSteps || pipelineJob.sequence?.length || 1,
+    completedSteps,
+    currentStepProgress: childProgress,
+  });
 
-  // Pattern 3: "[X/Y]" bracket format used by pipeline stages
-  const bracketMatch = text.match(/\[(\d+)\/(\d+)\]/);
-  if (bracketMatch) {
-    current = Number(bracketMatch[1]);
-    total = Number(bracketMatch[2]);
-  }
+  upsertJob(pipelineJob.id, {
+    progress: nextProgress,
+    progressMode: "determinate",
+    progressNote: job.scriptId ? `Running ${job.scriptId}` : "Running scheduled pipeline",
+  });
+}
 
-  // Pattern 4: "Processing X of Y" or "Task X of Y" or "Order X of Y"
-  const ofMatch = text.match(/(?:Processing|Task|Order|Row|Record|Closing|Uploading|Verifying|Re-verifying)\s+(\d+)\s+of\s+(\d+)/i);
-  if (ofMatch) {
-    current = Number(ofMatch[1]);
-    total = Number(ofMatch[2]);
-  }
-
-  // Pattern 5: Percentage in output "XX%" or "XX.X%"
-  const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%\s*(?:complete|done|progress|finished)/i);
-  if (percentMatch) {
-    current = Number(percentMatch[1]);
-    total = 100;
-  }
-
-  // Pattern 6: Stage completion markers (give progress bumps even without numbers)
-  const stageCompletionPatterns = [
-    { regex: /fetching\s+(?:tasks|orders)/i, progress: 10 },
-    { regex: /(?:tasks|orders)\s+(?:loaded|fetched|retrieved)/i, progress: 20 },
-    { regex: /INPUT SUMMARY/i, progress: 15 },
-    { regex: /TASK COMPLETION SUMMARY/i, progress: 95 },
-    { regex: /completed successfully/i, progress: 95 },
-    { regex: /finished with code 0/i, progress: 95 },
-    { regex: /Sending to Perplexity/i, progress: null },
-    { regex: /Preparing upload/i, progress: 60 },
-    { regex: /Upload complete/i, progress: 90 },
-  ];
-
-  let stageProgress = null;
-  for (const pattern of stageCompletionPatterns) {
-    if (pattern.regex.test(text) && pattern.progress !== null) {
-      stageProgress = pattern.progress;
-    }
-  }
-
-  if (current === null && total === null && stageProgress === null) {
+function updateProgressFromOutput(jobId, output) {
+  const text = String(output || "");
+  if (!text) {
     return;
   }
 
@@ -642,20 +686,24 @@ function updateProgressFromOutput(jobId, output) {
   }
 
   const job = jobs[index];
+  const signal = parseProgressSignal(text);
+  if (!signal) {
+    if (job.progressMode !== "indeterminate") {
+      upsertJob(jobId, { progressMode: "indeterminate" });
+    }
+    return;
+  }
+
   const currentProgress = Number(job.progress || 0);
-  let nextProgress = currentProgress;
-
-  if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
-    nextProgress = Math.min(95, Math.max(currentProgress, Math.round((current / total) * 100)));
-  } else if (Number.isFinite(current)) {
-    nextProgress = Math.min(95, Math.max(currentProgress, current));
-  } else if (stageProgress !== null) {
-    nextProgress = Math.min(95, Math.max(currentProgress, stageProgress));
-  }
-
-  if (nextProgress > currentProgress) {
-    upsertJob(jobId, { progress: nextProgress });
-  }
+  const nextProgress = Math.max(currentProgress, Number(signal.progress || 0));
+  const updatedJob = upsertJob(jobId, {
+    progress: nextProgress,
+    progressMode: signal.mode,
+    progressCurrent: signal.current,
+    progressTotal: signal.total,
+    progressNote: `${signal.current}/${signal.total}`,
+  });
+  syncPipelineProgressFromChild(updatedJob ?? { ...job, progress: nextProgress, progressMode: signal.mode });
 }
 
 function appendScriptRunSummary(jobId, scriptId) {
@@ -676,6 +724,123 @@ function appendScriptRunSummary(jobId, scriptId) {
     jobId,
     `RUN_SUMMARY|taskId=${jobId}|scriptId=${scriptId}|status=${job.status}|exitCode=${job.exitCode ?? "n/a"}|progress=${job.progress ?? 0}|durationSec=${durationSec ?? "n/a"}|logLines=${(job.logs || []).length}`,
   );
+}
+
+function getGoogleSyncScopeForScript(scriptId) {
+  return SCRIPT_SYNC_SCOPES[scriptId] || "Scripts/outputs";
+}
+
+function getApprovedGoogleSyncPaths(scriptId = null) {
+  const uniquePaths = new Set(["Scripts/outputs", ...COMMON_RUNTIME_SYNC_PATHS]);
+  const scriptScope = scriptId ? getGoogleSyncScopeForScript(scriptId) : null;
+  if (scriptScope) {
+    uniquePaths.add(scriptScope);
+  }
+  return Array.from(uniquePaths);
+}
+
+async function syncScriptOutputsIfConfigured(jobId, scriptId) {
+  const syncState = getGoogleSyncState();
+  if (!syncState.enabled || !syncState.configured) {
+    return null;
+  }
+
+  const syncPaths = getApprovedGoogleSyncPaths(scriptId);
+  appendLog(jobId, `Google sync started for ${scriptId} outputs and runtime files`);
+  try {
+    const result = await syncWorkspaceSelectionToGoogleDrive({ paths: syncPaths });
+    appendLog(jobId, `Google sync complete: ${result.uploadedFiles} files uploaded to ${result.folderName}`);
+    return result;
+  } catch (error) {
+    appendLog(jobId, `Google sync failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    return null;
+  }
+}
+
+function waitMs(durationMs) {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
+async function runDemoScriptJob({ jobId, scriptId, option, modelName, script, modelRunId }) {
+  const selectedModel = String(modelName || getActiveModel() || "sonar-pro");
+  const previousErrorReport = readPipelineErrorReport();
+  upsertJob(jobId, {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    progress: 0,
+    progressMode: "determinate",
+    progressCurrent: 0,
+    progressTotal: 4,
+    progressNote: "0/4",
+    model: selectedModel,
+  });
+  appendLog(jobId, `Starting ${script.name}`);
+  appendLog(jobId, `Active model: ${selectedModel}`);
+  appendLog(jobId, "Demo fast pipeline mode enabled");
+  if (option) {
+    appendLog(jobId, `Run mode: ${option}`);
+  }
+  if (previousErrorReport?.status === "open") {
+    appendLog(
+      jobId,
+      `Previous error report loaded: ${previousErrorReport.kind}:${previousErrorReport.scriptId || previousErrorReport.jobId} -> ${previousErrorReport.message}`,
+    );
+  }
+
+  const progressSteps = [
+    `${script.name} demo bootstrap`,
+    `${script.name} demo processing`,
+    `${script.name} demo validating`,
+    `${script.name} demo completed`,
+  ];
+
+  for (let index = 0; index < progressSteps.length; index += 1) {
+    await waitMs(250);
+    const current = loadJobs().find((entry) => entry.id === jobId);
+    if (current?.status === "cancelled") {
+      finishModelRun(modelRunId, "cancelled");
+      upsertJob(jobId, {
+        finishedAt: new Date().toISOString(),
+        progress: 100,
+        progressMode: "determinate",
+        progressCurrent: progressSteps.length,
+        progressTotal: progressSteps.length,
+        progressNote: "Cancelled",
+        exitCode: 1,
+      });
+      appendLog(jobId, `${script.name} stopped by user`);
+      appendScriptRunSummary(jobId, scriptId);
+      return { success: false, exitCode: 1 };
+    }
+
+    const currentStep = index + 1;
+    appendLog(jobId, `[${currentStep}/${progressSteps.length}] ${progressSteps[index]}`);
+    const nextProgress = Math.min(95, Math.round((currentStep / progressSteps.length) * 100));
+    const updatedJob = upsertJob(jobId, {
+      progress: nextProgress,
+      progressMode: "determinate",
+      progressCurrent: currentStep,
+      progressTotal: progressSteps.length,
+      progressNote: `${currentStep}/${progressSteps.length}`,
+    });
+    syncPipelineProgressFromChild(updatedJob ?? loadJobs().find((entry) => entry.id === jobId));
+  }
+
+  finishModelRun(modelRunId, "success");
+  upsertJob(jobId, {
+    status: "success",
+    finishedAt: new Date().toISOString(),
+    progress: 100,
+    progressMode: "determinate",
+    progressCurrent: progressSteps.length,
+    progressTotal: progressSteps.length,
+    progressNote: "Completed",
+    exitCode: 0,
+  });
+  appendLog(jobId, `${script.name} finished with code 0`);
+  resolvePipelineErrorReport({ jobId, scriptId, recoveredAt: new Date().toISOString() });
+  appendScriptRunSummary(jobId, scriptId);
+  return { success: true, exitCode: 0 };
 }
 
 async function runScriptJob({ jobId, scriptId, option, modelName }) {
@@ -701,9 +866,27 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
     source: scriptId,
   });
 
-  upsertJob(jobId, { status: "running", startedAt: new Date().toISOString(), progress: 5, model: selectedModel });
+  if (DEMO_FAST_PIPELINE) {
+    return runDemoScriptJob({ jobId, scriptId, option, modelName: selectedModel, script, modelRunId });
+  }
+
+  const previousErrorReport = readPipelineErrorReport();
+  upsertJob(jobId, {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    progress: 0,
+    progressMode: "indeterminate",
+    progressNote: "",
+    model: selectedModel,
+  });
   appendLog(jobId, `Starting ${script.name}`);
   appendLog(jobId, `Active model: ${selectedModel}`);
+  if (previousErrorReport?.status === "open") {
+    appendLog(
+      jobId,
+      `Previous error report loaded: ${previousErrorReport.kind}:${previousErrorReport.scriptId || previousErrorReport.jobId} -> ${previousErrorReport.message}`,
+    );
+  }
 
   const effectiveOption = scriptId === "reverify"
       ? (option || "both")
@@ -758,18 +941,22 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
     child.on("error", (error) => {
       runningProcesses.delete(jobId);
       finishModelRun(modelRunId, "failed");
-      upsertJob(jobId, {
+      const failedJob = upsertJob(jobId, {
         status: "failed",
         finishedAt: new Date().toISOString(),
         progress: 100,
+        progressMode: "determinate",
         exitCode: 1,
       });
       appendLog(jobId, `Process error: ${error.message}`);
+      recordPipelineErrorReport(failedJob ?? loadJobs().find((entry) => entry.id === jobId), {
+        message: `Process error: ${error.message}`,
+      });
       appendScriptRunSummary(jobId, scriptId);
       resolve({ success: false, exitCode: 1 });
     });
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       runningProcesses.delete(jobId);
       const current = loadJobs().find((entry) => entry.id === jobId);
       if (current?.status === "cancelled") {
@@ -777,23 +964,35 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
         upsertJob(jobId, {
           finishedAt: new Date().toISOString(),
           progress: 100,
+          progressMode: "determinate",
           exitCode: code,
         });
         appendLog(jobId, `${script.name} stopped by user`);
         appendScriptRunSummary(jobId, scriptId);
+        await syncScriptOutputsIfConfigured(jobId, scriptId);
         resolve({ success: false, exitCode: code ?? 1 });
         return;
       }
       const success = code === 0;
       finishModelRun(modelRunId, success ? "success" : "failed");
-      upsertJob(jobId, {
+      const finishedJob = upsertJob(jobId, {
         status: success ? "success" : "failed",
         finishedAt: new Date().toISOString(),
         progress: 100,
+        progressMode: "determinate",
+        progressNote: success ? "Completed" : "Failed",
         exitCode: code,
       });
       appendLog(jobId, `${script.name} finished with code ${code}`);
+      if (success) {
+        resolvePipelineErrorReport({ jobId, scriptId, recoveredAt: new Date().toISOString() });
+      } else {
+        recordPipelineErrorReport(finishedJob ?? loadJobs().find((entry) => entry.id === jobId), {
+          message: `${script.name} finished with code ${code}`,
+        });
+      }
       appendScriptRunSummary(jobId, scriptId);
+      await syncScriptOutputsIfConfigured(jobId, scriptId);
       resolve({ success, exitCode: code ?? 1 });
     });
   });
@@ -801,20 +1000,30 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
 
 async function runPipelineJob(jobId, sequence, modelName) {
   const selectedModel = String(modelName || getActiveModel() || "sonar-pro");
-  const scheduleId = loadJobs().find((entry) => entry.id === jobId)?.trigger?.scheduleId || null;
-  upsertJob(jobId, { status: "running", startedAt: new Date().toISOString(), progress: 1, model: selectedModel });
+  const pipelineJob = loadJobs().find((entry) => entry.id === jobId);
+  const scheduleId = pipelineJob?.trigger?.scheduleId || null;
+  const scheduleName = pipelineJob?.trigger?.scheduleName || null;
+  const previousErrorReport = readPipelineErrorReport();
+  upsertJob(jobId, {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    progress: 0,
+    progressMode: "determinate",
+    progressNote: sequence.length > 0 ? `0/${sequence.length} steps` : "",
+    model: selectedModel,
+  });
   appendLog(jobId, `Pipeline started with ${sequence.length} steps`);
   appendLog(jobId, `Active model: ${selectedModel}`);
+  if (previousErrorReport?.status === "open") {
+    appendLog(jobId, `Previous error report loaded: ${previousErrorReport.message}`);
+  }
 
   for (let i = 0; i < sequence.length; i += 1) {
     const currentPipeline = loadJobs().find((entry) => entry.id === jobId);
     if (currentPipeline?.status === "cancelled") {
       appendLog(jobId, "Pipeline cancelled before next step");
       if (scheduleId) {
-        updateScheduleMetadata(scheduleId, {
-          lastFinishedAt: new Date().toISOString(),
-          lastStatus: "cancelled",
-        });
+        finalizeScheduleCooldown(scheduleId, "cancelled", new Date().toISOString());
       }
       return;
     }
@@ -822,57 +1031,97 @@ async function runPipelineJob(jobId, sequence, modelName) {
     const stepJob = createJob({
       kind: "script",
       parentJobId: jobId,
+      pipelineStepIndex: i,
+      pipelineTotalSteps: sequence.length,
       scriptId: step.scriptId,
       option: step.option,
       model: selectedModel,
     });
     appendLog(jobId, `Step ${i + 1}/${sequence.length} -> ${step.scriptId} (${stepJob.id})`);
+    upsertJob(jobId, {
+      progress: computePipelineProgress({ totalSteps: sequence.length, completedSteps: i }),
+      progressMode: "determinate",
+      progressNote: `${i}/${sequence.length} steps complete`,
+    });
 
     const done = await runScriptJob({ jobId: stepJob.id, scriptId: step.scriptId, option: step.option, modelName: selectedModel });
 
     if (!done.success) {
-      upsertJob(jobId, {
+      const cancelledPipeline = loadJobs().find((entry) => entry.id === jobId);
+      if (cancelledPipeline?.status === "cancelled") {
+        appendLog(jobId, `Pipeline cancelled during ${step.scriptId}`);
+        if (scheduleId) {
+          finalizeScheduleCooldown(scheduleId, "cancelled", new Date().toISOString());
+        }
+        return;
+      }
+
+      const failedJob = upsertJob(jobId, {
         status: "failed",
         finishedAt: new Date().toISOString(),
         progress: 100,
+        progressMode: "determinate",
+        progressNote: `Failed at ${step.scriptId}`,
         exitCode: done.exitCode ?? 1,
       });
       appendLog(jobId, `Pipeline failed at ${step.scriptId}`);
+      recordPipelineErrorReport(failedJob ?? loadJobs().find((entry) => entry.id === jobId), {
+        message: `Pipeline failed at ${step.scriptId}`,
+        scheduleId,
+        scheduleName,
+      });
       if (scheduleId) {
-        updateScheduleMetadata(scheduleId, {
-          lastFinishedAt: new Date().toISOString(),
-          lastStatus: "failed",
-        });
+        finalizeScheduleCooldown(scheduleId, "failed", new Date().toISOString());
       }
       return;
     }
 
     const progress = Math.round(((i + 1) / sequence.length) * 100);
-    upsertJob(jobId, { progress });
+    upsertJob(jobId, {
+      progress,
+      progressMode: "determinate",
+      progressNote: `${i + 1}/${sequence.length} steps complete`,
+    });
   }
 
   upsertJob(jobId, {
     status: "success",
     finishedAt: new Date().toISOString(),
     progress: 100,
+    progressMode: "determinate",
+    progressNote: "Completed",
     exitCode: 0,
   });
   appendLog(jobId, "Pipeline completed successfully");
+  resolvePipelineErrorReport({ jobId, scheduleId, recoveredAt: new Date().toISOString() });
   if (scheduleId) {
-    updateScheduleMetadata(scheduleId, {
-      lastFinishedAt: new Date().toISOString(),
-      lastStatus: "success",
-    });
+    finalizeScheduleCooldown(scheduleId, "success", new Date().toISOString());
   }
+}
+
+function normalizeSchedule(schedule) {
+  const intervalSpec = parseScheduleIntervalFromCron(schedule?.cron);
+  const intervalMinutes = resolveScheduleIntervalMinutes(schedule);
+  return {
+    ...schedule,
+    intervalMinutes,
+    intervalUnit: intervalSpec?.unit || "minutes",
+    intervalValue: intervalSpec?.interval ?? Math.max(1, Math.round(intervalMinutes)),
+    nextRunAt: schedule?.nextRunAt || null,
+    sequence: normalizeSequence(schedule?.sequence),
+  };
 }
 
 function loadSchedules() {
   const schedules = readJson(schedulesFile, []);
-  return Array.isArray(schedules) ? schedules : [];
+  return Array.isArray(schedules) ? schedules.map(normalizeSchedule) : [];
 }
 
 function saveSchedules(schedules) {
-  writeJson(schedulesFile, schedules);
+  writeJson(
+    schedulesFile,
+    schedules.map(({ intervalMinutes, ...schedule }) => schedule),
+  );
 }
 
 function updateScheduleMetadata(scheduleId, patch) {
@@ -881,36 +1130,85 @@ function updateScheduleMetadata(scheduleId, patch) {
   if (index === -1) {
     return null;
   }
-  schedules[index] = {
+  schedules[index] = normalizeSchedule({
     ...schedules[index],
     ...patch,
     updatedAt: new Date().toISOString(),
-  };
+  });
   saveSchedules(schedules);
   return schedules[index];
 }
 
+function clearScheduleTimer(scheduleId) {
+  const activeTimer = scheduleTasks.get(scheduleId);
+  if (!activeTimer) {
+    return;
+  }
+  clearTimeout(activeTimer.timeout);
+  scheduleTasks.delete(scheduleId);
+}
+
 function registerSchedule(schedule) {
+  clearScheduleTimer(schedule.id);
   if (!schedule.enabled) {
     return;
   }
 
-  if (!cron.validate(schedule.cron)) {
-    console.warn(`[cron] Invalid cron expression for schedule '${schedule.name}': ${schedule.cron}`);
-    return;
+  if (!parseScheduleIntervalFromCron(schedule.cron)) {
+    console.warn(`[cron] Unsupported schedule expression for '${schedule.name}': ${schedule.cron}`);
   }
 
-  // Load the freshest copy of the schedule from disk each time cron fires,
-  // so that enable/disable changes made after registration take effect.
-  const task = cron.schedule(schedule.cron, async () => {
-    const freshSchedule = loadSchedules().find((s) => s.id === schedule.id);
+  const nextRunAt = computeNextScheduleRunAt(schedule);
+  const syncedSchedule = schedule.nextRunAt === nextRunAt
+    ? schedule
+    : (updateScheduleMetadata(schedule.id, { nextRunAt }) ?? { ...schedule, nextRunAt });
+  const delayMs = Math.max(0, new Date(nextRunAt).getTime() - Date.now());
+  const timeout = setTimeout(() => {
+    scheduleTasks.delete(schedule.id);
+    const freshSchedule = loadSchedules().find((item) => item.id === schedule.id);
     if (!freshSchedule || !freshSchedule.enabled) {
-      return; // Schedule was disabled after it was registered; skip silently.
+      return;
     }
-    triggerSchedulePipeline(freshSchedule);
-  });
+    triggerSchedulePipeline(freshSchedule, { immediate: false }, { busyPolicy: "defer" });
+  }, delayMs);
 
-  scheduleTasks.set(schedule.id, task);
+  scheduleTasks.set(schedule.id, {
+    timeout,
+    nextRunAt: syncedSchedule.nextRunAt,
+    intervalMinutes: syncedSchedule.intervalMinutes,
+  });
+}
+
+function finalizeScheduleCooldown(scheduleId, status, finishedAt = new Date().toISOString()) {
+  const schedule = loadSchedules().find((item) => item.id === scheduleId);
+  if (!schedule) {
+    return null;
+  }
+
+  if (!schedule.enabled) {
+    clearScheduleTimer(scheduleId);
+    return updateScheduleMetadata(scheduleId, {
+      lastFinishedAt: finishedAt,
+      lastStatus: status,
+      nextRunAt: null,
+    });
+  }
+
+  const nextRunAt = computeNextScheduleRunAt({
+    ...schedule,
+    lastFinishedAt: finishedAt,
+    nextRunAt: null,
+  }, new Date(finishedAt));
+  const updated = updateScheduleMetadata(scheduleId, {
+    lastFinishedAt: finishedAt,
+    lastCooldownStartedAt: finishedAt,
+    lastStatus: status,
+    nextRunAt,
+  });
+  if (updated?.enabled) {
+    registerSchedule(updated);
+  }
+  return updated;
 }
 
 function getRunningPipelineForSchedule(scheduleId) {
@@ -923,13 +1221,24 @@ function getRunningPipelineForSchedule(scheduleId) {
   )) ?? null;
 }
 
-function triggerSchedulePipeline(schedule, triggerPatch = {}) {
+function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
   const now = new Date().toISOString();
   const activeWorkload = getActiveWorkload();
+  const busyPolicy = options.busyPolicy || "skip";
 
   if (activeWorkload) {
-    // Active workload running → record a skipped trigger but do NOT pollute lastTriggeredAt
-    // with a timestamp that looks like a real run to the user.
+    if (busyPolicy === "defer") {
+      const retryAt = new Date(Date.now() + SCHEDULE_RETRY_DELAY_MS).toISOString();
+      const updated = updateScheduleMetadata(schedule.id, {
+        nextRunAt: retryAt,
+        lastStatus: "waiting",
+      });
+      if (updated?.enabled) {
+        registerSchedule(updated);
+      }
+      return { jobId: null, started: false, skipped: false, deferred: true, activeJobId: activeWorkload.id };
+    }
+
     const skippedJob = createJob({
       kind: "pipeline",
       sequence: normalizeSequence(schedule.sequence),
@@ -950,26 +1259,23 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}) {
       startedAt: now,
       finishedAt: now,
       progress: 100,
+      progressMode: "determinate",
       exitCode: null,
     });
-    appendLog(
-      skippedJob.id,
-      `Skipped: active workload in progress (${activeWorkload.kind}:${activeWorkload.id})`,
-    );
-    // Only update lastStatus/lastJobId — do NOT touch lastTriggeredAt or lastStartedAt
-    // so the UI does not show a "fake" last-run timestamp for a skipped cycle.
+    appendLog(skippedJob.id, `Skipped: active workload in progress (${activeWorkload.kind}:${activeWorkload.id})`);
     updateScheduleMetadata(schedule.id, {
       lastJobId: skippedJob.id,
       lastFinishedAt: now,
       lastStatus: "skipped",
     });
-    return { jobId: skippedJob.id, started: false, skipped: true, activeJobId: activeWorkload.id };
+    return { jobId: skippedJob.id, started: false, skipped: true, deferred: false, activeJobId: activeWorkload.id };
   }
 
-  // Real trigger → update lastTriggeredAt only now, when we actually start a pipeline.
+  clearScheduleTimer(schedule.id);
   updateScheduleMetadata(schedule.id, {
     lastTriggeredAt: now,
     lastStatus: "queued",
+    nextRunAt: null,
   });
 
   const sequence = normalizeSequence(schedule.sequence);
@@ -977,6 +1283,8 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}) {
     kind: "pipeline",
     sequence,
     model: getActiveModel(),
+    progressMode: "determinate",
+    progressNote: sequence.length > 0 ? `0/${sequence.length} steps` : "",
     trigger: {
       type: "schedule",
       scheduleId: schedule.id,
@@ -989,17 +1297,17 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}) {
     lastJobId: pipelineJob.id,
     lastStartedAt: now,
     lastStatus: "running",
+    nextRunAt: null,
   });
   runPipelineJob(pipelineJob.id, sequence, getActiveModel());
-  return { jobId: pipelineJob.id, started: true, skipped: false, activeJobId: null };
+  return { jobId: pipelineJob.id, started: true, skipped: false, deferred: false, activeJobId: null };
 }
 
 function resetSchedules() {
-  scheduleTasks.forEach((task) => task.stop());
+  scheduleTasks.forEach((task) => clearTimeout(task.timeout));
   scheduleTasks.clear();
   loadSchedules().forEach(registerSchedule);
 }
-
 resetSchedules();
 reconcileOrphanedJobs();
 seedRunHistoryFromExistingJobs();
@@ -1067,6 +1375,33 @@ app.post("/api/auth/logout", (req, res) => {
   }
   res.setHeader("Set-Cookie", clearSessionCookie());
   return res.json({ ok: true });
+});
+
+app.post("/api/auth/logout-all", (req, res) => {
+  const userId = req.auth?.user?.id;
+  if (userId) {
+    revokeSessionsForUser(userId);
+  }
+  res.setHeader("Set-Cookie", clearSessionCookie());
+  return res.json({ ok: true });
+});
+
+app.delete("/api/auth/me/sessions/others", (req, res) => {
+  const userId = req.auth?.user?.id;
+  const currentSessionId = req.auth?.session?.id;
+  if (!userId || !currentSessionId) {
+    return res.status(400).json({ error: "Active session not found" });
+  }
+
+  let removed = 0;
+  listSessions()
+    .filter((session) => session.userId === userId && session.id !== currentSessionId && !session.revokedAt)
+    .forEach((session) => {
+      revokeSession(session.id);
+      removed += 1;
+    });
+
+  return res.json({ ok: true, removed });
 });
 
 app.get("/api/auth/users", requireAdmin, (_req, res) => {
@@ -1195,6 +1530,39 @@ app.put("/api/auth/settings/reverify-provider", requireAdmin, (req, res) => {
     return res.json({ reverifyDefaultProvider });
   } catch (error) {
     return res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/google-sync", requireAuth, requireAdmin, (_req, res) => {
+  return res.json(getGoogleSyncState());
+});
+
+app.put("/api/google-sync/config", requireAuth, requireAdmin, (req, res) => {
+  try {
+    const state = saveGoogleSyncConfig({
+      enabled: req.body?.enabled,
+      folderName: req.body?.folderName,
+      credentialsPath: req.body?.credentialsPath,
+      credentialsJson: req.body?.credentialsJson,
+    });
+    return res.json(state);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Invalid Google sync config" });
+  }
+});
+
+app.post("/api/google-sync/run", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const mode = String(req.body?.mode || "").trim().toLowerCase();
+    const result = mode === "approved-runtime"
+      ? await syncWorkspaceSelectionToGoogleDrive({ paths: getApprovedGoogleSyncPaths() })
+      : await syncProjectToGoogleDrive({
+        target: req.body?.target || "workspace",
+        scope: req.body?.scope || "",
+      });
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Google sync failed" });
   }
 });
 
@@ -1389,18 +1757,19 @@ app.post("/api/schedules", (req, res) => {
   if (!body.name || !body.cron) {
     return res.status(400).json({ error: "name and cron are required" });
   }
-  if (!cron.validate(body.cron)) {
-    return res.status(400).json({ error: "Invalid cron expression" });
+  if (!parseScheduleIntervalFromCron(body.cron)) {
+    return res.status(400).json({ error: "Use */30 * * * * for minutes or */1 * * * * * for seconds demo mode" });
   }
 
-  const schedule = {
+  const schedule = normalizeSchedule({
     id: createId("schedule"),
     name: body.name,
     cron: body.cron,
     enabled: body.enabled ?? true,
     sequence: normalizeSequence(body.sequence),
     createdAt: new Date().toISOString(),
-  };
+    nextRunAt: null,
+  });
 
   const schedules = loadSchedules();
   schedules.push(schedule);
@@ -1420,10 +1789,13 @@ app.patch("/api/schedules/:id", (req, res) => {
   if ("sequence" in (req.body || {})) {
     next.sequence = normalizeSequence(req.body?.sequence);
   }
-  if (next.cron && !cron.validate(next.cron)) {
-    return res.status(400).json({ error: "Invalid cron expression" });
+  if (next.cron && !parseScheduleIntervalFromCron(next.cron)) {
+    return res.status(400).json({ error: "Use */30 * * * * for minutes or */1 * * * * * for seconds demo mode" });
   }
-  schedules[index] = next;
+  if ("cron" in (req.body || {}) || wasEnabled !== Boolean(next.enabled)) {
+    next.nextRunAt = null;
+  }
+  schedules[index] = normalizeSchedule(next);
   saveSchedules(schedules);
   resetSchedules();
 
@@ -1439,12 +1811,10 @@ app.patch("/api/schedules/:id", (req, res) => {
         status: "cancelled",
         finishedAt: new Date().toISOString(),
         progress: 100,
+        progressMode: "determinate",
       });
       appendLog(runningPipeline.id, "Pipeline cancelled: schedule was disabled");
-      updateScheduleMetadata(req.params.id, {
-        lastFinishedAt: new Date().toISOString(),
-        lastStatus: "cancelled",
-      });
+      finalizeScheduleCooldown(req.params.id, "cancelled", new Date().toISOString());
     }
   }
   return res.json({ schedule: next });
@@ -1539,32 +1909,183 @@ app.get("/api/config/outputs-root", (_req, res) => {
   return res.json({ outputsRoot: absolute });
 });
 
+function normalizeOrderIdValue(value) {
+  return String(value || "").trim().replace(/\.0$/, "");
+}
+
+function readLiveOrderStats() {
+  const datasets = getDefaultDatasets(0);
+  const statusRowsByBucket = {
+    customer: datasets.customer.rows || [],
+    found: datasets.found.rows || [],
+    notfound: datasets.not_found.rows || [],
+    review: datasets.review.rows || [],
+  };
+  const byOrderIdFromBuckets = new Map();
+
+  Object.entries(statusRowsByBucket).forEach(([status, rows]) => {
+    rows.forEach((row) => {
+      const orderId = normalizeOrderIdValue(row.order_id || row.ord_id);
+      if (!orderId) {
+        return;
+      }
+      byOrderIdFromBuckets.set(orderId, { ...row, match_status: status });
+    });
+  });
+
+  const rows = [];
+  const seenOrderIds = new Set();
+  (datasets.main.rows || []).forEach((row) => {
+    const orderId = normalizeOrderIdValue(row.order_id || row.ord_id);
+    const bucketRow = orderId ? byOrderIdFromBuckets.get(orderId) : null;
+    const statusFromRow = getRowStatus(row);
+    const normalizedStatus = statusFromRow !== "unknown"
+      ? statusFromRow
+      : bucketRow
+        ? normalizeStatusValue(bucketRow.match_status)
+        : "unknown";
+    rows.push({ ...row, _normalizedStatus: normalizedStatus });
+    if (orderId) {
+      seenOrderIds.add(orderId);
+    }
+  });
+
+  Object.entries(statusRowsByBucket).forEach(([status, bucketRows]) => {
+    bucketRows.forEach((row) => {
+      const orderId = normalizeOrderIdValue(row.order_id || row.ord_id);
+      if (orderId && seenOrderIds.has(orderId)) {
+        return;
+      }
+      rows.push({ ...row, _normalizedStatus: status });
+      if (orderId) {
+        seenOrderIds.add(orderId);
+      }
+    });
+  });
+
+  return {
+    datasets,
+    statusRowsByBucket,
+    byOrderIdFromBuckets,
+    rows,
+  };
+}
+
+function buildOrderStatsSnapshot() {
+  const live = readLiveOrderStats();
+  const byDate = {};
+  const byModel = {};
+  let customer = 0;
+  let found = 0;
+  let notfound = 0;
+  let review = 0;
+  let unknown = 0;
+
+  live.rows.forEach((row) => {
+    const status = normalizeStatusValue(row._normalizedStatus || row.match_status || row.status);
+    if (status === "customer") customer += 1;
+    else if (status === "found") found += 1;
+    else if (status === "notfound") notfound += 1;
+    else if (status === "review") review += 1;
+    else unknown += 1;
+
+    const date = extractDateFromRow(row);
+    if (date) {
+      if (!byDate[date]) {
+        byDate[date] = { date, total: 0, customer: 0, found: 0, notfound: 0, review: 0 };
+      }
+      byDate[date].total += 1;
+      if (status === "customer") byDate[date].customer += 1;
+      else if (status === "found") byDate[date].found += 1;
+      else if (status === "notfound") byDate[date].notfound += 1;
+      else if (status === "review") byDate[date].review += 1;
+    }
+  });
+
+  const modelRuns = listModelRuns(1000);
+  modelRuns.forEach((run) => {
+    const model = run.modelName || "unknown";
+    if (!byModel[model]) {
+      byModel[model] = { model, total: 0, found: 0, notfound: 0, review: 0, success: 0, failed: 0 };
+    }
+    byModel[model].total += 1;
+    if (run.status === "success") byModel[model].success += 1;
+    else if (run.status === "failed") byModel[model].failed += 1;
+  });
+
+  const total = customer + found + notfound + review + unknown;
+  return {
+    summary: {
+      total,
+      customer,
+      found,
+      notfound,
+      review,
+      unknown,
+      customerPct: total > 0 ? Number(((customer / total) * 100).toFixed(1)) : 0,
+      foundPct: total > 0 ? Number(((found / total) * 100).toFixed(1)) : 0,
+      notfoundPct: total > 0 ? Number(((notfound / total) * 100).toFixed(1)) : 0,
+      reviewPct: total > 0 ? Number(((review / total) * 100).toFixed(1)) : 0,
+    },
+    reconciliation: {
+      mainRows: live.datasets.main.rows.length,
+      customerFileRows: live.statusRowsByBucket.customer.length,
+      foundFileRows: live.statusRowsByBucket.found.length,
+      notFoundFileRows: live.statusRowsByBucket.notfound.length,
+      reviewFileRows: live.statusRowsByBucket.review.length,
+      statusFileTotal:
+        live.statusRowsByBucket.customer.length
+        + live.statusRowsByBucket.found.length
+        + live.statusRowsByBucket.notfound.length
+        + live.statusRowsByBucket.review.length,
+      matchedToStatusFiles: live.rows.filter((row) => live.byOrderIdFromBuckets.has(normalizeOrderIdValue(row.order_id || row.ord_id))).length,
+    },
+    byDate: Object.values(byDate)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map((day) => ({
+        ...day,
+        customerPct: day.total > 0 ? Number(((day.customer / day.total) * 100).toFixed(1)) : 0,
+        foundPct: day.total > 0 ? Number(((day.found / day.total) * 100).toFixed(1)) : 0,
+        notfoundPct: day.total > 0 ? Number(((day.notfound / day.total) * 100).toFixed(1)) : 0,
+        reviewPct: day.total > 0 ? Number(((day.review / day.total) * 100).toFixed(1)) : 0,
+      })),
+    byModel: Object.values(byModel).sort((a, b) => b.total - a.total),
+  };
+}
+
 // Pipeline global status: are any pipelines currently running?
 app.get("/api/pipeline/status", (_req, res) => {
   const jobs = loadJobs();
   const schedules = loadSchedules();
 
-  const runningPipelines = jobs.filter(
-    (job) => job.kind === "pipeline" && job.status === "running",
-  );
-  const runningScripts = jobs.filter(
-    (job) => job.kind === "script" && job.status === "running",
-  );
-  const queuedPipelines = jobs.filter(
-    (job) => job.kind === "pipeline" && job.status === "queued",
-  );
-  const queuedScripts = jobs.filter(
-    (job) => job.kind === "script" && job.status === "queued",
-  );
+  const runningPipelines = jobs.filter((job) => job.kind === "pipeline" && job.status === "running");
+  const runningScripts = jobs.filter((job) => job.kind === "script" && job.status === "running");
+  const queuedPipelines = jobs.filter((job) => job.kind === "pipeline" && job.status === "queued");
+  const queuedScripts = jobs.filter((job) => job.kind === "script" && job.status === "queued");
   const activeWorkloads = runningPipelines.length + runningScripts.length + queuedPipelines.length + queuedScripts.length;
-  const anyEnabled = schedules.some((s) => s.enabled);
+  const enabledSchedules = schedules.filter((schedule) => schedule.enabled);
+  const nextSchedule = enabledSchedules
+    .map((schedule) => ({
+      id: schedule.id,
+      name: schedule.name,
+      cron: schedule.cron,
+      intervalMinutes: schedule.intervalMinutes,
+      lastStatus: schedule.lastStatus || "idle",
+      nextRunAt: schedule.nextRunAt || schedule.lastStartedAt || computeNextScheduleRunAt(schedule),
+    }))
+    .filter((schedule) => Boolean(schedule.nextRunAt))
+    .sort((left, right) => String(left.nextRunAt).localeCompare(String(right.nextRunAt)))[0] || null;
 
   let state = "idle";
   if (activeWorkloads > 0) {
     state = "running";
-  } else if (!anyEnabled) {
+  } else if (enabledSchedules.length === 0) {
     state = "disabled";
   }
+
+  const nextScheduleInSeconds = nextSchedule?.nextRunAt
+    ? Math.max(0, Math.floor((new Date(nextSchedule.nextRunAt).getTime() - Date.now()) / 1000))
+    : null;
 
   return res.json({
     state,
@@ -1573,12 +2094,18 @@ app.get("/api/pipeline/status", (_req, res) => {
     queuedPipelines: queuedPipelines.length,
     queuedScripts: queuedScripts.length,
     activeWorkloads,
-    enabledSchedules: schedules.filter((s) => s.enabled).length,
+    enabledSchedules: enabledSchedules.length,
     totalSchedules: schedules.length,
+    nextSchedule,
+    nextPipeline: queuedPipelines[0] || runningPipelines[0] || null,
+    nextScript: queuedScripts[0] || runningScripts[0] || null,
+    nextScheduleInSeconds,
+    nextPipelineInSeconds: queuedPipelines[0] ? 0 : nextScheduleInSeconds,
+    nextScriptInSeconds: queuedScripts[0] || runningScripts[0] ? 0 : nextScheduleInSeconds,
   });
 });
 
-// ── Order Processing Stats API ──────────────────────────────────────────────
+// â”€â”€ Order Processing Stats API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function parseCsvFileForStats(filePath) {
   if (!fs.existsSync(filePath)) return [];
@@ -1752,142 +2279,23 @@ function collectAlerts(limit = 50) {
 function extractDateFromRow(row) {
   const ts = row.last_processed_at || row.processed_at || row.processedAt || "";
   if (!ts) return null;
-  const m = ts.match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : null;
+  const parsed = new Date(ts);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString().slice(0, 10);
 }
 
 app.get("/api/stats/order-processing", requireAuth, (_req, res) => {
-  const funeralDataPath = path.join(FUNERAL_OUTPUT_DIR, "Funeral_data.csv");
-  const rows = parseCsvFileForStats(funeralDataPath);
-  const datasetStatus = readStatusDatasetsByOrderId();
-  const reconciledRows = rows.map((row) => {
-    const orderId = String(row.order_id || "").trim();
-    const canonical = orderId ? datasetStatus.byOrderId.get(orderId) : null;
-    return canonical ? { ...row, match_status: canonical.match_status } : row;
-  });
-
-  let found = 0, notfound = 0, review = 0, unknown = 0;
-  const byDate = {};
-  const byModel = {};
-
-  reconciledRows.forEach((row) => {
-    const status = classifyStatus(row);
-    if (status === "found") found++;
-    else if (status === "notfound") notfound++;
-    else if (status === "review") review++;
-    else unknown++;
-
-    const date = extractDateFromRow(row);
-    if (date) {
-      if (!byDate[date]) byDate[date] = { date, found: 0, notfound: 0, review: 0, total: 0 };
-      byDate[date].total++;
-      if (status === "found") byDate[date].found++;
-      else if (status === "notfound") byDate[date].notfound++;
-      else if (status === "review") byDate[date].review++;
-    }
-  });
-
-  // Merge model performance data from model_runs table
-  const modelRuns = listModelRuns(1000);
-
-  modelRuns.forEach((run) => {
-    const model = run.modelName || "unknown";
-    if (!byModel[model]) byModel[model] = { model, total: 0, found: 0, notfound: 0, review: 0, success: 0, failed: 0 };
-    byModel[model].total++;
-    if (run.status === "success") byModel[model].success++;
-    else if (run.status === "failed") byModel[model].failed++;
-  });
-
-  // Try to assign order-level stats to models from date-wise logs
-  const dateWiseDir = path.join(FUNERAL_OUTPUT_DIR, "date_wise");
-  if (fs.existsSync(dateWiseDir)) {
-    const dateDirs = fs.readdirSync(dateWiseDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-
-    dateDirs.forEach((dateDir) => {
-      const foundPath = path.join(dateWiseDir, dateDir, "Funeral_data_found.csv");
-      const notFoundPath = path.join(dateWiseDir, dateDir, "Funeral_data_not_found.csv");
-      const reviewPath = path.join(dateWiseDir, dateDir, "Funeral_data_review.csv");
-
-      const foundRows = parseCsvFileForStats(foundPath).length;
-      const notFoundRows = parseCsvFileForStats(notFoundPath).length;
-      const reviewRows = parseCsvFileForStats(reviewPath).length;
-
-      if (!byDate[dateDir]) {
-        byDate[dateDir] = { date: dateDir, found: foundRows, notfound: notFoundRows, review: reviewRows, total: foundRows + notFoundRows + reviewRows };
-      }
-    });
-  }
-
-  const total = found + notfound + review + unknown;
-  const foundPct = total > 0 ? Number(((found / total) * 100).toFixed(1)) : 0;
-  const notfoundPct = total > 0 ? Number(((notfound / total) * 100).toFixed(1)) : 0;
-  const reviewPct = total > 0 ? Number(((review / total) * 100).toFixed(1)) : 0;
-
-  return res.json({
-    summary: {
-      total,
-      found,
-      notfound,
-      review,
-      unknown,
-      foundPct,
-      notfoundPct,
-      reviewPct,
-      activeModel: getActiveModel(),
-    },
-    reconciliation: {
-      mainRows: rows.length,
-      foundFileRows: datasetStatus.rowsByStatus.found.length,
-      notFoundFileRows: datasetStatus.rowsByStatus.notfound.length,
-      reviewFileRows: datasetStatus.rowsByStatus.review.length,
-      statusFileTotal:
-        datasetStatus.rowsByStatus.found.length
-        + datasetStatus.rowsByStatus.notfound.length
-        + datasetStatus.rowsByStatus.review.length,
-      matchedToStatusFiles: reconciledRows.filter((row) => datasetStatus.byOrderId.has(String(row.order_id || "").trim())).length,
-    },
-    byDate: Object.values(byDate).sort((a, b) => b.date.localeCompare(a.date)),
-    byModel: Object.values(byModel).sort((a, b) => b.total - a.total),
-  });
+  return res.json(buildOrderStatsSnapshot());
 });
 
 app.get("/api/stats/order-processing/by-date", requireAuth, (req, res) => {
   const from = String(req.query.from || "");
   const to = String(req.query.to || "");
-  const dateWiseDir = path.join(FUNERAL_OUTPUT_DIR, "date_wise");
-  const result = [];
-
-  if (!fs.existsSync(dateWiseDir)) {
-    return res.json({ from, to, days: [] });
-  }
-
-  const dateDirs = fs.readdirSync(dateWiseDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-    .filter((d) => (!from || d >= from) && (!to || d <= to))
-    .sort();
-
-  dateDirs.forEach((dateDir) => {
-    const found = parseCsvFileForStats(path.join(dateWiseDir, dateDir, "Funeral_data_found.csv")).length;
-    const notfound = parseCsvFileForStats(path.join(dateWiseDir, dateDir, "Funeral_data_not_found.csv")).length;
-    const review = parseCsvFileForStats(path.join(dateWiseDir, dateDir, "Funeral_data_review.csv")).length;
-    const total = found + notfound + review;
-    result.push({
-      date: dateDir,
-      total,
-      found,
-      notfound,
-      review,
-      foundPct: total > 0 ? Number(((found / total) * 100).toFixed(1)) : 0,
-      notfoundPct: total > 0 ? Number(((notfound / total) * 100).toFixed(1)) : 0,
-      reviewPct: total > 0 ? Number(((review / total) * 100).toFixed(1)) : 0,
-    });
-  });
-
-  return res.json({ from, to, days: result });
+  const snapshot = buildOrderStatsSnapshot();
+  const days = snapshot.byDate.filter((day) => (!from || day.date >= from) && (!to || day.date <= to));
+  return res.json({ from, to, days });
 });
 
 app.get("/api/stats/model-performance", requireAuth, (_req, res) => {
@@ -1957,3 +2365,4 @@ if (fs.existsSync(distDir)) {
 app.listen(PORT, () => {
   console.log(`Backend running at http://localhost:${PORT}`);
 });
+

@@ -12,21 +12,462 @@
   ],
   "sessions": [
     {
-      "id": "30575e35-a039-47d5-809c-cd5b3252e34a",
+      "id": "68f21e34-aab3-4951-a90f-23fc73000ded",
       "user_id": "5e7034e6-6477-4aa2-9eae-519f9bff5bc4",
-      "created_at": "2026-04-28T18:09:31.204Z",
-      "expires_at": "2026-04-29T03:37:56.861Z",
-      "last_seen_at": "2026-04-28T19:37:56.861Z",
+      "created_at": "2026-04-30T18:58:37.321Z",
+      "expires_at": "2026-05-01T02:58:37.321Z",
+      "last_seen_at": "2026-05-01T00:50:29.082Z",
       "revoked_at": null,
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       "ip_address": "::1"
     }
   ],
   "settings": {
-    "default_model": "sonar-pro",
+    "default_model": "gpt-4o-search-preview",
     "session_ttl_minutes": "480",
-    "display_timezone": "Asia/Calcutta",
+    "display_timezone": "Asia/Kolkata",
     "reverify_default_provider": "perplexity"
   },
-  "model_runs": []
+  "model_runs": [
+    {
+      "id": "e3e5952b-4257-43d7-a279-8c497bab464f",
+      "job_id": "job_1777591009565_eem6tf",
+      "script_id": "get-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-04-30T23:16:49.607Z",
+      "finished_at": "2026-04-30T23:17:02.488Z"
+    },
+    {
+      "id": "aab51750-f6bc-4375-ba34-fff48712fc9d",
+      "job_id": "job_1777591022589_wo0f16",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-04-30T23:17:02.615Z",
+      "finished_at": "2026-04-30T23:18:08.515Z"
+    },
+    {
+      "id": "b02419d0-aa1a-40bf-937f-52877b248555",
+      "job_id": "job_1777591088627_87u1rr",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "failed",
+      "source": "funeral-finder",
+      "created_at": "2026-04-30T23:18:08.669Z",
+      "finished_at": "2026-04-30T23:18:14.408Z"
+    },
+    {
+      "id": "0a5d8151-ba98-446b-b734-862bb7bbb8d2",
+      "job_id": "job_1777592894675_004r4k",
+      "script_id": "get-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-04-30T23:48:14.719Z",
+      "finished_at": "2026-04-30T23:48:17.794Z"
+    },
+    {
+      "id": "cd605f1c-7bf9-4235-8237-ba9a2a4ac97f",
+      "job_id": "job_1777592897910_pzfol2",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-04-30T23:48:17.948Z",
+      "finished_at": "2026-04-30T23:48:27.399Z"
+    },
+    {
+      "id": "a238dfd0-9bc1-430b-bf43-9c3d909f0929",
+      "job_id": "job_1777592907515_8q4bgo",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-04-30T23:48:27.561Z",
+      "finished_at": "2026-04-30T23:48:28.245Z"
+    },
+    {
+      "id": "fee60514-1879-4271-aa6c-107f24ab2cd2",
+      "job_id": "job_1777592908349_jzdu5g",
+      "script_id": "reverify",
+      "model_name": "sonar-pro",
+      "status": "failed",
+      "source": "reverify",
+      "created_at": "2026-04-30T23:48:28.397Z",
+      "finished_at": "2026-04-30T23:49:02.799Z"
+    },
+    {
+      "id": "8ed35670-cf91-461e-b974-2d6cc8b40bd9",
+      "job_id": "job_1777594124538_jv917r",
+      "script_id": "get-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-01T00:08:44.578Z",
+      "finished_at": "2026-05-01T00:08:46.903Z"
+    },
+    {
+      "id": "9aa654c2-02aa-4bbe-b1b4-77717bbd4b0e",
+      "job_id": "job_1777594127106_w8hjig",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-01T00:08:47.182Z",
+      "finished_at": "2026-05-01T00:08:50.798Z"
+    },
+    {
+      "id": "97775936-b250-4f7e-876f-af70c1c747b2",
+      "job_id": "job_1777594130926_iy3xg0",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-01T00:08:50.986Z",
+      "finished_at": "2026-05-01T00:08:51.761Z"
+    },
+    {
+      "id": "2ab367e8-7bda-4cfb-9190-7b7110d61b9d",
+      "job_id": "job_1777594131852_u544on",
+      "script_id": "reverify",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-01T00:08:51.895Z",
+      "finished_at": "2026-05-01T00:08:52.639Z"
+    },
+    {
+      "id": "86356fa5-3fe8-4e10-8a20-aa4295c5de61",
+      "job_id": "job_1777594132809_oetgsi",
+      "script_id": "updater",
+      "model_name": "sonar-pro",
+      "status": "failed",
+      "source": "updater",
+      "created_at": "2026-05-01T00:08:52.879Z",
+      "finished_at": "2026-05-01T00:08:53.568Z"
+    },
+    {
+      "id": "30622bac-988c-4d28-9e31-65739f2fd375",
+      "job_id": "job_1777594451483_f7g6i1",
+      "script_id": "get-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-01T00:14:11.517Z",
+      "finished_at": "2026-05-01T00:14:13.495Z"
+    },
+    {
+      "id": "7f94c531-1d9a-4dd5-b009-7d8f42905230",
+      "job_id": "job_1777594453606_0bn36a",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-01T00:14:13.680Z",
+      "finished_at": "2026-05-01T00:14:14.415Z"
+    },
+    {
+      "id": "e1e1568a-4d4b-4e87-afe2-415054aa01c5",
+      "job_id": "job_1777594454578_udo2l7",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-01T00:14:14.643Z",
+      "finished_at": "2026-05-01T00:14:15.316Z"
+    },
+    {
+      "id": "58eb0c02-f450-4965-9bd8-d73051712b06",
+      "job_id": "job_1777594455406_65lewe",
+      "script_id": "reverify",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-01T00:14:15.448Z",
+      "finished_at": "2026-05-01T00:14:16.133Z"
+    },
+    {
+      "id": "42fcde5d-aa06-4c33-93c4-5036abb0363c",
+      "job_id": "job_1777594456247_wmwn0k",
+      "script_id": "updater",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-01T00:14:16.290Z",
+      "finished_at": "2026-05-01T00:15:31.758Z"
+    },
+    {
+      "id": "d9efeb87-2762-433d-8ca8-1e33461549e6",
+      "job_id": "job_1777594531880_oi6xet",
+      "script_id": "closing-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-01T00:15:31.951Z",
+      "finished_at": "2026-05-01T00:16:10.706Z"
+    },
+    {
+      "id": "ac6ce383-2222-4b06-8415-0a216160eae9",
+      "job_id": "job_1777594653797_7wifsf",
+      "script_id": "get-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-01T00:17:33.853Z",
+      "finished_at": "2026-05-01T00:17:35.990Z"
+    },
+    {
+      "id": "941b8316-9ff6-4b44-b368-d8333e9c184e",
+      "job_id": "job_1777594656158_tqslec",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-01T00:17:36.219Z",
+      "finished_at": "2026-05-01T00:17:38.737Z"
+    },
+    {
+      "id": "29769af5-c272-4788-8f98-83a94cb941f7",
+      "job_id": "job_1777594658938_mgxvcc",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-01T00:17:39.005Z",
+      "finished_at": "2026-05-01T00:17:39.749Z"
+    },
+    {
+      "id": "c633f0cd-89f7-483b-8bc5-4098a2afa475",
+      "job_id": "job_1777594659861_j231mm",
+      "script_id": "reverify",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-01T00:17:39.926Z",
+      "finished_at": "2026-05-01T00:17:40.976Z"
+    },
+    {
+      "id": "705f4e82-c5cf-4d5c-aeae-229aec4d5c5c",
+      "job_id": "job_1777594661116_j0h88v",
+      "script_id": "updater",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-01T00:17:41.195Z",
+      "finished_at": "2026-05-01T00:17:42.100Z"
+    },
+    {
+      "id": "12514d0c-252d-4169-9169-68ab501dadce",
+      "job_id": "job_1777594662273_c1s6xt",
+      "script_id": "closing-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-01T00:17:42.368Z",
+      "finished_at": "2026-05-01T00:17:43.170Z"
+    },
+    {
+      "id": "7e67530c-ddca-414a-94a7-709e638203f0",
+      "job_id": "job_1777594743141_72x1vk",
+      "script_id": "get-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-01T00:19:03.199Z",
+      "finished_at": "2026-05-01T00:19:05.185Z"
+    },
+    {
+      "id": "699ba101-6e5a-4c18-93d5-1cdabed0e2d3",
+      "job_id": "job_1777594745324_ikf9kl",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-01T00:19:05.390Z",
+      "finished_at": "2026-05-01T00:19:06.115Z"
+    },
+    {
+      "id": "c9510b3c-50b0-4796-88f5-9e9cf7d8f687",
+      "job_id": "job_1777594746279_ejqb45",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-01T00:19:06.344Z",
+      "finished_at": "2026-05-01T00:19:07.144Z"
+    },
+    {
+      "id": "8a0dd19a-ab05-4ece-9443-4de553717dd0",
+      "job_id": "job_1777594747267_ep3di0",
+      "script_id": "reverify",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-01T00:19:07.319Z",
+      "finished_at": "2026-05-01T00:19:08.040Z"
+    },
+    {
+      "id": "4eff289b-35e6-49e9-af76-2e5c4291f9f9",
+      "job_id": "job_1777594748229_bc1h4b",
+      "script_id": "updater",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-01T00:19:08.298Z",
+      "finished_at": "2026-05-01T00:19:09.018Z"
+    },
+    {
+      "id": "feb64edc-3691-4d6d-8da8-63ee4de8751f",
+      "job_id": "job_1777594749219_fj59l5",
+      "script_id": "closing-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-01T00:19:09.270Z",
+      "finished_at": "2026-05-01T00:19:10.218Z"
+    },
+    {
+      "id": "76515351-baea-4d1e-889d-07943d1212c3",
+      "job_id": "job_1777595304230_ihuh4w",
+      "script_id": "get-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-01T00:28:24.364Z",
+      "finished_at": "2026-05-01T00:28:27.009Z"
+    },
+    {
+      "id": "8dadc85b-1938-4a2c-a0db-04e048c74d09",
+      "job_id": "job_1777595307306_nqbula",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-01T00:28:27.418Z",
+      "finished_at": "2026-05-01T00:28:28.513Z"
+    },
+    {
+      "id": "3b68b1db-c1de-466b-b192-874cab163c3c",
+      "job_id": "job_1777595308815_h5fjky",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-01T00:28:28.946Z",
+      "finished_at": "2026-05-01T00:28:29.951Z"
+    },
+    {
+      "id": "fea9eb6f-f5b1-49a8-a721-2cf8f91d450b",
+      "job_id": "job_1777595310222_ttixt2",
+      "script_id": "reverify",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-01T00:28:30.362Z",
+      "finished_at": "2026-05-01T00:28:31.443Z"
+    },
+    {
+      "id": "51c21131-e118-406e-9e46-336c24627574",
+      "job_id": "job_1777595311775_pxjv0k",
+      "script_id": "updater",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-01T00:28:31.906Z",
+      "finished_at": "2026-05-01T00:28:33.156Z"
+    },
+    {
+      "id": "02f3a6ed-3bbf-4686-abad-7a4c21202790",
+      "job_id": "job_1777595313462_y1tcqd",
+      "script_id": "closing-task",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-01T00:28:33.599Z",
+      "finished_at": "2026-05-01T00:28:34.759Z"
+    },
+    {
+      "id": "af40de6f-c72c-4745-b508-956e4992aac3",
+      "job_id": "job_1777595334680_ascno4",
+      "script_id": "get-order-inquiry",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-01T00:28:54.698Z",
+      "finished_at": "2026-05-01T00:28:55.756Z"
+    },
+    {
+      "id": "76d932ce-f21c-4a3a-8157-15d216304b3d",
+      "job_id": "job_1777595342491_1abc8r",
+      "script_id": "funeral-finder",
+      "model_name": "sonar-pro",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-01T00:29:02.508Z",
+      "finished_at": "2026-05-01T00:29:03.615Z"
+    },
+    {
+      "id": "96e11276-0fcb-4aa6-8edc-6daacea92bc4",
+      "job_id": "job_1777596550863_kffknp",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-01T00:49:10.988Z",
+      "finished_at": "2026-05-01T00:49:14.330Z"
+    },
+    {
+      "id": "15f0da81-6065-4947-877b-91d50eec7ea8",
+      "job_id": "job_1777596554631_dh1q80",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-01T00:49:14.760Z",
+      "finished_at": "2026-05-01T00:49:16.549Z"
+    },
+    {
+      "id": "913dcbdc-451b-49f7-9485-06142de60132",
+      "job_id": "job_1777596556952_on6d35",
+      "script_id": "funeral-finder",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-01T00:49:17.088Z",
+      "finished_at": "2026-05-01T00:49:17.994Z"
+    },
+    {
+      "id": "0975c0e4-ee65-4b3c-8787-c4442d11db99",
+      "job_id": "job_1777596558320_p5sdgu",
+      "script_id": "reverify",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-01T00:49:18.451Z",
+      "finished_at": "2026-05-01T00:49:19.339Z"
+    },
+    {
+      "id": "8069bac1-5622-4713-b63a-4ea081373180",
+      "job_id": "job_1777596559661_3rmygy",
+      "script_id": "updater",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-01T00:49:19.783Z",
+      "finished_at": "2026-05-01T00:49:20.722Z"
+    },
+    {
+      "id": "bfb0a7d6-4008-4e94-9a0e-04019c7ad423",
+      "job_id": "job_1777596561087_lrkk0a",
+      "script_id": "closing-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-01T00:49:21.223Z",
+      "finished_at": "2026-05-01T00:49:22.186Z"
+    }
+  ]
 }

@@ -40,6 +40,17 @@ function formatDuration(startedAt?: string | null, finishedAt?: string | null): 
   return `${min}m ${s}s`;
 }
 
+function getJobRecency(job?: Job | null): number {
+  if (!job) return 0;
+  const timestamp = job.updatedAt || job.finishedAt || job.startedAt || job.createdAt;
+  const parsed = Date.parse(String(timestamp || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isActiveJob(job?: Job | null): boolean {
+  return job?.status === "running" || job?.status === "queued";
+}
+
 export function ScriptPanel({ script, liveJob, executionLocked = false }: ScriptPanelProps) {
   const [status, setStatus] = useState<"idle" | "running" | "success" | "error">("idle");
   const [selectedOption, setSelectedOption] = useState(script.options?.[0] ?? "");
@@ -114,16 +125,28 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
       toast.success(`${script.name} completed!`);
     } else if (job.status === "failed" || job.status === "cancelled") {
       setStatus("error");
-      toast.error(`${script.name} failed — check logs`);
+      toast.error(`${script.name} failed - check logs`);
     }
     return;
   }, [jobQuery.data, script.name]);
 
   useEffect(() => {
-    if (!activeJobId && liveJob?.id) {
+    if (!liveJob?.id) {
+      return;
+    }
+    const currentJob = jobQuery.data?.job;
+    const liveIsNewer = getJobRecency(liveJob) >= getJobRecency(currentJob);
+    if (!activeJobId || (liveJob.id !== activeJobId && (isActiveJob(liveJob) || liveIsNewer))) {
       setActiveJobId(liveJob.id);
     }
-  }, [activeJobId, liveJob?.id]);
+  }, [activeJobId, jobQuery.data?.job, liveJob]);
+
+  useEffect(() => {
+    if (liveJob && isActiveJob(liveJob)) {
+      setShowTerminal(true);
+      setStickToBottom(true);
+    }
+  }, [liveJob]);
 
   const runScript = (option?: string) => {
     const resolvedOption = option ?? (script.hasOptions ? selectedOption : undefined);
@@ -156,14 +179,24 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
     setStickToBottom(true);
   };
 
-  const displayJob = jobQuery.data?.job ?? liveJob;
+  const queriedJob = jobQuery.data?.job;
+  const liveIsActive = isActiveJob(liveJob);
+  const queriedIsActive = isActiveJob(queriedJob);
+  const displayJob = liveJob && (
+    (liveIsActive && !queriedIsActive)
+    || (liveIsActive === queriedIsActive && getJobRecency(liveJob) > getJobRecency(queriedJob))
+  )
+    ? liveJob
+    : (queriedJob ?? liveJob);
   const logLines = useMemo(() => displayJob?.logs ?? [], [displayJob?.logs]);
 
   const displayProgress = displayJob?.progress ?? progress;
+  const displayProgressMode = displayJob?.progressMode ?? "indeterminate";
+  const displayProgressNote = displayJob?.progressNote ?? "";
   const runSummary = useMemo(() => {
-    const summaryLine = [...logLines].reverse().find((line) => line.includes("RUN SUMMARY |"));
+    const summaryLine = [...logLines].reverse().find((line) => line.includes("RUN_SUMMARY|"));
     if (!summaryLine) return null;
-    const payload = summaryLine.split("RUN SUMMARY |")[1] || "";
+    const payload = summaryLine.split("RUN_SUMMARY|")[1] || "";
     return payload.split("|").reduce<Record<string, string>>((accumulator, part) => {
       const [key, value] = part.split("=", 2);
       if (key && value) {
@@ -235,15 +268,15 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
 
   // Colorize terminal lines
   const colorizeLogLine = (line: string): string => {
-    if (line.includes("✅") || line.includes("SUCCESS") || line.includes("✓") || line.startsWith("OK|"))
+    if (line.includes("SUCCESS") || line.includes("DONE") || line.startsWith("OK|"))
       return "terminal-line-success";
-    if (line.includes("❌") || line.includes("ERROR") || line.includes("FAILED") || line.startsWith("ERR|"))
+    if (line.includes("ERROR") || line.includes("FAILED") || line.startsWith("ERR|"))
       return "terminal-line-error";
-    if (line.includes("⚠️") || line.includes("SKIP") || line.includes("WARNING") || line.includes("Review"))
+    if (line.includes("SKIP") || line.includes("WARNING") || line.includes("Review"))
       return "terminal-line-warn";
-    if (line.includes("⏭") || line.includes("SKIP"))
+    if (line.includes("SKIP"))
       return "terminal-line-skip";
-    if (line.includes("═") || line.includes("─") || line.includes("┌") || line.includes("└") || line.includes("│"))
+    if (line.includes("===") || line.includes("---") || line.includes("|"))
       return "terminal-line-border";
     if (line.includes("RUN_SUMMARY|"))
       return "terminal-line-summary";
@@ -271,7 +304,7 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
         </div>
 
         {/* Progress bar */}
-        {displayStatus === "running" && (
+        {displayStatus === "running" && displayProgressMode === "determinate" && (
           <div className="mb-3 relative">
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
               <div
@@ -282,6 +315,17 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
             <span className="absolute right-0 -top-4 text-[10px] text-muted-foreground tabular-nums">
               {displayProgress}%
             </span>
+          </div>
+        )}
+
+        {displayStatus === "running" && displayProgressMode !== "determinate" && (
+          <div className="mb-3 space-y-1">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-blue-500 to-blue-300" />
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {displayProgressNote || "Waiting for live progress counts from the script..."}
+            </p>
           </div>
         )}
 
@@ -301,8 +345,8 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
         {runSummary && (
           <div className="mb-3 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             {"Found" in runSummary || "Review" in runSummary || "NotFound" in runSummary
-              ? `Summary: found ${runSummary.Found ?? "0"} · review ${runSummary.Review ?? "0"} · not found ${runSummary.NotFound ?? "0"} · updated ${runSummary.UpdatedMain ?? "0"} · skipped ${runSummary.SkippedLogged ?? "0"}`
-              : `Summary: status ${runSummary.status ?? displayJob?.status ?? "n/a"} · exit ${runSummary.exitCode ?? displayJob?.exitCode ?? "n/a"} · duration ${runSummary.durationSec ?? "n/a"}s · logs ${runSummary.logLines ?? logLines.length}`}
+              ? `Summary: found ${runSummary.Found ?? "0"} • review ${runSummary.Review ?? "0"} • not found ${runSummary.NotFound ?? "0"} • updated ${runSummary.UpdatedMain ?? "0"} • skipped ${runSummary.SkippedLogged ?? "0"}`
+              : `Summary: status ${runSummary.status ?? displayJob?.status ?? "n/a"} • exit ${runSummary.exitCode ?? displayJob?.exitCode ?? "n/a"} • duration ${runSummary.durationSec ?? "n/a"}s • logs ${runSummary.logLines ?? logLines.length}`}
           </div>
         )}
 
@@ -333,7 +377,7 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
         {script.id === "updater" && selectedOption && (
           <div className="mb-3">
             <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">
-              📂 {UPDATER_MODE_LABELS[selectedOption] || selectedOption}
+              Mode {UPDATER_MODE_LABELS[selectedOption] || selectedOption}
             </span>
           </div>
         )}
@@ -406,9 +450,9 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
                   displayStatus === "error" ? "text-red-400" :
                   "text-zinc-500"
                 }`}>
-                  {displayStatus === "running" ? `● running ${elapsedStr}` :
-                   displayStatus === "success" ? "✓ done" :
-                   displayStatus === "error" ? "✗ failed" : "idle"}
+                  {displayStatus === "running" ? `running ${elapsedStr}` :
+                   displayStatus === "success" ? "done" :
+                   displayStatus === "error" ? "failed" : "idle"}
                 </span>
                 {!stickToBottom && (
                   <button
@@ -420,7 +464,7 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
                     }}
                     className="rounded px-1.5 py-0.5 text-[9px] bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
                   >
-                    ↓ Bottom
+                    Jump to bottom
                   </button>
                 )}
               </div>
@@ -452,7 +496,7 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
               {displayStatus === "running" && (
                 <div className="flex gap-2">
                   <span className="text-zinc-600 w-6 text-right shrink-0">&gt;</span>
-                  <span className="animate-pulse text-blue-400">▌</span>
+                  <span className="animate-pulse text-blue-400">|</span>
                 </div>
               )}
             </pre>
@@ -483,3 +527,4 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
     </>
   );
 }
+

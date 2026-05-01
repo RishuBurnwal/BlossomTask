@@ -127,6 +127,48 @@ def test_apply_business_rules_review_when_name_mismatch_with_some_evidence():
     assert adjusted["match_status"] == "Review"
 
 
+def test_apply_business_rules_marks_customer_when_only_order_instructions_confirm_schedule():
+    order = _base_order(
+        ship_name="Betty Lou Woodfield",
+        ship_care_of="",
+        ship_address="",
+        ord_instruct="Funeral service on May 2 at 11:00 AM",
+    )
+    parsed = _base_parsed(
+        matched_name="Betty Lou Woodfield",
+        match_status="Review",
+        source_urls="",
+    )
+
+    adjusted = finder._apply_business_rules(order, parsed)
+
+    assert adjusted["match_status"] == "Customer"
+    assert "Customer:" in adjusted["notes"]
+
+
+def test_apply_business_rules_formats_customer_instruction_schedule_fields():
+    expected_year = finder.get_now_iso()[:4]
+    order = _base_order(
+        ship_name="Betty Lou Woodfield",
+        ship_care_of="",
+        ship_address="",
+        ord_instruct="Viewing on May 2 at 11:00 AM at the chapel",
+    )
+    parsed = _base_parsed(
+        matched_name="",
+        match_status="NotFound",
+        source_urls="",
+        special_instructions="",
+    )
+
+    adjusted = finder._apply_business_rules(order, parsed)
+
+    assert adjusted["match_status"] == "Customer"
+    assert adjusted["visitation_date"] == f"{expected_year}-05-02"
+    assert adjusted["visitation_time"] == "11:00 AM"
+    assert "customer instructions" in adjusted["special_instructions"].lower()
+
+
 def test_normalize_order_id_trims_float_suffix():
     assert finder._normalize_order_id("5454134.0") == "5454134"
 

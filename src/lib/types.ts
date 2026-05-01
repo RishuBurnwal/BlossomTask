@@ -15,6 +15,9 @@ export interface Job {
   id: string;
   kind: "script" | "pipeline";
   model?: string | null;
+  parentJobId?: string | null;
+  pipelineStepIndex?: number | null;
+  pipelineTotalSteps?: number | null;
   scriptId?: string | null;
   sequence?: Array<{ scriptId: string; option?: string }> | null;
   option?: string | null;
@@ -31,6 +34,10 @@ export interface Job {
   status: ScriptStatus | "queued";
   logs: string[];
   progress: number;
+  progressMode?: "determinate" | "indeterminate";
+  progressCurrent?: number | null;
+  progressTotal?: number | null;
+  progressNote?: string | null;
   createdAt: string;
   updatedAt: string;
   startedAt?: string | null;
@@ -55,9 +62,14 @@ export interface DataRow {
 
 export interface DatasetSummary {
   total: number;
-  matched: number;
-  needs_review: number;
-  unmatched: number;
+  customer: number;
+  found: number;
+  notfound: number;
+  review: number;
+  unknown: number;
+  matched?: number;
+  needs_review?: number;
+  unmatched?: number;
   last_processed_at: string | null;
 }
 
@@ -69,6 +81,8 @@ export interface DatasetWithSummary {
 
 export interface FuneralDatasets {
   main: DatasetWithSummary;
+  found: DatasetWithSummary;
+  customer: DatasetWithSummary;
   not_found: DatasetWithSummary;
   review: DatasetWithSummary;
   error: DatasetWithSummary;
@@ -87,14 +101,19 @@ export interface ScheduleItem {
   name: string;
   cron: string;
   enabled: boolean;
+  intervalMinutes?: number;
+  intervalUnit?: "minutes" | "seconds";
+  intervalValue?: number;
   sequence: Array<{ scriptId: string; option?: string }>;
   createdAt: string;
   updatedAt?: string;
   lastTriggeredAt?: string;
   lastStartedAt?: string;
   lastFinishedAt?: string;
+  lastCooldownStartedAt?: string;
   lastStatus?: string;
   lastJobId?: string;
+  nextRunAt?: string | null;
 }
 
 export interface PreflightCheck {
@@ -119,6 +138,21 @@ export interface PipelineStatus {
   activeWorkloads: number;
   enabledSchedules: number;
   totalSchedules: number;
+  nextSchedule?: {
+    id: string;
+    name: string;
+    cron: string;
+    intervalMinutes?: number;
+    intervalUnit?: "minutes" | "seconds";
+    intervalValue?: number;
+    lastStatus?: string;
+    nextRunAt: string;
+  } | null;
+  nextPipeline?: Job | null;
+  nextScript?: Job | null;
+  nextScheduleInSeconds?: number | null;
+  nextPipelineInSeconds?: number | null;
+  nextScriptInSeconds?: number | null;
 }
 
 export interface AuthUser {
@@ -226,22 +260,25 @@ export interface UsageMetrics {
 
 export interface OrderProcessingSummary {
   total: number;
+  customer: number;
   found: number;
   notfound: number;
   review: number;
   unknown: number;
+  customerPct: number;
   foundPct: number;
   notfoundPct: number;
   reviewPct: number;
-  activeModel: string;
 }
 
 export interface OrderDateBucket {
   date: string;
   total: number;
+  customer: number;
   found: number;
   notfound: number;
   review: number;
+  customerPct?: number;
   foundPct?: number;
   notfoundPct?: number;
   reviewPct?: number;
@@ -261,6 +298,7 @@ export interface OrderProcessingStats {
   summary: OrderProcessingSummary;
   reconciliation?: {
     mainRows: number;
+    customerFileRows?: number;
     foundFileRows: number;
     notFoundFileRows: number;
     reviewFileRows: number;
@@ -284,4 +322,30 @@ export interface ModelPerformanceEntry {
 export interface ModelPerformanceStats {
   activeModel: string;
   models: ModelPerformanceEntry[];
+}
+
+export interface GoogleSyncState {
+  configured: boolean;
+  enabled: boolean;
+  folderName: string;
+  credentialsPath: string;
+  serviceEmail: string;
+  projectId: string;
+  driveRootFolderId: string;
+  lastSyncAt: string | null;
+  lastSyncScope: string;
+  lastSyncTarget: string;
+  lastSyncedFiles: number;
+  lastError: string | null;
+  outputsRoot: string;
+  workspaceRoot: string;
+}
+
+export interface GoogleSyncRunResult extends GoogleSyncState {
+  synced?: boolean;
+  skipped?: boolean;
+  reason?: string;
+  uploadedFiles?: number;
+  syncTarget?: string;
+  syncedScope?: string;
 }

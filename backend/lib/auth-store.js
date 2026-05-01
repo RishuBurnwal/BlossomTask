@@ -333,7 +333,7 @@ export function getValidSession(sessionId) {
   return session;
 }
 
-export function touchSession(sessionId, ttlMinutes = defaultSessionMinutes) {
+export function touchSession(sessionId, _ttlMinutes = defaultSessionMinutes) {
   let updated = null;
   updateStore((store) => {
     const session = store.sessions.find((entry) => entry.id === sessionId);
@@ -346,9 +346,7 @@ export function touchSession(sessionId, ttlMinutes = defaultSessionMinutes) {
       session.revoked_at = nowIso();
       return;
     }
-    const expiresAt = new Date(now.getTime() + Math.max(5, Number(ttlMinutes || defaultSessionMinutes)) * 60 * 1000);
     session.last_seen_at = now.toISOString();
-    session.expires_at = expiresAt.toISOString();
     updated = serializeSession(session, user);
   });
   return updated;

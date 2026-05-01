@@ -66,6 +66,8 @@ CSV_PATH              = OUTPUT_DIR / "Funeral_data.csv"
 EXCEL_PATH            = OUTPUT_DIR / "Funeral_data.xlsx"
 FOUND_CSV_PATH        = OUTPUT_DIR / "Funeral_data_found.csv"
 FOUND_EXCEL_PATH      = OUTPUT_DIR / "Funeral_data_found.xlsx"
+CUSTOMER_CSV_PATH     = OUTPUT_DIR / "Funeral_data_customer.csv"
+CUSTOMER_EXCEL_PATH   = OUTPUT_DIR / "Funeral_data_customer.xlsx"
 NOT_FOUND_CSV_PATH    = OUTPUT_DIR / "Funeral_data_not_found.csv"
 NOT_FOUND_EXCEL_PATH  = OUTPUT_DIR / "Funeral_data_not_found.xlsx"
 REVIEW_CSV_PATH       = OUTPUT_DIR / "Funeral_data_review.csv"
@@ -73,6 +75,7 @@ REVIEW_EXCEL_PATH     = OUTPUT_DIR / "Funeral_data_review.xlsx"
 PAYLOAD_PATH          = OUTPUT_DIR / "payload.json"
 LOGS_PATH             = OUTPUT_DIR / "logs.txt"
 RUN_GUARD_PATH        = OUTPUT_DIR / "run_state.json"
+ERROR_REPORT_PATH     = OUTPUT_DIR / "runtime_error_report.json"
 
 
 def _run_date_key() -> str:
@@ -129,7 +132,7 @@ SYSTEM_PROMPT = (
     "You are an assistant that finds funeral and memorial service details. Return valid JSON with these keys: "
     "matched_name, funeral_home_name, funeral_address, funeral_phone, service_type, funeral_date, funeral_time, visitation_date, "
     "visitation_time, ceremony_date, ceremony_time, delivery_recommendation_date, delivery_recommendation_time, "
-    "delivery_recommendation_location, special_instructions, status (Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), source_urls (list), notes. "
+    "delivery_recommendation_location, special_instructions, status (Customer/Found/NotFound/Review), AI Accuracy Score (0-100 confidence for status), source_urls (list), notes. "
     "Scoring guidance: 85-100 exact match with source URL and concrete service details; 70-84 strong match with URL and partial details; "
     "50-69 partial/uncertain; 0-49 weak or no reliable match. No source URL means score should usually be <=65 unless identity evidence is strong. "
     "For very common names without unique identifiers, keep score below 60. "
@@ -138,7 +141,10 @@ SYSTEM_PROMPT = (
     "Work like an OSINT detective: triangulate obituary pages, funeral-home pages, church/cemetery notices, customer instructions, dates, times, and venue details before deciding. "
     "If the evidence is incomplete, conflicting, or only partially supports the identity, prefer Review. "
     "Use any direct obituary detail URL already supplied by the user as authoritative evidence; do not reclassify it as weak directory evidence. "
-    "Set Found when matched_name aligns with the input person and at least one valid date OR time exists in funeral/service, visitation, or ceremony fields together with identity confirmation (name + funeral home OR name + obituary/detail source URL OR trusted customer-provided schedule). "
+    "Set Customer when the only trustworthy timing evidence comes from customer order instructions and outside sources do not confirm the service details. "
+    "If outside sources do not confirm the schedule but ord_instruct contains a usable funeral, memorial, visitation, viewing, burial, or ceremony schedule, normalize that customer-provided schedule into structured JSON fields and set status=Customer. "
+    "When using ord_instruct fallback, preserve the requested person as matched_name, format the best available schedule fields, and explain in notes that the schedule came from customer instructions. "
+    "Set Found when matched_name aligns with the input person and at least one valid date OR time exists in funeral/service, visitation, or ceremony fields together with identity confirmation (name + funeral home OR name + obituary/detail source URL). "
     "If the obituary/detail URL is direct and ord_instruct also confirms the schedule, treat the record as Found even when the name varies slightly or the source page is cross-posted. "
     "Set Review, not NotFound, for date-only/time-only evidence with identity confirmation. "
     "Set Review when names or dates conflict between source evidence and customer instructions. "
@@ -181,6 +187,19 @@ FIELDNAMES = [
     "source_urls", "notes",
     "last_processed_at",
 ]
+
+CSV_READ_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+
+
+def normalize_match_status(value: str) -> str:
+    normalized = _safe_str(value).strip().lower()
+    if normalized in {"customer", "customer_defined", "customer-defined", "customer provided", "customer-provided", "instruction_only", "instruction-only"}:
+        return "Customer"
+    if normalized in {"found", "matched", "yes", "confirmed"}:
+        return "Found"
+    if normalized in {"review", "needs_review", "needs review", "uncertain", "unverified"}:
+        return "Review"
+    return "NotFound"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -338,6 +357,72 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _read_csv_dict_rows(csv_path: Path) -> tuple[list[str], list[dict], str]:
+    last_error = None
+    for encoding in CSV_READ_ENCODINGS:
+        try:
+            with open(csv_path, "r", newline="", encoding=encoding) as f:
+                reader = csv.DictReader(f)
+                fieldnames = [_safe_str(field) for field in (reader.fieldnames or []) if _safe_str(field)]
+                rows = list(reader)
+            return fieldnames, rows, encoding
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    return [], [], CSV_READ_ENCODINGS[0]
+
+
+def _load_error_report() -> dict:
+    if not ERROR_REPORT_PATH.exists():
+        return {}
+    try:
+        return json.loads(ERROR_REPORT_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return {}
+
+
+def _write_error_report(payload: dict) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ERROR_REPORT_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _record_error_report(stage: str, message: str, context: Optional[dict] = None) -> None:
+    existing = _load_error_report()
+    history = list(existing.get("history") or [])[-9:]
+    history.append(
+        {
+            "timestamp": get_now_iso(),
+            "stage": _safe_str(stage),
+            "message": _safe_str(message),
+            "context": context or {},
+        }
+    )
+    _write_error_report(
+        {
+            "script": SCRIPT_NAME,
+            "last_error_at": get_now_iso(),
+            "stage": _safe_str(stage),
+            "message": _safe_str(message),
+            "context": context or {},
+            "resolved_at": None,
+            "history": history,
+        }
+    )
+
+
+def _resolve_error_report(stage: str, context: Optional[dict] = None) -> None:
+    existing = _load_error_report()
+    if not existing:
+        return
+    existing["resolved_at"] = get_now_iso()
+    existing["resolved_by"] = _safe_str(stage)
+    if context:
+        existing["resolution_context"] = context
+    _write_error_report(existing)
+
+
 def _normalize_service_datetime(
     service_date: str,
     service_time: str,
@@ -364,6 +449,18 @@ def _append_unique_note(base: str, note: str) -> str:
     if note_text in base_text:
         return base_text
     return f"{base_text} | {note_text}".strip(" |")
+
+
+def _merge_pipe_text(base: str, addition: str, limit: int = 1000) -> str:
+    base_text = _safe_str(base)
+    addition_text = _safe_str(addition)
+    if not addition_text:
+        return base_text[:limit]
+    if not base_text:
+        return addition_text[:limit]
+    if addition_text in base_text:
+        return base_text[:limit]
+    return f"{base_text} | {addition_text}"[:limit]
 
 
 def _unique_non_empty(values: list[str]) -> list[str]:
@@ -709,14 +806,26 @@ def _parse_date_candidate(raw_text: str) -> str:
     )
     cleaned = re.sub(r"\s+", " ", cleaned.replace(",", " ")).strip()
     direct_candidates = [cleaned]
+    current_year = int(get_now_iso()[:4])
     for pattern in [
         r"\b\d{4}-\d{2}-\d{2}\b",
         r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
+        r"\b\d{1,2}[/-]\d{1,2}\b",
         r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:\s+\d{2,4})\b",
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b",
     ]:
         direct_candidates.extend(re.findall(pattern, cleaned, re.IGNORECASE))
 
     for candidate in _unique_non_empty(direct_candidates):
+        candidate_with_year = candidate
+        if re.fullmatch(r"\d{1,2}[/-]\d{1,2}", candidate):
+            candidate_with_year = f"{candidate}/{current_year}"
+        elif re.fullmatch(
+            r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}",
+            candidate,
+            re.IGNORECASE,
+        ):
+            candidate_with_year = f"{candidate} {current_year}"
         for fmt in (
             "%Y-%m-%d",
             "%m/%d/%Y",
@@ -725,9 +834,17 @@ def _parse_date_candidate(raw_text: str) -> str:
             "%m-%d-%y",
             "%B %d %Y",
             "%b %d %Y",
+            "%m/%d",
+            "%m-%d",
+            "%B %d",
+            "%b %d",
         ):
             try:
-                return datetime.strptime(candidate, fmt).date().isoformat()
+                parsed_source = candidate_with_year if "%Y" in fmt else candidate
+                parsed = datetime.strptime(parsed_source, fmt)
+                if "%Y" not in fmt:
+                    parsed = parsed.replace(year=current_year)
+                return parsed.date().isoformat()
             except ValueError:
                 continue
     return ""
@@ -740,8 +857,10 @@ def _extract_dates_from_text(text: str) -> list[str]:
 
     candidates = re.findall(
         r"\b\d{4}-\d{2}-\d{2}\b|"
+        r"\b\d{1,2}[/-]\d{1,2}\b|"
         r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|"
-        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,\s*|\s+)\d{2,4}\b",
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,\s*|\s+)\d{2,4}\b|"
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b",
         raw_text,
         re.IGNORECASE,
     )
@@ -805,6 +924,74 @@ def _has_schedule_hint(text: str) -> bool:
     return has_event_keyword and has_time_or_date
 
 
+def _extract_time_from_text(text: str) -> str:
+    value = _safe_str(text)
+    if not value:
+        return ""
+    match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", value, re.IGNORECASE)
+    if not match:
+        return ""
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    if hour < 1 or hour > 12 or minute > 59:
+        return ""
+    return f"{hour}:{minute:02d} {match.group(3).upper()}"
+
+
+def _infer_service_type_from_instructions(text: str) -> str:
+    value = _safe_str(text).lower()
+    if not value:
+        return ""
+    if any(keyword in value for keyword in ["visitation", "viewing", "wake"]):
+        return "visitation"
+    if any(keyword in value for keyword in ["burial", "graveside", "interment", "committal", "cemetery"]):
+        return "graveside"
+    if "celebration of life" in value or "memorial" in value:
+        return "memorial"
+    if "church" in value or "chapel" in value:
+        return "church"
+    if "funeral" in value or "service" in value:
+        return "funeral"
+    return "customer-provided schedule"
+
+
+def _instruction_schedule_fields(text: str) -> dict:
+    instruction_text = _safe_str(text)
+    if not _has_schedule_hint(instruction_text):
+        return {}
+
+    normalized_dates = _extract_dates_from_text(instruction_text)
+    normalized_time = _extract_time_from_text(instruction_text)
+    lowered = instruction_text.lower()
+    field_prefix = "service"
+    field_label = "Service"
+    if any(keyword in lowered for keyword in ["visitation", "viewing", "wake"]):
+        field_prefix = "visitation"
+        field_label = "Visitation"
+    elif any(keyword in lowered for keyword in ["ceremony", "burial", "graveside", "interment", "committal"]):
+        field_prefix = "ceremony"
+        field_label = "Ceremony"
+
+    formatted_bits = []
+    if normalized_dates:
+        formatted_bits.append(normalized_dates[0])
+    if normalized_time:
+        formatted_bits.append(normalized_time)
+
+    fields = {
+        "service_type": _infer_service_type_from_instructions(instruction_text),
+        "special_instructions": (
+            f"{field_label} schedule from customer instructions: {' '.join(formatted_bits).strip() or 'timing noted'}"
+            f" | Original order instructions: {instruction_text}"
+        )[:1000],
+    }
+    if normalized_dates:
+        fields[f"{field_prefix}_date"] = normalized_dates[0]
+    if normalized_time:
+        fields[f"{field_prefix}_time"] = normalized_time
+    return fields
+
+
 def _destination_type(order: dict) -> str:
     destination_text = " ".join(
         [
@@ -841,6 +1028,30 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
     adjusted = dict(parsed)
     notes = _safe_str(adjusted.get("notes"))
     customer_instructions = _safe_str(order.get("ord_instruct"))
+    original_venue_evidence = bool(
+        _safe_str(parsed.get("funeral_home_name"))
+        or _safe_str(parsed.get("funeral_address"))
+        or _safe_str(parsed.get("funeral_phone"))
+        or _safe_str(parsed.get("service_type"))
+    )
+    original_timing_evidence = bool(
+        _safe_str(parsed.get("service_date"))
+        or _safe_str(parsed.get("service_time"))
+        or _safe_str(parsed.get("visitation_date"))
+        or _safe_str(parsed.get("visitation_time"))
+        or _safe_str(parsed.get("ceremony_date"))
+        or _safe_str(parsed.get("ceremony_time"))
+    )
+    instruction_schedule = _instruction_schedule_fields(customer_instructions)
+
+    for field, value in instruction_schedule.items():
+        if not value:
+            continue
+        if field == "special_instructions":
+            adjusted["special_instructions"] = _merge_pipe_text(adjusted.get("special_instructions"), value)
+            continue
+        if not _safe_str(adjusted.get(field)):
+            adjusted[field] = value
 
     has_datetime_pair = bool(
         (_safe_str(adjusted.get("service_date")) and _safe_str(adjusted.get("service_time")))
@@ -867,6 +1078,7 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
     has_obituary_url = any(_is_obituary_like_url(url) for url in source_urls)
     has_legacy_source = any("legacy.com" in str(url).lower() for url in source_urls)
     has_valid_source_url = bool(source_urls)
+    has_external_source_evidence = bool(has_valid_source_url or original_venue_evidence or original_timing_evidence)
     service_type_normalized = _safe_str(adjusted.get("service_type")).lower()
     has_venue_evidence = bool(
         _safe_str(adjusted.get("funeral_home_name"))
@@ -891,13 +1103,7 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         or has_time_evidence
     )
 
-    if _has_schedule_hint(customer_instructions):
-        existing_instructions = _safe_str(adjusted.get("special_instructions"))
-        customer_note = f"Customer-provided schedule: {customer_instructions}"[:1000]
-        if not existing_instructions:
-            adjusted["special_instructions"] = customer_note
-        elif customer_instructions not in existing_instructions:
-            adjusted["special_instructions"] = f"{existing_instructions} | {customer_note}"[:1000]
+    if instruction_schedule:
         if not _safe_str(adjusted.get("matched_name")):
             adjusted["matched_name"] = _clean_ship_name_for_prompt(order.get("ship_name")) or "customer-provided schedule"
 
@@ -905,7 +1111,7 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         order.get("ship_name"),
         adjusted.get("matched_name"),
     )
-    if _has_schedule_hint(customer_instructions) and name_match_status in {"missing", "mismatch"} and not has_source_evidence:
+    if instruction_schedule and name_match_status in {"missing", "mismatch"} and not has_source_evidence:
         name_match_status = "exact"
         adjusted_name = _clean_ship_name_for_prompt(order.get("ship_name")) or "customer-provided schedule"
         name_match_note = f"Name verified from order instructions: {adjusted_name}"
@@ -919,7 +1125,7 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
     notes = _append_unique_note(notes, date_verification_note)
 
     score = float(adjusted.get("ai_accuracy_score") or 0)
-    instruction_has_schedule = _has_schedule_hint(customer_instructions)
+    instruction_has_schedule = bool(instruction_schedule)
     has_schedule_text = _has_schedule_hint(adjusted.get("special_instructions"))
 
     if name_match_status == "mismatch" and (has_source_evidence or has_any_timing or instruction_has_schedule):
@@ -930,6 +1136,15 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         adjusted["match_status"] = "Review"
         adjusted["ai_accuracy_score"] = min(max(score, 60.0), 84.0)
         notes = _append_unique_note(notes, "Review: source date conflicts with customer instructions")
+    elif (
+        instruction_schedule
+        and not has_external_source_evidence
+        and date_verification_status in {"verified", "instruction_only"}
+        and name_match_status in {"exact", "minor", "fuzzy"}
+    ):
+        adjusted["match_status"] = "Customer"
+        adjusted["ai_accuracy_score"] = max(score, 72.0)
+        notes = _append_unique_note(notes, "Customer: schedule normalized from order instructions because outside sources did not confirm it")
     elif (
         name_match_status in {"exact", "minor", "fuzzy"}
         and has_valid_source_url
@@ -953,9 +1168,9 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         adjusted["match_status"] = "Found"
         adjusted["ai_accuracy_score"] = max(score, 85.0 if date_verification_status == "verified" else 80.0)
     elif date_verification_status == "instruction_only" and name_match_status in {"exact", "minor", "fuzzy"}:
-        adjusted["match_status"] = "Found"
-        adjusted["ai_accuracy_score"] = max(score, 75.0)
-        notes = _append_unique_note(notes, "Found via existing order instructions with schedule")
+        adjusted["match_status"] = "Customer"
+        adjusted["ai_accuracy_score"] = max(score, 72.0)
+        notes = _append_unique_note(notes, "Customer: schedule verified from order instructions because no reliable outside source was found")
     elif date_verification_status == "invalid":
         adjusted["match_status"] = "Review"
         adjusted["ai_accuracy_score"] = min(max(score, 55.0), 84.0)
@@ -1030,12 +1245,13 @@ def load_order_ids_from_csv(csv_path: Path) -> set:
     if not csv_path.exists():
         return set()
     ids = set()
-    with open(csv_path, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            order_id = _normalize_order_id(row.get("order_id"))
-            if order_id:
-                ids.add(order_id)
+    _, rows, encoding_used = _read_csv_dict_rows(csv_path)
+    if encoding_used not in {"utf-8-sig", "utf-8"}:
+        print(f"[{SCRIPT_NAME}] INFO: Read {csv_path.name} using {encoding_used} fallback")
+    for row in rows:
+        order_id = _normalize_order_id(row.get("order_id"))
+        if order_id:
+            ids.add(order_id)
     return ids
 
 # ── Input reader ─────────────────────────────────────────────────────────────
@@ -1053,27 +1269,29 @@ def load_orders_from_inquiry() -> list:
     orders = []
     seen_ids = set()
 
-    with open(INPUT_CSV, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            oid = _safe_str(row.get("order_id"))
-            if not oid or oid in seen_ids:
-                continue
-            seen_ids.add(oid)
+    _, rows, encoding_used = _read_csv_dict_rows(INPUT_CSV)
+    if encoding_used not in {"utf-8-sig", "utf-8"}:
+        print(f"[{SCRIPT_NAME}] INFO: Read {INPUT_CSV.name} using {encoding_used} fallback")
 
-            orders.append({
-                "order_id":          oid,
-                "task_id":           _safe_str(row.get("task_id")),
-                "ship_name":         _safe_str(row.get("ship_name")),
-                "ship_city":         _safe_str(row.get("ship_city")),
-                "ship_state":        _safe_str(row.get("ship_state")),
-                "ship_zip":          _safe_str(row.get("ship_zip")),
-                "ship_care_of":      _safe_str(row.get("ship_care_of")),
-                "ship_address":      _safe_str(row.get("ship_address")),
-                "ship_address_unit": _safe_str(row.get("ship_address_unit")),
-                "ship_country":      _safe_str(row.get("ship_country")),
-                "ord_instruct":      _safe_str(row.get("ord_instruct")),
-            })
+    for row in rows:
+        oid = _safe_str(row.get("order_id"))
+        if not oid or oid in seen_ids:
+            continue
+        seen_ids.add(oid)
+
+        orders.append({
+            "order_id":          oid,
+            "task_id":           _safe_str(row.get("task_id")),
+            "ship_name":         _safe_str(row.get("ship_name")),
+            "ship_city":         _safe_str(row.get("ship_city")),
+            "ship_state":        _safe_str(row.get("ship_state")),
+            "ship_zip":          _safe_str(row.get("ship_zip")),
+            "ship_care_of":      _safe_str(row.get("ship_care_of")),
+            "ship_address":      _safe_str(row.get("ship_address")),
+            "ship_address_unit": _safe_str(row.get("ship_address_unit")),
+            "ship_country":      _safe_str(row.get("ship_country")),
+            "ord_instruct":      _safe_str(row.get("ord_instruct")),
+        })
 
     return orders
 
@@ -1142,18 +1360,34 @@ def rebuild_excel_from_csv(csv_path: Path, excel_path: Path, sheet_name: str = "
     if not OPENPYXL_AVAILABLE or not csv_path.exists():
         return
     excel_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(csv_path, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames or FIELDNAMES
-        all_rows = list(reader)
+    try:
+        fieldnames, all_rows, encoding_used = _read_csv_dict_rows(csv_path)
+        if not fieldnames:
+            fieldnames = list(FIELDNAMES)
+        if encoding_used not in {"utf-8-sig", "utf-8"}:
+            print(f"[{SCRIPT_NAME}] INFO: Rebuilt {excel_path.name} from {csv_path.name} using {encoding_used} fallback")
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = sheet_name
-    ws.append(list(fieldnames))
-    for row in all_rows:
-        ws.append([row.get(col, "") for col in fieldnames])
-    wb.save(excel_path)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = sheet_name[:31] or "Sheet1"
+        ws.append(list(fieldnames))
+        for row in all_rows:
+            ws.append([_safe_str(row.get(col, "")) for col in fieldnames])
+
+        temp_excel_path = excel_path.with_name(f"{excel_path.stem}.tmp{excel_path.suffix}")
+        wb.save(temp_excel_path)
+        temp_excel_path.replace(excel_path)
+        _resolve_error_report(
+            "excel_rebuild",
+            {"csv_path": str(csv_path), "excel_path": str(excel_path), "rows": len(all_rows)},
+        )
+    except Exception as exc:
+        _record_error_report(
+            "excel_rebuild",
+            str(exc),
+            {"csv_path": str(csv_path), "excel_path": str(excel_path), "sheet_name": sheet_name},
+        )
+        print(f"[{SCRIPT_NAME}] WARNING: Excel rebuild skipped for {excel_path.name}: {exc}")
 
 
 def append_to_payload_json(order_id: str, payload: dict):
@@ -1173,7 +1407,13 @@ def append_to_payload_json(order_id: str, payload: dict):
 
 def save_record_to_status_outputs(record: dict, status: str, date_key: Optional[str] = None) -> None:
     """Persist record into category-specific canonical and date-wise files."""
-    normalized_status = _safe_str(status)
+    normalized_status = normalize_match_status(status)
+    if normalized_status == "Customer":
+        save_one_record_to_csv(CUSTOMER_CSV_PATH, record)
+        rebuild_excel_from_csv(CUSTOMER_CSV_PATH, CUSTOMER_EXCEL_PATH, "Customer")
+        save_one_record_to_csv(get_date_wise_output_path("Funeral_data_customer.csv", date_key), record)
+        return
+
     if normalized_status == "Found":
         save_one_record_to_csv(FOUND_CSV_PATH, record)
         rebuild_excel_from_csv(FOUND_CSV_PATH, FOUND_EXCEL_PATH, "Found")
@@ -1257,12 +1497,8 @@ def parse_ai_response(ai_text: str) -> dict:
         ai_data.get("Match Status") or ai_data.get("result")      or ""
     )
     status_lower = raw_status.lower().strip()
-    if status_lower in ("found", "matched", "yes", "confirmed"):
-        match_status = "Found"
-    elif status_lower in ("notfound", "not_found", "not found", "mismatched", "no", "none"):
-        match_status = "NotFound"
-    elif status_lower in ("review", "needs_review", "needs review", "uncertain", "unverified"):
-        match_status = "Review"
+    if status_lower:
+        match_status = normalize_match_status(status_lower)
     else:
         has_data = bool(
             ai_data.get("funeral_home_name") or ai_data.get("Funeral home name (optional)") or
@@ -1442,6 +1678,12 @@ def main():
 
     date_wise_csv_path = get_date_wise_csv_path(run_date_key)
     _, date_wise_log_path = ensure_log_files(run_date_key)
+    previous_error_report = _load_error_report()
+    if previous_error_report and not previous_error_report.get("resolved_at"):
+        print(
+            f"[{SCRIPT_NAME}] Previous error report loaded: "
+            f"{_safe_str(previous_error_report.get('stage'))} -> {_safe_str(previous_error_report.get('message'))}"
+        )
 
     # Load prompt template
     template_path = Path(os.getenv("FUNERAL_PROMPT_TEMPLATE", str(DEFAULT_PROMPT_TEMPLATE)))
@@ -1482,6 +1724,7 @@ def main():
     new_count     = 0
     skipped_count = 0
     error_count   = 0
+    customer_count = 0
     found_count   = 0
     not_found_count = 0
     review_count  = 0
@@ -1558,7 +1801,7 @@ def main():
         parsed = _apply_business_rules(order, parsed)
 
         # Show result in terminal
-        status = parsed["match_status"]
+        status = normalize_match_status(parsed["match_status"])
         score  = parsed["ai_accuracy_score"]
         status_icon = {"Found": "✅", "NotFound": "❌", "Review": "⚠️"}.get(status, "❓")
         print(f"  {status_icon} Status: {status}  |  AI Score: {score}%")
@@ -1602,7 +1845,10 @@ def main():
 
         # ── CATEGORY FILES: Found / NotFound / Review ────────────────────
         save_record_to_status_outputs(record, status, run_date_key)
-        if status == "NotFound":
+        if status == "Customer":
+            customer_count += 1
+            print("  Also saved to Funeral_data_customer.csv & .xlsx")
+        elif status == "NotFound":
             not_found_count += 1
             print(f"  📁 Also saved to Funeral_data_not_found.csv & .xlsx")
         elif status == "Review":
@@ -1654,7 +1900,7 @@ def main():
     print(f"{'═'*60}")
     print(
         f"[{SCRIPT_NAME}] RUN SUMMARY | "
-        f"Found={found_count} | Review={review_count} | NotFound={not_found_count} | "
+        f"Customer={customer_count} | Found={found_count} | Review={review_count} | NotFound={not_found_count} | "
         f"Skipped={skipped_count} | Errors={error_count} | Total={total} | Processed={new_count}"
     )
 

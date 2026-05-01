@@ -41,7 +41,28 @@ export function formatTimeZoneLabel(timeZone?: string | null): string {
     hour12: false,
   }).formatToParts(now);
   const offset = parts.find((part) => part.type === "timeZoneName")?.value || "GMT";
-  return `${offset} · ${normalized}`;
+  return `${offset} | ${normalized}`;
+}
+
+export function formatCountdown(seconds?: number | null): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return "Not scheduled";
+  }
+  if (seconds <= 0) {
+    return "Now";
+  }
+
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+  return `${remainingSeconds}s`;
 }
 
 export const GMT_TIMEZONE_OPTIONS = [
