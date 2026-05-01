@@ -68,6 +68,7 @@ backend/data/run_history_logs.jsonl
 /deploy_sync.tar
 /funeral_Apr_15.xlsx
 /public/favicon.ico
+blossomflower-494817-d633c292e382.json
 # Ignore DB + large files
 backend/data/*.sqlite*
 backend/data/*.db
