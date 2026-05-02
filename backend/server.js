@@ -885,6 +885,95 @@ function updateProgressFromOutput(jobId, output) {
   syncPipelineProgressFromChild(updatedJob ?? { ...job, progress: nextProgress, progressMode: signal.mode });
 }
 
+function updateProgressFromOutput(jobId, output) {
+  const text = String(output || "");
+  if (!text) {
+    return;
+  }
+
+  let current = null;
+  let total = null;
+
+  // Pattern 1: "processed so far: N" (Funeral_Finder)
+  const processedMatch = text.match(/processed so far:\s*(\d+)/i);
+  if (processedMatch) {
+    current = Number(processedMatch[1]);
+  }
+
+  // Pattern 2: "LIVE PROCESSING – N orders/tasks" (total count)
+  const totalMatch = text.match(/LIVE PROCESSING\s+[–-]\s+(\d+)\s+(?:tasks|orders)\b/i);
+  if (totalMatch) {
+    total = Number(totalMatch[1]);
+  }
+
+  // Pattern 3: "[X/Y]" bracket format used by pipeline stages
+  const bracketMatch = text.match(/\[(\d+)\/(\d+)\]/);
+  if (bracketMatch) {
+    current = Number(bracketMatch[1]);
+    total = Number(bracketMatch[2]);
+  }
+
+  // Pattern 4: "Processing X of Y" or "Task X of Y" or "Order X of Y"
+  const ofMatch = text.match(/(?:Processing|Task|Order|Row|Record|Closing|Uploading|Verifying|Re-verifying)\s+(\d+)\s+of\s+(\d+)/i);
+  if (ofMatch) {
+    current = Number(ofMatch[1]);
+    total = Number(ofMatch[2]);
+  }
+
+  // Pattern 5: Percentage in output "XX%" or "XX.X%"
+  const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%\s*(?:complete|done|progress|finished)/i);
+  if (percentMatch) {
+    current = Number(percentMatch[1]);
+    total = 100;
+  }
+
+  // Pattern 6: Stage completion markers (give progress bumps even without numbers)
+  const stageCompletionPatterns = [
+    { regex: /fetching\s+(?:tasks|orders)/i, progress: 10 },
+    { regex: /(?:tasks|orders)\s+(?:loaded|fetched|retrieved)/i, progress: 20 },
+    { regex: /INPUT SUMMARY/i, progress: 15 },
+    { regex: /TASK COMPLETION SUMMARY/i, progress: 95 },
+    { regex: /completed successfully/i, progress: 95 },
+    { regex: /finished with code 0/i, progress: 95 },
+    { regex: /Sending to Perplexity/i, progress: null },
+    { regex: /Preparing upload/i, progress: 60 },
+    { regex: /Upload complete/i, progress: 90 },
+  ];
+
+  let stageProgress = null;
+  for (const pattern of stageCompletionPatterns) {
+    if (pattern.regex.test(text) && pattern.progress !== null) {
+      stageProgress = pattern.progress;
+    }
+  }
+
+  if (current === null && total === null && stageProgress === null) {
+    return;
+  }
+
+  const jobs = loadJobs();
+  const index = jobs.findIndex((entry) => entry.id === jobId);
+  if (index === -1) {
+    return;
+  }
+
+  const job = jobs[index];
+  const currentProgress = Number(job.progress || 0);
+  let nextProgress = currentProgress;
+
+  if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+    nextProgress = Math.min(95, Math.max(currentProgress, Math.round((current / total) * 100)));
+  } else if (Number.isFinite(current)) {
+    nextProgress = Math.min(95, Math.max(currentProgress, current));
+  } else if (stageProgress !== null) {
+    nextProgress = Math.min(95, Math.max(currentProgress, stageProgress));
+  }
+
+  if (nextProgress > currentProgress) {
+    upsertJob(jobId, { progress: nextProgress });
+  }
+}
+
 function appendScriptRunSummary(jobId, scriptId) {
   const job = loadJobs().find((entry) => entry.id === jobId);
   if (!job) return;
@@ -1369,6 +1458,21 @@ function clearScheduleTimer(scheduleId) {
   }
   clearTimeout(activeTimer.timeout);
   scheduleTasks.delete(scheduleId);
+}
+
+function updateScheduleMetadata(scheduleId, patch) {
+  const schedules = loadSchedules();
+  const index = schedules.findIndex((item) => item.id === scheduleId);
+  if (index === -1) {
+    return null;
+  }
+  schedules[index] = {
+    ...schedules[index],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  saveSchedules(schedules);
+  return schedules[index];
 }
 
 function registerSchedule(schedule) {

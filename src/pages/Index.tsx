@@ -47,6 +47,12 @@ const Index = () => {
     refetchInterval: 2_000,
   });
 
+  const { data: pipelineStatusData } = useQuery({
+    queryKey: ["pipeline-status"],
+    queryFn: api.pipelineStatus,
+    refetchInterval: 2000,
+  });
+
   const scripts = scriptsData?.scripts ?? [];
   const jobs = jobsData?.jobs ?? [];
   const executionLocked = (pipelineStatusData?.activeWorkloads ?? 0) > 0;
@@ -90,6 +96,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <DashboardHeader />
+      <UserAdminPanel />
 
       <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 lg:px-6">
         <OrderStatsPanel />

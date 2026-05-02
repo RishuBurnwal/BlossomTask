@@ -3,7 +3,7 @@
     "id": "schedule_1774486613530_jv1cv9",
     "name": "Default Sequential Pipeline",
     "cron": "*/30 * * * *",
-    "enabled": true,
+    "enabled": false,
     "sequence": [
       {
         "scriptId": "get-task"
