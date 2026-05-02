@@ -1,0 +1,614 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Play, Eye, RotateCcw, Loader2, CheckCircle2, XCircle, Square, Terminal, Clock, ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { type Job, type ScriptConfig } from "@/lib/types";
+import { api } from "@/lib/api";
+import { formatDateTime } from "@/lib/time";
+import { toast } from "sonner";
+import { ViewOptionsModal } from "./ViewOptionsModal";
+
+interface ScriptPanelProps {
+  script: ScriptConfig;
+  liveJob?: Job;
+  executionLocked?: boolean;
+}
+
+const UPDATER_MODE_LABELS: Record<string, string> = {
+  complete: "Complete (All Records)",
+  found_only: "Found Only",
+  not_found: "Not Found Only",
+  review: "Review Data Only",
+};
+
+function formatElapsed(startedAt: string | null | undefined): string {
+  if (!startedAt) return "0s";
+  const elapsed = Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 1000));
+  if (elapsed < 60) return `${elapsed}s`;
+  const min = Math.floor(elapsed / 60);
+  const sec = elapsed % 60;
+  return `${min}m ${sec}s`;
+}
+
+function formatDuration(startedAt?: string | null, finishedAt?: string | null): string {
+  if (!startedAt || !finishedAt) return "";
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  const sec = Math.max(1, Math.round(ms / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${min}m ${s}s`;
+}
+
+function getJobRecency(job?: Job | null): number {
+  if (!job) return 0;
+  const timestamp = job.updatedAt || job.finishedAt || job.startedAt || job.createdAt;
+  const parsed = Date.parse(String(timestamp || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isActiveJob(job?: Job | null): boolean {
+  return job?.status === "running" || job?.status === "queued";
+}
+
+export function ScriptPanel({ script, liveJob, executionLocked = false }: ScriptPanelProps) {
+  const [status, setStatus] = useState<"idle" | "running" | "success" | "error">("idle");
+  const [selectedOption, setSelectedOption] = useState(script.options?.[0] ?? "");
+  const [selectedForceLatestCount, setSelectedForceLatestCount] = useState<number>(script.forceLatestOptions?.[0] ?? 25);
+  const [showViewOptions, setShowViewOptions] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [stickToBottom, setStickToBottom] = useState(true);
+  const [elapsedTick, setElapsedTick] = useState(0);
+  const terminalRef = useRef<HTMLPreElement | null>(null);
+  const { data: authData } = useQuery({
+    queryKey: ["auth"],
+    queryFn: api.authMe,
+    staleTime: 30_000,
+  });
+  const configuredTimezone = authData?.configuredTimezone;
+
+  // Elapsed time ticker while running
+  useEffect(() => {
+    if (status !== "running") return;
+    const interval = setInterval(() => setElapsedTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [status]);
+
+  const runMutation = useMutation({
+    mutationFn: (payload?: { option?: string; forceLatestCount?: number }) => api.runScript(script.id, payload),
+    onSuccess: ({ jobId }, variables) => {
+      setActiveJobId(jobId);
+      setStatus("running");
+      const forceLabel = variables?.forceLatestCount ? ` [force latest ${variables.forceLatestCount}]` : "";
+      const optionLabel = variables?.option ? ` (${variables.option})` : "";
+      toast.info(`Running ${script.name}${optionLabel}${forceLabel}...`);
+    },
+    onError: (error) => {
+      setStatus("error");
+      toast.error(error.message || `Failed to run ${script.name}`);
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (jobId: string) => api.cancelJob(jobId),
+    onSuccess: () => {
+      toast.info(`${script.name} stopped`);
+    },
+    onError: (error) => {
+      toast.error(error.message || `Failed to stop ${script.name}`);
+    },
+  });
+
+  const effectiveJobId = activeJobId ?? liveJob?.id ?? null;
+
+  const jobQuery = useQuery({
+    queryKey: ["job", effectiveJobId],
+    queryFn: () => api.job(effectiveJobId as string),
+    enabled: Boolean(effectiveJobId),
+    refetchInterval: (query) => {
+      const currentStatus = query.state.data?.job?.status;
+      if (!currentStatus || ["success", "failed", "cancelled"].includes(currentStatus)) {
+        return false;
+      }
+      return 1200;
+    },
+  });
+
+  useEffect(() => {
+    const job = jobQuery.data?.job;
+    if (!job) return;
+
+    setProgress(job.progress || 0);
+    if (job.status === "running" || job.status === "queued") {
+      setStatus("running");
+    } else if (job.status === "success") {
+      setStatus("success");
+      toast.success(`${script.name} completed!`);
+    } else if (job.status === "failed" || job.status === "cancelled") {
+      setStatus("error");
+      toast.error(`${script.name} failed - check logs`);
+    }
+    return;
+  }, [jobQuery.data, script.name]);
+
+  useEffect(() => {
+    if (!liveJob?.id) {
+      return;
+    }
+    const currentJob = jobQuery.data?.job;
+    const liveIsNewer = getJobRecency(liveJob) >= getJobRecency(currentJob);
+    if (!activeJobId || (liveJob.id !== activeJobId && (isActiveJob(liveJob) || liveIsNewer))) {
+      setActiveJobId(liveJob.id);
+    }
+  }, [activeJobId, jobQuery.data?.job, liveJob]);
+
+  useEffect(() => {
+    if (liveJob && isActiveJob(liveJob)) {
+      setShowTerminal(true);
+      setStickToBottom(true);
+    }
+  }, [liveJob]);
+
+  const runScript = (payload?: { option?: string; forceLatestCount?: number }) => {
+    const option = payload?.option;
+    const forceLatestCount = payload?.forceLatestCount;
+    const resolvedOption = option ?? (script.hasOptions ? selectedOption : undefined);
+    if (resolvedOption) setSelectedOption(resolvedOption);
+    setProgress(0);
+    setShowTerminal(true);
+    setStickToBottom(true);
+    runMutation.mutate({
+      option: resolvedOption,
+      forceLatestCount,
+    });
+  };
+
+  const handleRun = () => {
+    if (executionLocked) {
+      toast.info("Another script/pipeline is running. Wait for completion before starting a new run.");
+      return;
+    }
+    runScript();
+  };
+
+  const handleForceRun = () => {
+    if (executionLocked) {
+      toast.info("Another script/pipeline is running. Wait for completion before starting a new run.");
+      return;
+    }
+    runScript({
+      option: script.hasOptions ? selectedOption : undefined,
+      forceLatestCount: selectedForceLatestCount,
+    });
+  };
+
+  useEffect(() => {
+    if (script.hasOptions && !selectedOption && script.options?.length) {
+      setSelectedOption(script.options[0]);
+    }
+  }, [script.hasOptions, script.options, selectedOption]);
+
+  useEffect(() => {
+    if (script.forceLatestOptions?.length) {
+      setSelectedForceLatestCount((current) => (
+        script.forceLatestOptions?.includes(current) ? current : script.forceLatestOptions[0]
+      ));
+    }
+  }, [script.forceLatestOptions]);
+
+  const reset = () => {
+    setStatus("idle");
+    setProgress(0);
+    setActiveJobId(null);
+    setShowTerminal(false);
+    setStickToBottom(true);
+  };
+
+  const queriedJob = jobQuery.data?.job;
+  const liveIsActive = isActiveJob(liveJob);
+  const queriedIsActive = isActiveJob(queriedJob);
+  const displayJob = liveJob && (
+    (liveIsActive && !queriedIsActive)
+    || (liveIsActive === queriedIsActive && getJobRecency(liveJob) > getJobRecency(queriedJob))
+  )
+    ? liveJob
+    : (queriedJob ?? liveJob);
+  const logLines = useMemo(() => displayJob?.logs ?? [], [displayJob?.logs]);
+
+  const displayProgress = displayJob?.progress ?? progress;
+  const displayProgressMode = displayJob?.progressMode ?? "indeterminate";
+  const displayProgressNote = displayJob?.progressNote ?? "";
+  const runSummary = useMemo(() => {
+    const summaryLine = [...logLines].reverse().find((line) => line.includes("RUN_SUMMARY|"));
+    if (!summaryLine) return null;
+    const payload = summaryLine.split("RUN_SUMMARY|")[1] || "";
+    return payload.split("|").reduce<Record<string, string>>((accumulator, part) => {
+      const [key, value] = part.split("=", 2);
+      if (key && value) {
+        accumulator[key.trim()] = value.trim();
+      }
+      return accumulator;
+    }, {});
+  }, [logLines]);
+  const displayStatus = displayJob
+    ? (displayJob.status === "running" || displayJob.status === "queued"
+        ? "running"
+        : displayJob.status === "success"
+          ? "success"
+          : displayJob.status === "failed" || displayJob.status === "cancelled"
+            ? "error"
+            : "idle")
+    : status;
+
+  const statusConfig: Record<string, { icon: JSX.Element; label: string; color: string; bg: string }> = {
+    idle: {
+      icon: <Square className="h-3.5 w-3.5" />,
+      label: "Idle",
+      color: "text-muted-foreground",
+      bg: "bg-muted/50",
+    },
+    running: {
+      icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+      label: "Running",
+      color: "text-blue-500",
+      bg: "bg-blue-500/10",
+    },
+    success: {
+      icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+      label: "Done",
+      color: "text-emerald-500",
+      bg: "bg-emerald-500/10",
+    },
+    error: {
+      icon: <XCircle className="h-3.5 w-3.5" />,
+      label: "Failed",
+      color: "text-red-500",
+      bg: "bg-red-500/10",
+    },
+  };
+
+  const currentStatus = statusConfig[displayStatus] || statusConfig.idle;
+
+  // Elapsed time string
+  const elapsedStr = displayStatus === "running"
+    ? formatElapsed(displayJob?.startedAt)
+    : formatDuration(displayJob?.startedAt, displayJob?.finishedAt);
+
+  // suppress unused variable lint
+  void elapsedTick;
+
+  // Terminal auto-scroll
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || !stickToBottom) return;
+    terminal.scrollTop = terminal.scrollHeight;
+  }, [logLines, stickToBottom]);
+
+  const handleTerminalScroll = () => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const remaining = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight;
+    setStickToBottom(remaining < 24);
+  };
+
+  // Colorize terminal lines
+  const colorizeLogLine = (line: string): string => {
+    if (line.includes("SUCCESS") || line.includes("DONE") || line.startsWith("OK|"))
+      return "terminal-line-success";
+    if (line.includes("ERROR") || line.includes("FAILED") || line.startsWith("ERR|"))
+      return "terminal-line-error";
+    if (line.includes("SKIP") || line.includes("WARNING") || line.includes("Review"))
+      return "terminal-line-warn";
+    if (line.includes("SKIP"))
+      return "terminal-line-skip";
+    if (line.includes("===") || line.includes("---") || line.includes("|"))
+      return "terminal-line-border";
+    if (line.includes("RUN_SUMMARY|"))
+      return "terminal-line-summary";
+    return "";
+  };
+
+  return (
+    <>
+      <div className={`group rounded-xl border bg-card p-4 card-shadow transition-all duration-300 hover:card-shadow-hover animate-fade-in ${
+        displayStatus === "running" ? "ring-2 ring-blue-500/30" : ""
+      }`}>
+        {/* Header */}
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold truncate">{script.name}</h3>
+            <p className="text-xs text-muted-foreground truncate">{script.description}</p>
+          </div>
+          <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${currentStatus.color} ${currentStatus.bg}`}>
+            {currentStatus.icon}
+            <span>{currentStatus.label}</span>
+            {displayStatus === "running" && (
+              <span className="ml-1 tabular-nums">{elapsedStr}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        {displayStatus === "running" && displayProgressMode === "determinate" && (
+          <div className="mb-3 space-y-1">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-500 ease-out"
+                style={{ width: `${Math.min(displayProgress, 100)}%` }}
+              />
+            </div>
+              <div className="flex items-center justify-between gap-3 text-[10px] text-muted-foreground tabular-nums">
+                <span>
+                {displayJob?.progressCurrent != null && displayJob?.progressTotal != null
+                  ? `${displayJob.progressCurrent}/${displayJob.progressTotal}`
+                  : (displayProgressNote || "Live progress")}
+                </span>
+                <span>{displayProgress}%</span>
+              </div>
+          </div>
+        )}
+
+        {displayStatus === "running" && displayProgressMode !== "determinate" && (
+          <div className="mb-3 space-y-1">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-blue-500 to-blue-300" />
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {displayProgressNote || "Waiting for live progress counts from the script..."}
+            </p>
+          </div>
+        )}
+
+        {/* Meta info */}
+        {displayJob?.updatedAt && displayStatus !== "running" && (
+          <div className="mb-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {formatDateTime(displayJob.updatedAt, configuredTimezone)}
+            </span>
+            {elapsedStr && (
+              <span>{elapsedStr}</span>
+            )}
+          </div>
+        )}
+
+        {runSummary && (
+          <div className="mb-3 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {"Found" in runSummary || "Review" in runSummary || "NotFound" in runSummary
+              ? `Summary: found ${runSummary.Found ?? "0"} • review ${runSummary.Review ?? "0"} • not found ${runSummary.NotFound ?? "0"} • updated ${runSummary.UpdatedMain ?? "0"} • skipped ${runSummary.SkippedLogged ?? "0"}`
+              : `Summary: status ${runSummary.status ?? displayJob?.status ?? "n/a"} • exit ${runSummary.exitCode ?? displayJob?.exitCode ?? "n/a"} • duration ${runSummary.durationSec ?? "n/a"}s • logs ${runSummary.logLines ?? logLines.length}`}
+          </div>
+        )}
+
+        {/* Options dropdown */}
+        {script.hasOptions && (
+          <div className="mb-3 flex items-center gap-2 text-xs">
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+            <span className="text-muted-foreground">
+              {script.id === "updater" ? "File Source:" : "Mode:"}
+            </span>
+            <select
+              value={selectedOption}
+              onChange={(event) => setSelectedOption(event.target.value)}
+              className="h-8 rounded-md border bg-background px-2 text-xs flex-1"
+            >
+              {(script.options || []).map((option) => (
+                <option key={option} value={option}>
+                  {script.id === "updater"
+                    ? UPDATER_MODE_LABELS[option] || option
+                    : option}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Selected mode badge for updater */}
+        {script.id === "updater" && selectedOption && (
+          <div className="mb-3">
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">
+              Mode {UPDATER_MODE_LABELS[selectedOption] || selectedOption}
+            </span>
+          </div>
+        )}
+
+        {script.supportsForceLatest && script.forceLatestOptions?.length ? (
+          <div className="mb-3 rounded-lg border bg-muted/20 p-3">
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              Force Run Latest Data
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Newest rows:</span>
+              <select
+                value={String(selectedForceLatestCount)}
+                onChange={(event) => setSelectedForceLatestCount(Number(event.target.value))}
+                className="h-8 min-w-[110px] rounded-md border bg-background px-2 text-xs"
+              >
+                {script.forceLatestOptions.map((count) => (
+                  <option key={count} value={String(count)}>
+                    Last {count}
+                  </option>
+                ))}
+                {!script.forceLatestOptions.includes(selectedForceLatestCount) ? (
+                  <option value={String(selectedForceLatestCount)}>
+                    Custom {selectedForceLatestCount}
+                  </option>
+                ) : null}
+              </select>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={selectedForceLatestCount}
+                onChange={(event) => {
+                  const next = Math.max(1, Number(event.target.value || "1"));
+                  setSelectedForceLatestCount(next);
+                }}
+                className="h-8 w-24 rounded-md border bg-background px-2 text-xs"
+                aria-label="Custom newest row count"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleForceRun}
+                disabled={runMutation.isPending || executionLocked}
+                className="gap-1.5"
+              >
+                <Play className="h-3 w-3" />
+                Force Run
+              </Button>
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Reprocesses the newest GetOrderInquiry rows by `last_processed_at`, even if they were already logged before.
+            </p>
+          </div>
+        ) : null}
+
+        {/* Buttons */}
+        <div className="relative flex flex-wrap gap-2">
+          {displayStatus !== "running" ? (
+            <Button
+              size="sm"
+              onClick={handleRun}
+              disabled={runMutation.isPending || executionLocked}
+              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              <Play className="h-3 w-3" />
+              Run
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => effectiveJobId && cancelMutation.mutate(effectiveJobId)}
+              disabled={cancelMutation.isPending || !effectiveJobId}
+              className="gap-1.5"
+            >
+              <Square className="h-3 w-3" />
+              Stop
+            </Button>
+          )}
+
+          <Button size="sm" variant="outline" onClick={() => setShowViewOptions(true)} className="gap-1.5">
+            <Eye className="h-3 w-3" />
+            View
+          </Button>
+
+          <Button size="sm" variant="ghost" onClick={reset} className="gap-1.5">
+            <RotateCcw className="h-3 w-3" />
+            Reset
+          </Button>
+
+          {effectiveJobId && (
+            <Button
+              size="sm"
+              variant={showTerminal ? "secondary" : "outline"}
+              onClick={() => setShowTerminal((prev) => !prev)}
+              className="gap-1.5 ml-auto"
+            >
+              <Terminal className="h-3 w-3" />
+              {showTerminal ? "Hide" : "Logs"}
+            </Button>
+          )}
+        </div>
+
+        {/* Terminal-like log viewer */}
+        {showTerminal && effectiveJobId && (
+          <div className="mt-3 rounded-lg overflow-hidden border border-zinc-700/50">
+            {/* Terminal header */}
+            <div className="flex items-center justify-between bg-zinc-800 dark:bg-zinc-900 px-3 py-1.5">
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full bg-red-500/80" />
+                  <div className="h-2.5 w-2.5 rounded-full bg-yellow-500/80" />
+                  <div className="h-2.5 w-2.5 rounded-full bg-green-500/80" />
+                </div>
+                <span className="text-[10px] font-mono text-zinc-400">{script.name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-mono ${
+                  displayStatus === "running" ? "text-blue-400" :
+                  displayStatus === "success" ? "text-emerald-400" :
+                  displayStatus === "error" ? "text-red-400" :
+                  "text-zinc-500"
+                }`}>
+                  {displayStatus === "running" ? `running ${elapsedStr}` :
+                   displayStatus === "success" ? "done" :
+                   displayStatus === "error" ? "failed" : "idle"}
+                </span>
+                {!stickToBottom && (
+                  <button
+                    onClick={() => {
+                      setStickToBottom(true);
+                      if (terminalRef.current) {
+                        terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+                      }
+                    }}
+                    className="rounded px-1.5 py-0.5 text-[9px] bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  >
+                    Jump to bottom
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Terminal body */}
+            <pre
+              ref={terminalRef}
+              onScroll={handleTerminalScroll}
+              className="max-h-64 overflow-auto bg-zinc-900 dark:bg-[#0d1117] p-3 text-[11px] font-mono leading-5 text-zinc-300 overscroll-contain"
+            >
+              {logLines.length === 0 ? (
+                <span className="text-zinc-500">Waiting for output...</span>
+              ) : (
+                logLines.map((line, i) => {
+                  const colorClass = colorizeLogLine(line);
+                  // Strip timestamp prefix for cleaner display
+                  const displayLine = line.replace(/^\[\d{4}-\d{2}-\d{2}T[^\]]+\]\s*/, "");
+                  return (
+                    <div key={i} className={`flex gap-2 ${colorClass}`}>
+                      <span className="select-none text-zinc-600 w-6 text-right shrink-0">
+                        {i + 1}
+                      </span>
+                      <span className="flex-1 whitespace-pre-wrap break-all">{displayLine}</span>
+                    </div>
+                  );
+                })
+              )}
+              {displayStatus === "running" && (
+                <div className="flex gap-2">
+                  <span className="text-zinc-600 w-6 text-right shrink-0">&gt;</span>
+                  <span className="animate-pulse text-blue-400">|</span>
+                </div>
+              )}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      <ViewOptionsModal
+        open={showViewOptions}
+        onClose={() => setShowViewOptions(false)}
+        scriptName={script.name}
+        sourcePath={
+          script.id === "get-task"
+            ? "GetTask/data.csv"
+            : script.id === "get-order-inquiry"
+              ? "GetOrderInquiry/data.csv"
+              : script.id === "funeral-finder"
+                ? "Funeral_Finder/Funeral_data.csv"
+                : script.id === "reverify"
+                  ? "Funeral_Finder/Funeral_data.csv"
+                : script.id === "updater"
+                  ? "Updater/data.csv"
+                  : script.id === "closing-task"
+                    ? "ClosingTask/data.csv"
+                    : "master/master_records.csv"
+        }
+      />
+    </>
+  );
+}
+

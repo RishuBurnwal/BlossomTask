@@ -1,0 +1,1069 @@
+{
+  "files": {
+    "pipeline_checkpoint.json": {
+      "absolutePath": "D:\\BlossomTask-master\\pipeline_checkpoint.json",
+      "relativePath": "pipeline_checkpoint.json",
+      "name": "pipeline_checkpoint.json",
+      "group": "Runtime",
+      "size": 119,
+      "modifiedAt": "2026-05-02T19:05:44.724Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "pipeline_control.json": {
+      "absolutePath": "D:\\BlossomTask-master\\pipeline_control.json",
+      "relativePath": "pipeline_control.json",
+      "name": "pipeline_control.json",
+      "group": "Runtime",
+      "size": 175,
+      "modifiedAt": "2026-05-02T19:05:47.044Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "pipeline_last_summary.json": {
+      "absolutePath": "D:\\BlossomTask-master\\pipeline_last_summary.json",
+      "relativePath": "pipeline_last_summary.json",
+      "name": "pipeline_last_summary.json",
+      "group": "Runtime",
+      "size": 963,
+      "modifiedAt": "2026-05-02T19:05:47.045Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "pipeline_logs.jsonl": {
+      "absolutePath": "D:\\BlossomTask-master\\pipeline_logs.jsonl",
+      "relativePath": "pipeline_logs.jsonl",
+      "name": "pipeline_logs.jsonl",
+      "group": "Runtime",
+      "size": 717237,
+      "modifiedAt": "2026-05-02T19:05:47.043Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "pipeline_state.json": {
+      "absolutePath": "D:\\BlossomTask-master\\pipeline_state.json",
+      "relativePath": "pipeline_state.json",
+      "name": "pipeline_state.json",
+      "group": "Runtime",
+      "size": 483,
+      "modifiedAt": "2026-05-02T19:05:47.042Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/ClosingTask/data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\ClosingTask\\data.csv",
+      "relativePath": "Scripts/outputs/ClosingTask/data.csv",
+      "name": "data.csv",
+      "group": "ClosingTask",
+      "size": 108145,
+      "modifiedAt": "2026-05-02T16:23:02.501Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/ClosingTask/data.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\ClosingTask\\data.xlsx",
+      "relativePath": "Scripts/outputs/ClosingTask/data.xlsx",
+      "name": "data.xlsx",
+      "group": "ClosingTask",
+      "size": 41097,
+      "modifiedAt": "2026-05-02T16:23:02.549Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/ClosingTask/logs.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\ClosingTask\\logs.txt",
+      "relativePath": "Scripts/outputs/ClosingTask/logs.txt",
+      "name": "logs.txt",
+      "group": "ClosingTask",
+      "size": 2106,
+      "modifiedAt": "2026-05-02T16:23:02.557Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/ClosingTask/payload.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\ClosingTask\\payload.json",
+      "relativePath": "Scripts/outputs/ClosingTask/payload.json",
+      "name": "payload.json",
+      "group": "ClosingTask",
+      "size": 154713,
+      "modifiedAt": "2026-05-02T16:23:02.557Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_customer.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-27\\Funeral_data_customer.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_customer.csv",
+      "name": "Funeral_data_customer.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.837Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-27\\Funeral_data_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_found.csv",
+      "name": "Funeral_data_found.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.842Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_not_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-27\\Funeral_data_not_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_not_found.csv",
+      "name": "Funeral_data_not_found.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.844Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_review.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-27\\Funeral_data_review.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data_review.csv",
+      "name": "Funeral_data_review.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.847Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-27\\Funeral_data.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-27/Funeral_data.csv",
+      "name": "Funeral_data.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.827Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_customer.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-28\\Funeral_data_customer.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_customer.csv",
+      "name": "Funeral_data_customer.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.867Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-28\\Funeral_data_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_found.csv",
+      "name": "Funeral_data_found.csv",
+      "group": "Funeral_Finder",
+      "size": 56269,
+      "modifiedAt": "2026-05-02T16:22:55.877Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_not_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-28\\Funeral_data_not_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_not_found.csv",
+      "name": "Funeral_data_not_found.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.877Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_review.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-28\\Funeral_data_review.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data_review.csv",
+      "name": "Funeral_data_review.csv",
+      "group": "Funeral_Finder",
+      "size": 534,
+      "modifiedAt": "2026-05-02T16:22:55.887Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-04-28\\Funeral_data.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-04-28/Funeral_data.csv",
+      "name": "Funeral_data.csv",
+      "group": "Funeral_Finder",
+      "size": 56269,
+      "modifiedAt": "2026-05-02T16:22:55.857Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_customer.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-01\\Funeral_data_customer.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_customer.csv",
+      "name": "Funeral_data_customer.csv",
+      "group": "Funeral_Finder",
+      "size": 10599,
+      "modifiedAt": "2026-05-02T16:22:55.917Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-01\\Funeral_data_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_found.csv",
+      "name": "Funeral_data_found.csv",
+      "group": "Funeral_Finder",
+      "size": 151460,
+      "modifiedAt": "2026-05-02T16:22:55.937Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_not_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-01\\Funeral_data_not_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_not_found.csv",
+      "name": "Funeral_data_not_found.csv",
+      "group": "Funeral_Finder",
+      "size": 19247,
+      "modifiedAt": "2026-05-02T16:22:55.947Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_review.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-01\\Funeral_data_review.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data_review.csv",
+      "name": "Funeral_data_review.csv",
+      "group": "Funeral_Finder",
+      "size": 81722,
+      "modifiedAt": "2026-05-02T16:22:55.967Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-01\\Funeral_data.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-01/Funeral_data.csv",
+      "name": "Funeral_data.csv",
+      "group": "Funeral_Finder",
+      "size": 122366,
+      "modifiedAt": "2026-05-02T16:22:55.907Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_customer.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-02\\Funeral_data_customer.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_customer.csv",
+      "name": "Funeral_data_customer.csv",
+      "group": "Funeral_Finder",
+      "size": 2958,
+      "modifiedAt": "2026-05-02T16:22:55.988Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-02\\Funeral_data_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_found.csv",
+      "name": "Funeral_data_found.csv",
+      "group": "Funeral_Finder",
+      "size": 140933,
+      "modifiedAt": "2026-05-02T16:22:56.007Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_not_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-02\\Funeral_data_not_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_not_found.csv",
+      "name": "Funeral_data_not_found.csv",
+      "group": "Funeral_Finder",
+      "size": 12825,
+      "modifiedAt": "2026-05-02T16:22:56.017Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_review.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-02\\Funeral_data_review.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data_review.csv",
+      "name": "Funeral_data_review.csv",
+      "group": "Funeral_Finder",
+      "size": 85290,
+      "modifiedAt": "2026-05-02T16:22:56.160Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\date_wise\\2026-05-02\\Funeral_data.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/date_wise/2026-05-02/Funeral_data.csv",
+      "name": "Funeral_data.csv",
+      "group": "Funeral_Finder",
+      "size": 63498,
+      "modifiedAt": "2026-05-02T16:22:55.983Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_customer.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_customer.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_customer.csv",
+      "name": "Funeral_data_customer.csv",
+      "group": "Funeral_Finder",
+      "size": 13023,
+      "modifiedAt": "2026-05-02T16:22:56.110Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_customer.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_customer.xlsx",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_customer.xlsx",
+      "name": "Funeral_data_customer.xlsx",
+      "group": "Funeral_Finder",
+      "size": 9593,
+      "modifiedAt": "2026-05-02T16:31:48.771Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_found.csv",
+      "name": "Funeral_data_found.csv",
+      "group": "Funeral_Finder",
+      "size": 347594,
+      "modifiedAt": "2026-05-02T16:22:56.105Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_found.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_found.xlsx",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_found.xlsx",
+      "name": "Funeral_data_found.xlsx",
+      "group": "Funeral_Finder",
+      "size": 129208,
+      "modifiedAt": "2026-05-02T16:31:48.904Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_not_found.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_not_found.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_not_found.csv",
+      "name": "Funeral_data_not_found.csv",
+      "group": "Funeral_Finder",
+      "size": 31538,
+      "modifiedAt": "2026-05-02T16:22:56.046Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_not_found.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_not_found.xlsx",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_not_found.xlsx",
+      "name": "Funeral_data_not_found.xlsx",
+      "group": "Funeral_Finder",
+      "size": 17441,
+      "modifiedAt": "2026-05-02T16:31:48.927Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_review.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_review.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_review.csv",
+      "name": "Funeral_data_review.csv",
+      "group": "Funeral_Finder",
+      "size": 166478,
+      "modifiedAt": "2026-05-02T16:22:56.147Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.457Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data_review.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data_review.xlsx",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data_review.xlsx",
+      "name": "Funeral_data_review.xlsx",
+      "group": "Funeral_Finder",
+      "size": 68512,
+      "modifiedAt": "2026-05-02T16:31:48.987Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data.csv",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data.csv",
+      "name": "Funeral_data.csv",
+      "group": "Funeral_Finder",
+      "size": 557166,
+      "modifiedAt": "2026-05-02T16:22:53.607Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/Funeral_data.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\Funeral_data.xlsx",
+      "relativePath": "Scripts/outputs/Funeral_Finder/Funeral_data.xlsx",
+      "name": "Funeral_data.xlsx",
+      "group": "Funeral_Finder",
+      "size": 213058,
+      "modifiedAt": "2026-05-02T16:31:48.755Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/logs_by_date/processed_2026-04-28.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\logs_by_date\\processed_2026-04-28.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/logs_by_date/processed_2026-04-28.txt",
+      "name": "processed_2026-04-28.txt",
+      "group": "Funeral_Finder",
+      "size": 4688,
+      "modifiedAt": "2026-04-27T22:25:34.405Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/logs_by_date/processed_2026-05-01.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\logs_by_date\\processed_2026-05-01.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/logs_by_date/processed_2026-05-01.txt",
+      "name": "processed_2026-05-01.txt",
+      "group": "Funeral_Finder",
+      "size": 11626,
+      "modifiedAt": "2026-05-01T17:12:42.655Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/logs_by_date/processed_2026-05-02.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\logs_by_date\\processed_2026-05-02.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/logs_by_date/processed_2026-05-02.txt",
+      "name": "processed_2026-05-02.txt",
+      "group": "Funeral_Finder",
+      "size": 5536,
+      "modifiedAt": "2026-05-02T16:22:04.682Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/logs.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\logs.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/logs.txt",
+      "name": "logs.txt",
+      "group": "Funeral_Finder",
+      "size": 4014,
+      "modifiedAt": "2026-05-02T16:22:04.682Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/payload.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\payload.json",
+      "relativePath": "Scripts/outputs/Funeral_Finder/payload.json",
+      "name": "payload.json",
+      "group": "Funeral_Finder",
+      "size": 1326490,
+      "modifiedAt": "2026-05-02T16:22:04.677Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/reverify_logs_by_date/reverify_processed_2026-04-27.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\reverify_logs_by_date\\reverify_processed_2026-04-27.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/reverify_logs_by_date/reverify_processed_2026-04-27.txt",
+      "name": "reverify_processed_2026-04-27.txt",
+      "group": "Funeral_Finder",
+      "size": 826,
+      "modifiedAt": "2026-04-27T23:15:34.968Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/reverify_logs_by_date/reverify_processed_2026-05-01.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\reverify_logs_by_date\\reverify_processed_2026-05-01.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/reverify_logs_by_date/reverify_processed_2026-05-01.txt",
+      "name": "reverify_processed_2026-05-01.txt",
+      "group": "Funeral_Finder",
+      "size": 5828,
+      "modifiedAt": "2026-05-01T18:13:16.988Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/reverify_logs_by_date/reverify_processed_2026-05-02.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\reverify_logs_by_date\\reverify_processed_2026-05-02.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/reverify_logs_by_date/reverify_processed_2026-05-02.txt",
+      "name": "reverify_processed_2026-05-02.txt",
+      "group": "Funeral_Finder",
+      "size": 6973,
+      "modifiedAt": "2026-05-02T16:22:56.169Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/reverify_logs.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\reverify_logs.txt",
+      "relativePath": "Scripts/outputs/Funeral_Finder/reverify_logs.txt",
+      "name": "reverify_logs.txt",
+      "group": "Funeral_Finder",
+      "size": 2016,
+      "modifiedAt": "2026-05-02T16:22:56.167Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/reverify_payload.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\reverify_payload.json",
+      "relativePath": "Scripts/outputs/Funeral_Finder/reverify_payload.json",
+      "name": "reverify_payload.json",
+      "group": "Funeral_Finder",
+      "size": 45336137,
+      "modifiedAt": "2026-05-02T16:22:55.797Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/reverify_run_state.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\reverify_run_state.json",
+      "relativePath": "Scripts/outputs/Funeral_Finder/reverify_run_state.json",
+      "name": "reverify_run_state.json",
+      "group": "Funeral_Finder",
+      "size": 277,
+      "modifiedAt": "2026-05-02T16:31:48.560Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Funeral_Finder/run_state.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Funeral_Finder\\run_state.json",
+      "relativePath": "Scripts/outputs/Funeral_Finder/run_state.json",
+      "name": "run_state.json",
+      "group": "Funeral_Finder",
+      "size": 271,
+      "modifiedAt": "2026-05-02T16:31:30.817Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetOrderInquiry/data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetOrderInquiry\\data.csv",
+      "relativePath": "Scripts/outputs/GetOrderInquiry/data.csv",
+      "name": "data.csv",
+      "group": "GetOrderInquiry",
+      "size": 305491,
+      "modifiedAt": "2026-05-02T16:21:58.020Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetOrderInquiry/data.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetOrderInquiry\\data.xlsx",
+      "relativePath": "Scripts/outputs/GetOrderInquiry/data.xlsx",
+      "name": "data.xlsx",
+      "group": "GetOrderInquiry",
+      "size": 135754,
+      "modifiedAt": "2026-05-02T16:21:58.147Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetOrderInquiry/logs.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetOrderInquiry\\logs.txt",
+      "relativePath": "Scripts/outputs/GetOrderInquiry/logs.txt",
+      "name": "logs.txt",
+      "group": "GetOrderInquiry",
+      "size": 4014,
+      "modifiedAt": "2026-05-02T16:21:58.209Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetOrderInquiry/payload.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetOrderInquiry\\payload.json",
+      "relativePath": "Scripts/outputs/GetOrderInquiry/payload.json",
+      "name": "payload.json",
+      "group": "GetOrderInquiry",
+      "size": 997816,
+      "modifiedAt": "2026-05-02T16:21:58.207Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetOrderInquiry/query.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetOrderInquiry\\query.txt",
+      "relativePath": "Scripts/outputs/GetOrderInquiry/query.txt",
+      "name": "query.txt",
+      "group": "GetOrderInquiry",
+      "size": 347,
+      "modifiedAt": "2026-05-02T16:21:58.209Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetTask/data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetTask\\data.csv",
+      "relativePath": "Scripts/outputs/GetTask/data.csv",
+      "name": "data.csv",
+      "group": "GetTask",
+      "size": 58,
+      "modifiedAt": "2026-05-02T16:30:51.722Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetTask/data.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetTask\\data.xlsx",
+      "relativePath": "Scripts/outputs/GetTask/data.xlsx",
+      "name": "data.xlsx",
+      "group": "GetTask",
+      "size": 4892,
+      "modifiedAt": "2026-05-02T16:30:51.737Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetTask/logs.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetTask\\logs.txt",
+      "relativePath": "Scripts/outputs/GetTask/logs.txt",
+      "name": "logs.txt",
+      "group": "GetTask",
+      "size": 4212,
+      "modifiedAt": "2026-05-02T16:21:55.967Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetTask/payload.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetTask\\payload.json",
+      "relativePath": "Scripts/outputs/GetTask/payload.json",
+      "name": "payload.json",
+      "group": "GetTask",
+      "size": 1843,
+      "modifiedAt": "2026-05-02T16:28:48.697Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/GetTask/query.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\GetTask\\query.txt",
+      "relativePath": "Scripts/outputs/GetTask/query.txt",
+      "name": "query.txt",
+      "group": "GetTask",
+      "size": 515,
+      "modifiedAt": "2026-05-02T16:30:51.722Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Updater/data.csv": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Updater\\data.csv",
+      "relativePath": "Scripts/outputs/Updater/data.csv",
+      "name": "data.csv",
+      "group": "Updater",
+      "size": 483902,
+      "modifiedAt": "2026-05-02T16:22:59.964Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Updater/data.xlsx": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Updater\\data.xlsx",
+      "relativePath": "Scripts/outputs/Updater/data.xlsx",
+      "name": "data.xlsx",
+      "group": "Updater",
+      "size": 146281,
+      "modifiedAt": "2026-05-02T16:23:00.048Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Updater/logs.txt": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Updater\\logs.txt",
+      "relativePath": "Scripts/outputs/Updater/logs.txt",
+      "name": "logs.txt",
+      "group": "Updater",
+      "size": 4014,
+      "modifiedAt": "2026-05-02T16:23:00.083Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    },
+    "Scripts/outputs/Updater/payload.json": {
+      "absolutePath": "D:\\BlossomTask-master\\Scripts\\outputs\\Updater\\payload.json",
+      "relativePath": "Scripts/outputs/Updater/payload.json",
+      "name": "payload.json",
+      "group": "Updater",
+      "size": 757619,
+      "modifiedAt": "2026-05-02T16:23:00.081Z",
+      "exists": true,
+      "status": "available",
+      "deleted": false,
+      "lastSeenAt": "2026-05-02T20:43:03.458Z"
+    }
+  },
+  "logs": [
+    {
+      "id": "0f55c5cd-1557-4623-8dbe-e1d3ba929294",
+      "at": "2026-05-02T16:32:25.144Z",
+      "level": "error",
+      "message": "Script closing-task sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "27653a4c-66f5-49cf-b0ef-679192b17cef",
+      "at": "2026-05-02T16:32:15.553Z",
+      "level": "error",
+      "message": "Script closing-task sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "a349ef35-fdb6-45a2-9110-6d706ff43c64",
+      "at": "2026-05-02T16:32:14.041Z",
+      "level": "error",
+      "message": "Script updater sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "aaf0a697-fca1-4bcf-adae-794bd8212f6d",
+      "at": "2026-05-02T16:32:01.132Z",
+      "level": "error",
+      "message": "Script reverify sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "2b132aa4-708f-4711-b203-684ed28a5a43",
+      "at": "2026-05-02T16:31:57.713Z",
+      "level": "error",
+      "message": "Script updater sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "3b21dca3-5f43-48eb-997b-f870810e5cfa",
+      "at": "2026-05-02T16:31:46.688Z",
+      "level": "error",
+      "message": "Script funeral-finder sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "1628ddc0-64d5-4317-a182-42f7e12766d6",
+      "at": "2026-05-02T16:31:45.163Z",
+      "level": "error",
+      "message": "Script reverify sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "9bf1bbee-ce16-4a4d-83e4-bf5a3199f60a",
+      "at": "2026-05-02T16:31:27.726Z",
+      "level": "error",
+      "message": "Script get-order-inquiry sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "0fce529b-c5e1-4e01-9fb9-6b7fe3432da0",
+      "at": "2026-05-02T16:31:26.309Z",
+      "level": "error",
+      "message": "Script funeral-finder sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "89667350-f872-4fc2-883f-d4f49ebfe090",
+      "at": "2026-05-02T16:31:07.356Z",
+      "level": "error",
+      "message": "Script get-task sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "6c3a3400-7601-46fb-a4fb-996e6dd21d1f",
+      "at": "2026-05-02T16:31:06.377Z",
+      "level": "error",
+      "message": "Script get-order-inquiry sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "b78999f1-fe45-44b7-b11f-939687e18301",
+      "at": "2026-05-02T16:30:51.498Z",
+      "level": "error",
+      "message": "Script get-task sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "35d8b70f-ccf4-4788-ab6a-41f64ce0145c",
+      "at": "2026-05-02T16:29:33.740Z",
+      "level": "error",
+      "message": "Script reverify sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "00d04e8d-3adf-4ac7-a416-f306dffe0ef4",
+      "at": "2026-05-02T16:29:27.741Z",
+      "level": "error",
+      "message": "Script funeral-finder sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "4eb631f8-2926-4daa-90d5-6c879dfd256a",
+      "at": "2026-05-02T16:29:09.636Z",
+      "level": "error",
+      "message": "Script get-order-inquiry sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "e8639cf9-1c1f-4e64-a5d8-345e68102835",
+      "at": "2026-05-02T16:28:59.187Z",
+      "level": "error",
+      "message": "Script get-task sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "9ca54495-5447-4b6d-bee5-b6401e276d6a",
+      "at": "2026-05-02T16:28:42.730Z",
+      "level": "error",
+      "message": "Script get-order-inquiry sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "631e9ff0-52df-4d82-8056-4753a9c2c210",
+      "at": "2026-05-02T16:28:24.030Z",
+      "level": "error",
+      "message": "Script get-task sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "ef02a419-ffb2-4594-8fe2-bffc39368db1",
+      "at": "2026-05-02T16:28:09.366Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "10f9df03-c537-4094-aa6e-49b1cd75bdc7",
+      "at": "2026-05-02T16:27:36.185Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "534efa84-c423-44f8-a30d-c126313cc1a0",
+      "at": "2026-05-02T16:27:04.585Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "ab3f3245-4081-4a39-96ae-b856fb0697b7",
+      "at": "2026-05-02T16:26:33.506Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "bd587fc1-bdee-4621-ae08-6ddfea1bcc88",
+      "at": "2026-05-02T16:26:04.612Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "febe83f0-36f7-422f-8fdd-5171142b728f",
+      "at": "2026-05-02T16:25:36.355Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "c4414ca4-5fbf-4c04-975f-f1b88e8933e7",
+      "at": "2026-05-02T16:25:05.759Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "b459652b-2006-4a2c-824c-fc30ac10c2bf",
+      "at": "2026-05-02T16:24:38.523Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "942b0ab9-403b-40b9-8d43-bd12d713763f",
+      "at": "2026-05-02T16:24:11.510Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "f1b65825-5ac6-443c-83a8-28141f82aea3",
+      "at": "2026-05-02T16:23:44.537Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "a8f51744-44c3-4489-9631-92250ffa2f9e",
+      "at": "2026-05-02T16:23:10.573Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "fe916069-be05-4e79-baad-e26443a3a122",
+      "at": "2026-05-02T16:21:44.112Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "9fe1c833-cd74-4882-bbe6-1a1825e8b2d7",
+      "at": "2026-05-02T16:13:13.983Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "c83b77f7-c7ee-4d4a-bd1f-3bd4d9da3242",
+      "at": "2026-05-02T16:12:51.169Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "8dc6267f-feb0-454b-9bc1-b26247afcbee",
+      "at": "2026-05-02T16:12:26.526Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "6b306717-912e-4cce-af8b-0562e02555bc",
+      "at": "2026-05-02T16:12:03.769Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "107238f9-432d-4d56-b202-8100d8477ad3",
+      "at": "2026-05-02T16:11:39.924Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "5d995330-dadd-4f90-b654-1917460d8f5c",
+      "at": "2026-05-02T16:11:15.970Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "01d909ec-6e1f-4b72-a597-ce4b3d3889a4",
+      "at": "2026-05-02T16:10:53.307Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "f91fcbb1-3a3e-4371-ba30-8f6b539a6c91",
+      "at": "2026-05-02T16:10:04.602Z",
+      "level": "error",
+      "message": "Pipeline sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "b0b1db86-ec44-4fad-a6ff-63b6b79d88ae",
+      "at": "2026-05-02T15:57:35.749Z",
+      "level": "error",
+      "message": "OAuth callback failed: Google OAuth callback missing code"
+    },
+    {
+      "id": "de4e1ca8-eaa7-4d14-b178-b1732d6beaf7",
+      "at": "2026-05-02T15:50:32.712Z",
+      "level": "error",
+      "message": "Manual sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n  "
+    },
+    {
+      "id": "75d47505-b5e0-47ce-a7b6-d1ce3276d5c4",
+      "at": "2026-05-02T15:50:16.120Z",
+      "level": "error",
+      "message": "Manual sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n  "
+    },
+    {
+      "id": "4c394805-ac98-48d3-8d01-4ddfecc3cc4b",
+      "at": "2026-05-02T10:44:02.333Z",
+      "level": "error",
+      "message": "Manual sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n  "
+    },
+    {
+      "id": "405d5a96-b498-4eed-a5c2-6da20bdd39ce",
+      "at": "2026-05-02T10:44:02.069Z",
+      "level": "error",
+      "message": "Manual sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n  "
+    },
+    {
+      "id": "7a4c3d87-ded6-42b0-a55f-4275876324b5",
+      "at": "2026-05-02T10:40:15.351Z",
+      "level": "error",
+      "message": "Verification sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation."
+    },
+    {
+      "id": "ad366749-384c-4cc8-9ed1-c6ad1b9cba72",
+      "at": "2026-05-02T10:37:43.225Z",
+      "level": "error",
+      "message": "Manual sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n  "
+    },
+    {
+      "id": "6bc8921d-3a77-4899-8aa7-d1613fbd3210",
+      "at": "2026-05-02T10:35:55.521Z",
+      "level": "error",
+      "message": "Manual sync failed: Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n  "
+    },
+    {
+      "id": "5399fa1d-9b64-4b3f-8666-2da7348dc47a",
+      "at": "2026-05-02T10:32:06.093Z",
+      "level": "error",
+      "message": "Verification sync failed: Google Drive request failed (403): Service Accounts do not have storage quota. Use a Shared Drive folder or OAuth delegation for this target folder."
+    }
+  ],
+  "updatedAt": "2026-05-02T20:43:03.458Z"
+}

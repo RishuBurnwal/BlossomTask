@@ -1,0 +1,88 @@
+# =========================
+# Node / Frontend
+# =========================
+node_modules/
+dist/
+build/
+.next/
+out/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+Scripts/.env
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# =========================
+# VS Code / IDE
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Project Specific
+# =========================
+outputs/
+Scripts/outputs/
+Scripts/__pycache__/
+Scripts/.qoder/
+
+# =========================
+# Misc
+# =========================
+*.lock
+backend/data/run_history_logs.jsonl
+
+# User-requested local artifacts
+/tests/test_pipeline_requirements.py
+/Prompt.md
+/Prompt2.md
+/Review.txt
+/deploy_sync.tar
+/funeral_Apr_15.xlsx
+/public/favicon.ico
+blossomflower-494817-d633c292e382.json
+# Ignore DB + large files
+backend/data/*.sqlite*
+backend/data/*.db
+backend/data/*.jsonl
+backend/data/run_history_logs*.jsonl
+*.log
+*.tmp
+graphify-out/
+client_secret_*.apps.googleusercontent.com.json
+blossom-obituary-automation-api*.json
+NginxClaudesetupHelp*.mhtml
+backend/data/auth-store.json
+backend/data/google-sync.json
+backend/data/jobs.json
+backend/data/schedules.json
+pipeline_*.json
+.graphify_*

@@ -1,0 +1,140 @@
+{
+  "updatedAt": "2026-05-02",
+  "scope": [
+    "Funeral_Finder",
+    "reverify",
+    "admin-ui",
+    "alerts-ui",
+    "pipeline",
+    "cron-ui",
+    "project-update",
+    "documentation"
+  ],
+  "issues": [
+    {
+      "id": "funeral-excel-rebuild-crash",
+      "status": "fixed",
+      "details": "Excel rebuild now reads UTF-8 BOM safely, writes to a temporary .tmp.xlsx file, replaces atomically, and records runtime errors instead of crashing the script."
+    },
+    {
+      "id": "customer-instruction-fallback",
+      "status": "fixed",
+      "details": "When web data is missing but ord_instruct contains a usable schedule, both Funeral_Finder and reverify now normalize that schedule into structured fields and save the record as Customer."
+    },
+    {
+      "id": "customer-promoted-to-found",
+      "status": "fixed",
+      "details": "Customer-only schedule evidence is now kept in Customer status unless separate outside evidence confirms the service strongly enough for Found."
+    },
+    {
+      "id": "updater-csv-unicode-crash",
+      "status": "fixed",
+      "details": "Updater, Funeral_Finder, and reverify now retry CSV reads with utf-8-sig, utf-8, cp1252, and latin-1 so older Windows-encoded rows no longer break the pipeline with UnicodeDecodeError."
+    },
+    {
+      "id": "pipeline-live-preview-stale-job-binding",
+      "status": "fixed",
+      "details": "Script cards now switch to the newest live pipeline child job instead of staying pinned to an older completed job id, so running state, real duration, and live logs stay visible."
+    },
+    {
+      "id": "cron-pipeline-sequence-drift",
+      "status": "fixed",
+      "details": "Saved schedules now persist the same full pipeline sequence used by the Run Pipeline button, including the selected reverify source, so cron stays attached to the actual pipeline flow."
+    },
+    {
+      "id": "admin-panel-overlap",
+      "status": "fixed",
+      "details": "The Add User form now stacks safely on tighter widths and no longer forces the three inputs into an overlapping row."
+    },
+    {
+      "id": "alert-traceback-readability",
+      "status": "fixed",
+      "details": "Traceback alerts now show a compact summary in the card while keeping full raw details behind the Raw expander."
+    },
+    {
+      "id": "cron-pipeline-demo-verification",
+      "status": "verified",
+      "details": "On 2026-05-01 a demo schedule using */1 * * * * * triggered the full six-step pipeline 4 times in sequence. Each rerun started about 1 second after the previous pipeline finished, and live pipeline/script preview data stayed populated while the run was active."
+    },
+    {
+      "id": "stats-breakdown-missing-overall-view",
+      "status": "fixed",
+      "details": "The status breakdown panel now includes a dropdown to switch between Daily and Overall views, with an overall run summary block and count-plus-percentage labels on each bar."
+    },
+    {
+      "id": "admin-panel-mesh-overflow",
+      "status": "fixed",
+      "details": "The admin panel now uses expandable sections so New User Creation, settings, users, and sessions each open on demand without overlapping or squeezing controls."
+    },
+    {
+      "id": "final-predeploy-pipeline-cron-verification",
+      "status": "verified",
+      "details": "On 2026-05-01 both manual pipeline start and scheduled pipeline start were re-verified in isolated demo mode. Manual run completed all 6 child scripts with live preview visible, and the schedule path completed 3 consecutive full pipeline runs with 1-second post-finish cooldown gaps."
+    },
+    {
+      "id": "stale-script-run-guard-forwarded-pipeline",
+      "status": "fixed",
+      "details": "Funeral_Finder and reverify now treat live same-day run markers as hard-stop non-zero exits only when the original process is still active and the marker is fresh. Stale markers auto-recover, crash paths mark the guard as failed, and backend pipeline execution now fails the step if a script reports an active-run guard instead of forwarding incomplete data downstream."
+    },
+    {
+      "id": "force-run-latest-inquiry-window",
+      "status": "fixed",
+      "details": "Funeral_Finder and reverify now expose a dedicated Force Run control with newest-row dropdown options, and the backend passes --force --latest-count so operators can reprocess the latest GetOrderInquiry rows using last_processed_at."
+    },
+    {
+      "id": "project-update-manager-hardening",
+      "status": "fixed",
+      "details": "main.py now includes a Project Update Manager entry and CLI flag that verifies git state, checks the configured GitHub remote, performs fast-forward-only pulls when safe, runs git fsck, and writes a tracked-file SHA256 manifest for integrity review."
+    },
+    {
+      "id": "project-update-manager-remote-demo-verification",
+      "status": "verified",
+      "details": "On 2026-05-01 the project update path was verified in an isolated demo clone with the remote set to https://github.com/RishuBurnwal/BlossomTask. The update manager completed remote fetch/compare, reported Ahead=0 Behind=0, passed git fsck, and generated project_update_manifest.json without touching the active workspace."
+    },
+    {
+      "id": "cron-required-config-contract",
+      "status": "fixed",
+      "details": "Cron schedules now require two explicit operator choices before they can run: whether Reverify is included and which scheduled model will be used. The backend validates this on create, update, register, and manual trigger, and the UI now saves and displays those fields."
+    },
+    {
+      "id": "cron-without-reverify-sequence",
+      "status": "verified",
+      "details": "On 2026-05-02 an isolated demo schedule with useReverify=false saved and returned a 5-step sequence (GetTask, GetOrderInquiry, Funeral_Finder, Updater, ClosingTask), and the first successful scheduled pipeline run produced 5 child jobs."
+    },
+    {
+      "id": "cron-with-reverify-repeated-cooldown-verification",
+      "status": "verified",
+      "details": "On 2026-05-02 an isolated demo schedule with useReverify=true and reverifyOption=review completed 3 successful scheduled full pipelines with 6 child jobs each. The measured restart gaps after pipeline completion were approximately 1.03s and 1.03s, confirming post-finish cooldown behavior."
+    },
+    {
+      "id": "reverify-live-progress-signals",
+      "status": "fixed",
+      "details": "reverify.py now emits REVERIFY_TOTAL and REVERIFY_PROGRESS markers so the backend can compute real numeric live progress instead of falling back to vague waiting states."
+    },
+    {
+      "id": "schedule-patch-response-normalization",
+      "status": "fixed",
+      "details": "Schedule update responses now return the normalized saved schedule object instead of the pre-normalized request merge, so immediate UI state matches the true persisted sequence after toggling Reverify on or off."
+    },
+    {
+      "id": "session-clear-cache-refresh",
+      "status": "fixed",
+      "details": "Clear Other Sessions now refreshes both auth and sessions query caches so the dashboard stops showing stale session counts after cleanup."
+    },
+    {
+      "id": "auth-session-control-verification",
+      "status": "verified",
+      "details": "On 2026-05-02 an isolated auth harness verified login, logout, and Clear Other Sessions behavior. The active client removed 1 other session, logout returned ok=true, and the revoked second session correctly received 401 on /api/auth/me."
+    },
+    {
+      "id": "project-audit-and-system-guide",
+      "status": "documented",
+      "details": "Root-level PROJECT_AUDIT.md and PROJECT_SYSTEM_GUIDE.md were added to document architecture, workflow, current risks, strict operating rules, and maintenance guidance."
+    },
+    {
+      "id": "root-prompt-fragmentation",
+      "status": "fixed",
+      "details": "The previous root prompt files were consolidated into Master Prompt.md so agent guidance now lives in one source of truth instead of two drifting prompt documents."
+    }
+  ]
+}

@@ -1,0 +1,148 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 40 33% 97%;
+    --foreground: 30 10% 15%;
+
+    --card: 40 30% 99%;
+    --card-foreground: 30 10% 15%;
+
+    --popover: 40 30% 99%;
+    --popover-foreground: 30 10% 15%;
+
+    --primary: 25 60% 48%;
+    --primary-foreground: 40 33% 98%;
+
+    --secondary: 35 25% 92%;
+    --secondary-foreground: 30 10% 25%;
+
+    --muted: 35 20% 94%;
+    --muted-foreground: 30 8% 50%;
+
+    --accent: 35 30% 90%;
+    --accent-foreground: 30 10% 20%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 145 60% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 30 10% 15%;
+
+    --info: 210 70% 55%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 35 20% 88%;
+    --input: 35 20% 88%;
+    --ring: 25 60% 48%;
+
+    --radius: 0.625rem;
+
+    --sidebar-background: 40 25% 95%;
+    --sidebar-foreground: 30 10% 25%;
+    --sidebar-primary: 25 60% 48%;
+    --sidebar-primary-foreground: 40 33% 98%;
+    --sidebar-accent: 35 25% 90%;
+    --sidebar-accent-foreground: 30 10% 20%;
+    --sidebar-border: 35 20% 88%;
+    --sidebar-ring: 25 60% 48%;
+
+    --darkness-level: 1;
+  }
+
+  .dark {
+    --background: 30 10% calc(8% * var(--darkness-level));
+    --foreground: 40 15% 90%;
+
+    --card: 30 10% calc(10% * var(--darkness-level));
+    --card-foreground: 40 15% 90%;
+
+    --popover: 30 10% calc(10% * var(--darkness-level));
+    --popover-foreground: 40 15% 90%;
+
+    --primary: 25 65% 55%;
+    --primary-foreground: 30 10% 5%;
+
+    --secondary: 30 8% calc(16% * var(--darkness-level));
+    --secondary-foreground: 40 15% 85%;
+
+    --muted: 30 8% calc(14% * var(--darkness-level));
+    --muted-foreground: 35 10% 55%;
+
+    --accent: 30 10% calc(18% * var(--darkness-level));
+    --accent-foreground: 40 15% 85%;
+
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 145 55% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 85% 55%;
+    --warning-foreground: 30 10% 10%;
+
+    --info: 210 65% 55%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 30 8% calc(20% * var(--darkness-level));
+    --input: 30 8% calc(20% * var(--darkness-level));
+    --ring: 25 65% 55%;
+
+    --sidebar-background: 30 10% calc(7% * var(--darkness-level));
+    --sidebar-foreground: 40 15% 85%;
+    --sidebar-primary: 25 65% 55%;
+    --sidebar-primary-foreground: 30 10% 5%;
+    --sidebar-accent: 30 10% calc(15% * var(--darkness-level));
+    --sidebar-accent-foreground: 40 15% 85%;
+    --sidebar-border: 30 8% calc(18% * var(--darkness-level));
+    --sidebar-ring: 25 65% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer utilities {
+  .card-shadow {
+    box-shadow: 0 1px 3px 0 hsl(30 10% 15% / 0.04), 0 1px 2px -1px hsl(30 10% 15% / 0.04);
+  }
+  .card-shadow-hover {
+    box-shadow: 0 4px 12px 0 hsl(30 10% 15% / 0.08), 0 2px 4px -1px hsl(30 10% 15% / 0.04);
+  }
+  .glass-panel {
+    @apply bg-card/80 backdrop-blur-md border border-border;
+  }
+
+  /* Terminal log line colors */
+  .terminal-line-success {
+    @apply text-emerald-400;
+  }
+  .terminal-line-error {
+    @apply text-red-400;
+  }
+  .terminal-line-warn {
+    @apply text-amber-400;
+  }
+  .terminal-line-skip {
+    @apply text-zinc-500;
+  }
+  .terminal-line-border {
+    @apply text-zinc-600;
+  }
+  .terminal-line-summary {
+    @apply text-cyan-400 font-semibold;
+  }
+}

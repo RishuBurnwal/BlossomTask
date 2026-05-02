@@ -1,0 +1,41 @@
+{
+  "status": "failed",
+  "kind": "pipeline",
+  "jobId": "job_1777738381256_bpwmeu",
+  "parentJobId": null,
+  "scriptId": null,
+  "exitCode": 1,
+  "createdAt": "2026-05-02T16:13:07.149Z",
+  "startedAt": "2026-05-02T16:13:01.317Z",
+  "finishedAt": "2026-05-02T16:13:07.066Z",
+  "progress": 100,
+  "message": "terminal_runner.py finished with code 1",
+  "scheduleId": "schedule_1774486613530_jv1cv9",
+  "scheduleName": "Default Sequential Pipeline",
+  "trigger": {
+    "type": "schedule",
+    "scheduleId": "schedule_1774486613530_jv1cv9",
+    "scheduleName": "Default Sequential Pipeline",
+    "immediate": false
+  },
+  "logs": [
+    "[2026-05-02T16:13:01.268Z] Triggered by schedule Default Sequential Pipeline",
+    "[2026-05-02T16:13:01.291Z] Schedule model: sonar-pro | terminal_runner.py owns the pipeline sequence",
+    "[2026-05-02T16:13:01.345Z] Pipeline started via terminal_runner.py --once --mode=continue",
+    "[2026-05-02T16:13:01.369Z] Active model: sonar-pro",
+    "[2026-05-02T16:13:01.535Z] Running complete pipeline",
+    "[2026-05-02T16:13:01.583Z] Executing script get-task",
+    "[2026-05-02T16:13:02.118Z] [GetTask] [GetTask] Fetching open tasks from: http://ordstatus.tfdash.info:8061/api/TaskOpened/",
+    "[2026-05-02T16:13:02.159Z] [GetTask] [GetTask] Subject filter: Verify and Pull Down Times\r\n[GetTask] [GetTask] Fetching page 1 �",
+    "[2026-05-02T16:13:03.271Z] [GetTask] [GetTask] Page 1: received 23 items  (total so far: 23)",
+    "[2026-05-02T16:13:03.308Z] Retry 1/2 for script get-task",
+    "[2026-05-02T16:13:03.937Z] [GetTask] [GetTask] Fetching open tasks from: http://ordstatus.tfdash.info:8061/api/TaskOpened/",
+    "[2026-05-02T16:13:03.975Z] [GetTask] [GetTask] Subject filter: Verify and Pull Down Times\r\n[GetTask] [GetTask] Fetching page 1 �",
+    "[2026-05-02T16:13:05.090Z] [GetTask] [GetTask] Page 1: received 23 items  (total so far: 23)",
+    "[2026-05-02T16:13:05.129Z] Retry 2/2 for script get-task",
+    "[2026-05-02T16:13:05.784Z] [GetTask] [GetTask] Fetching open tasks from: http://ordstatus.tfdash.info:8061/api/TaskOpened/",
+    "[2026-05-02T16:13:05.822Z] [GetTask] [GetTask] Subject filter: Verify and Pull Down Times\r\n[GetTask] [GetTask] Fetching page 1 �",
+    "[2026-05-02T16:13:06.958Z] [GetTask] [GetTask] Page 1: received 23 items  (total so far: 23)",
+    "[2026-05-02T16:13:07.013Z] Run summary\r\nStatus: failed\r\nMessage: Graceful exit: script failed after retries | script=get-task | retries=3 | last_successful=none\r\nTotal duration: n/a\r\nPer-script summary:\r\n- get-task: failed | attempts=3 | processed=n/a | duration=n/a"
+  ]
+}
