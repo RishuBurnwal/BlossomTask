@@ -4,10 +4,10 @@ import { AlertsPanel } from "@/components/AlertsPanel";
 import { CompareSection } from "@/components/CompareSection";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { DataViewer } from "@/components/DataViewer";
+import { GoogleDriveSyncPanel } from "@/components/GoogleDriveSyncPanel";
 import { MetricsPanel } from "@/components/MetricsPanel";
 import { OrderStatsPanel } from "@/components/OrderStatsPanel";
 import { ScriptPanel } from "@/components/ScriptPanel";
-import { UserAdminPanel } from "@/components/UserAdminPanel";
 import { api } from "@/lib/api";
 import type { Job } from "@/lib/types";
 import { formatDateTime } from "@/lib/time";
@@ -90,13 +90,12 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <DashboardHeader />
-      <UserAdminPanel />
 
       <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 lg:px-6">
         <OrderStatsPanel />
 
-        <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="min-w-0 space-y-6">
+        <div className="space-y-6">
+          <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
             <section className="space-y-3">
               <div>
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Pipeline Preview</h2>
@@ -172,29 +171,28 @@ const Index = () => {
                 ))}
               </div>
             </section>
-
-            <section className="space-y-3">
-              <div>
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Data Viewer</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Live output data reloads directly from the latest files on refresh.</p>
-              </div>
-              <DataViewer />
-            </section>
-
-            <section className="space-y-3">
-              <div>
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Cross-Check</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Compare order ids across generated files when a row needs closer inspection.</p>
-              </div>
-              <CompareSection />
-            </section>
           </div>
 
-          <div className="min-w-0 space-y-6">
-            <AlertsPanel />
-            <MetricsPanel />
-            <UserAdminPanel />
-          </div>
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Data Viewer</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Live output data reloads directly from the latest files on refresh.</p>
+            </div>
+            <DataViewer />
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Cross-Check</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Compare order ids across generated files when a row needs closer inspection.</p>
+            </div>
+            <CompareSection />
+          </section>
+
+          <GoogleDriveSyncPanel />
+
+          <AlertsPanel />
+          <MetricsPanel />
         </div>
       </main>
     </div>

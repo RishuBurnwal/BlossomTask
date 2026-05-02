@@ -225,7 +225,7 @@ export function CompareSection() {
       </div>
 
       <div className={`mb-4 grid items-stretch gap-3 ${layoutMode === "horizontal" ? "md:grid-cols-2" : "grid-cols-1"}`}>
-        <div className="rounded-lg border bg-background flex h-72 flex-col">
+        <div className="rounded-lg border bg-background flex h-96 flex-col">
           <div className="border-b px-3 py-2 text-xs font-medium">Left: {leftFile}</div>
           <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
             {!leftMatch && <p className="text-xs text-muted-foreground">No row found for order {comparedOrderId || activeOrderId || "-"}</p>}
@@ -244,7 +244,7 @@ export function CompareSection() {
           </div>
         </div>
 
-        <div className="rounded-lg border bg-background flex h-72 flex-col">
+        <div className="rounded-lg border bg-background flex h-96 flex-col">
           <div className="border-b px-3 py-2 text-xs font-medium">Right: {rightFile}</div>
           <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
             {!rightMatch && <p className="text-xs text-muted-foreground">No row found for order {comparedOrderId || activeOrderId || "-"}</p>}
@@ -291,7 +291,7 @@ export function CompareSection() {
       )}
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="max-h-[560px] overflow-auto rounded-lg border">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-muted/50">

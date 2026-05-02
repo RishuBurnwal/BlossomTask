@@ -32,8 +32,9 @@ export function UserAdminPanel() {
   const [newPassword, setNewPassword] = useState("");
   const [sessionTtl, setSessionTtl] = useState<number | null>(null);
   const [configuredTimezone, setConfiguredTimezone] = useState("UTC");
-  const [syncFolderName, setSyncFolderName] = useState("Blossom flower");
+  const [syncFolderName, setSyncFolderName] = useState("Blossom obituary automation");
   const [syncCredentialsPath, setSyncCredentialsPath] = useState("");
+  const [syncDriveRootFolderId, setSyncDriveRootFolderId] = useState("");
 
   const { data: authData } = useQuery({
     queryKey: ["auth"],
@@ -80,6 +81,9 @@ export function UserAdminPanel() {
     }
     if (googleSyncData?.credentialsPath !== undefined) {
       setSyncCredentialsPath(googleSyncData.credentialsPath);
+    }
+    if (googleSyncData?.driveRootFolderId !== undefined) {
+      setSyncDriveRootFolderId(googleSyncData.driveRootFolderId);
     }
   }, [googleSyncData]);
 
@@ -141,6 +145,7 @@ export function UserAdminPanel() {
         enabled: true,
         folderName: syncFolderName,
         credentialsPath: syncCredentialsPath,
+        driveRootFolderId: syncDriveRootFolderId,
       }),
     onSuccess: () => {
       toast.success("Google Drive sync saved");
@@ -346,6 +351,10 @@ export function UserAdminPanel() {
                         <Label className="text-xs">Service JSON Path</Label>
                         <Input value={syncCredentialsPath} onChange={(event) => setSyncCredentialsPath(event.target.value)} />
                       </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Drive Root Folder ID</Label>
+                        <Input value={syncDriveRootFolderId} onChange={(event) => setSyncDriveRootFolderId(event.target.value)} />
+                      </div>
                       <div className="flex flex-wrap gap-2">
                         <Badge variant={googleSyncData?.configured ? "default" : "secondary"}>
                           {googleSyncData?.configured ? "Configured" : "Missing JSON"}
@@ -356,6 +365,7 @@ export function UserAdminPanel() {
                       </div>
                       <div className="text-[11px] text-muted-foreground">
                         <p>Service: {googleSyncData?.serviceEmail || "Not detected yet"}</p>
+                        <p>Root ID: {googleSyncData?.driveRootFolderId || "Not set"}</p>
                         <p>Last sync: {formatDateTime(googleSyncData?.lastSyncAt, currentTimezone)}</p>
                         <p>Last scope: {googleSyncData?.lastSyncScope || "/"}</p>
                       </div>

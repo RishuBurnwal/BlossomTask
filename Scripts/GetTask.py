@@ -28,6 +28,9 @@ EXCEL_PATH   = OUTPUT_DIR / "data.xlsx"
 PAYLOAD_PATH = OUTPUT_DIR / "payload.json"
 LOGS_PATH    = OUTPUT_DIR / "logs.txt"
 QUERY_PATH   = OUTPUT_DIR / "query.txt"
+CLOSING_OUTPUT_DIR = SCRIPTS_DIR / "outputs" / "ClosingTask"
+CLOSING_LOGS_PATH = CLOSING_OUTPUT_DIR / "logs.txt"
+CLOSING_LOGS_BY_DATE_DIR = CLOSING_OUTPUT_DIR / "logs_by_date"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,6 +97,35 @@ def append_logged_id(order_id: str):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOGS_PATH, "a", encoding="utf-8") as f:
         f.write(order_id + "\n")
+
+
+def _normalize_order_id(value) -> str:
+    order_id = str(value or "").strip()
+    if order_id.endswith(".0") and order_id[:-2].isdigit():
+        return order_id[:-2]
+    return order_id
+
+
+def _load_order_ids_from_log(path: Path) -> set:
+    if not path.exists() or not path.is_file():
+        return set()
+    ids = set()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            order_id = _normalize_order_id(line)
+            if order_id:
+                ids.add(order_id)
+    return ids
+
+
+def load_closed_order_ids() -> set:
+    """Return order IDs already completed by ClosingTask."""
+    closed_ids = set()
+    closed_ids.update(_load_order_ids_from_log(CLOSING_LOGS_PATH))
+    if CLOSING_LOGS_BY_DATE_DIR.exists():
+        for log_path in CLOSING_LOGS_BY_DATE_DIR.glob("*.txt"):
+            closed_ids.update(_load_order_ids_from_log(log_path))
+    return closed_ids
 
 
 def _extract_order_id(item: dict) -> str:
@@ -398,6 +430,7 @@ def main():
 
     # ── 2. Load already-processed IDs from logs.txt ──────────────────────────
     logged_ids = set() if args.force else load_logged_ids()
+    closed_order_ids = set() if args.force else load_closed_order_ids()
     if logged_ids:
         print(f"[GetTask] Loaded {len(logged_ids)} already-processed IDs from logs.txt")
     else:
@@ -407,6 +440,9 @@ def main():
             print("[GetTask] logs.txt not found – will process all items")
 
     # ── 3. Process each item (save CSV + Excel immediately after each) ────────
+    if closed_order_ids:
+        print(f"[GetTask] Excluding {len(closed_order_ids)} already-closed order IDs from ClosingTask logs")
+
     new_count     = 0
     skipped_count = 0
     total_items   = len(raw_payload)
@@ -420,7 +456,7 @@ def main():
             continue
 
         # Resolve order_id from known field names
-        order_id = _extract_order_id(item)
+        order_id = _normalize_order_id(_extract_order_id(item))
 
         task_id = str(item.get("trID") or item.get("task_id") or "").strip()
 
@@ -435,6 +471,11 @@ def main():
 
         if order_id in logged_ids and not args.force:
             print(f"  ⏭  SKIP – already in logs.txt")
+            skipped_count += 1
+            continue
+
+        if order_id in closed_order_ids and not args.force:
+            print("  SKIP - already closed by ClosingTask")
             skipped_count += 1
             continue
 

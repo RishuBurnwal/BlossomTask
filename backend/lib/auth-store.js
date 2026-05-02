@@ -4,7 +4,7 @@ import path from "node:path";
 
 // Cloudways commonly ships Node 18, so keep auth storage on plain JSON here
 // instead of depending on newer built-in SQLite modules.
-const dataDir = path.resolve(process.cwd(), "backend", "data");
+const dataDir = path.resolve(process.env.BLOSSOM_DATA_DIR || path.resolve(process.cwd(), "backend", "data"));
 const storePath = path.join(dataDir, "auth-store.json");
 const dbPath = path.join(dataDir, "blossomtask.sqlite");
 const defaultSessionMinutes = Number(process.env.SESSION_TTL_MINUTES || 480);

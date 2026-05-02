@@ -77,3 +77,6 @@ backend/data/run_history_logs*.jsonl
 *.log
 *.tmp
 graphify-out/
+client_secret_*.apps.googleusercontent.com.json
+blossom-obituary-automation-api*.json
+NginxClaudesetupHelp*.mhtml

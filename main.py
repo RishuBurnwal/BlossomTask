@@ -28,6 +28,7 @@ import platform
 import socket
 import sqlite3
 import secrets
+import stat
 from urllib.parse import urlparse
 from urllib.request import urlopen
 from pathlib import Path
@@ -900,9 +901,14 @@ def _get_setting(conn, key, default=""):
 def _seed_default_admin(conn):
     count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
     if count:
+        creds_file = AUTH_DB_PATH.parent / "INITIAL_CREDENTIALS.txt"
+        if creds_file.exists():
+            print_warn(f"Initial admin credentials file still exists: {creds_file}")
+            print_warn("Delete INITIAL_CREDENTIALS.txt after confirming admin access.")
         return
     username = os.getenv("BLOSSOMTASK_ADMIN_USERNAME", "admin").strip() or "admin"
-    password = os.getenv("BLOSSOMTASK_ADMIN_PASSWORD") or secrets.token_urlsafe(18)
+    configured_password = os.getenv("BLOSSOMTASK_ADMIN_PASSWORD")
+    password = configured_password or secrets.token_urlsafe(18)
     timestamp = _utc_now_iso()
     conn.execute(
         "INSERT INTO users (id, username, password_hash, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -910,6 +916,29 @@ def _seed_default_admin(conn):
     )
     conn.commit()
     print_warn(f"Bootstrapped default admin user '{username.lower()}'")
+    if not configured_password:
+        creds_file = AUTH_DB_PATH.parent / "INITIAL_CREDENTIALS.txt"
+        creds_file.write_text(
+            "\n".join(
+                [
+                    "=== BlossomTask Initial Admin Credentials ===",
+                    f"Username: {username.lower()}",
+                    f"Password: {password}",
+                    "",
+                    "DELETE THIS FILE IMMEDIATELY AFTER FIRST LOGIN.",
+                    "Do not share or commit this file.",
+                    f"Generated: {timestamp}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        try:
+            creds_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass
+        print_warn(f"Generated admin credentials saved to: {creds_file}")
+        print_warn("Delete INITIAL_CREDENTIALS.txt after first login.")
 
 
 def _list_users(conn):
@@ -974,6 +1003,10 @@ def _update_user_password(conn, username, password):
     if row is None:
         raise ValueError("user not found")
     timestamp = _utc_now_iso()
+    conn.execute(
+        "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+        (timestamp, row["id"]),
+    )
     conn.execute(
         "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
         (_hash_password(password), timestamp, row["id"]),

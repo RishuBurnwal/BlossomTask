@@ -317,7 +317,7 @@ export function DataViewer() {
             </button>
           </div>
 
-          <div className="grid gap-2 md:grid-cols-2">
+          <div className="grid gap-3 lg:grid-cols-2">
             <PickerCard title="Folders">
               {directories.length === 0 ? <p className="text-[11px] text-muted-foreground">No folders</p> : null}
               {directories.map((directory) => (
@@ -391,7 +391,7 @@ export function DataViewer() {
       ) : null}
 
       {(viewMode === "table" || (activeTab !== "all" && (viewMode === "raw" || viewMode === "terminal"))) ? (
-        <div className="max-h-[460px] overflow-auto">
+        <div className="max-h-[680px] min-h-[420px] overflow-auto">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b">
@@ -425,11 +425,11 @@ export function DataViewer() {
       ) : null}
 
       {viewMode === "json" ? (
-        <pre className="max-h-[460px] overflow-auto whitespace-pre-wrap p-4 text-xs font-mono">{JSON.stringify(filteredRows, null, 2)}</pre>
+        <pre className="max-h-[680px] min-h-[420px] overflow-auto whitespace-pre-wrap p-4 text-xs font-mono">{JSON.stringify(filteredRows, null, 2)}</pre>
       ) : null}
 
       {viewMode === "raw" && activeTab === "all" ? (
-        <pre className="max-h-[460px] overflow-auto whitespace-pre-wrap p-4 text-xs font-mono">{selectedFileData?.raw || "No raw data available"}</pre>
+        <pre className="max-h-[680px] min-h-[420px] overflow-auto whitespace-pre-wrap p-4 text-xs font-mono">{selectedFileData?.raw || "No raw data available"}</pre>
       ) : null}
 
       {viewMode === "terminal" && activeTab === "all" ? (
@@ -462,7 +462,7 @@ export function DataViewer() {
             ) : null}
           </div>
 
-          <pre className="max-h-[380px] overflow-auto rounded-md border bg-muted/40 p-4 text-xs font-mono leading-relaxed">
+          <pre className="max-h-[620px] min-h-[420px] overflow-auto rounded-md border bg-muted/40 p-4 text-xs font-mono leading-relaxed">
             {terminalSource === "file"
               ? (selectedFileData?.raw || "No terminal output available")
               : (runtimeJobData?.job?.logs?.join("\n") || "No runtime logs available")}
@@ -477,7 +477,7 @@ function PickerCard({ title, children }: { title: string; children: ReactNode })
   return (
     <div className="rounded-md border bg-background p-2">
       <p className="mb-2 text-[11px] font-medium text-muted-foreground">{title}</p>
-      <div className="max-h-28 space-y-1 overflow-auto">{children}</div>
+      <div className="max-h-44 space-y-1 overflow-auto">{children}</div>
     </div>
   );
 }

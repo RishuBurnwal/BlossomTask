@@ -431,7 +431,24 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
                     Last {count}
                   </option>
                 ))}
+                {!script.forceLatestOptions.includes(selectedForceLatestCount) ? (
+                  <option value={String(selectedForceLatestCount)}>
+                    Custom {selectedForceLatestCount}
+                  </option>
+                ) : null}
               </select>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={selectedForceLatestCount}
+                onChange={(event) => {
+                  const next = Math.max(1, Number(event.target.value || "1"));
+                  setSelectedForceLatestCount(next);
+                }}
+                className="h-8 w-24 rounded-md border bg-background px-2 text-xs"
+                aria-label="Custom newest row count"
+              />
               <Button
                 size="sm"
                 variant="outline"

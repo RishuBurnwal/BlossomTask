@@ -9,6 +9,7 @@ import type {
   FuneralDatasets,
   GoogleSyncRunResult,
   GoogleSyncState,
+  GoogleSyncManifest,
   ModelPerformanceStats,
   OrderDateBucket,
   OrderProcessingStats,
@@ -22,6 +23,19 @@ import type {
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
+
+function backendBaseUrl() {
+  if (/^https?:\/\//i.test(API_BASE)) {
+    return new URL(API_BASE).origin;
+  }
+  if (typeof window !== "undefined") {
+    const { protocol, hostname, port } = window.location;
+    if ((hostname === "localhost" || hostname === "127.0.0.1") && (port === "8080" || port === "5173")) {
+      return `${protocol}//${hostname}:8787`;
+    }
+  }
+  return "";
+}
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {
@@ -75,6 +89,8 @@ async function clearAlertsRequest(): Promise<{ ok: boolean; clearedAt: string }>
 }
 
 export const api = {
+  googleOAuthUrl: () => `${backendBaseUrl()}/auth/google`,
+
   health: () => request<{ ok: boolean; service: string }>("/health"),
 
   preflight: () => request<PreflightReport>("/preflight"),
@@ -247,7 +263,9 @@ export const api = {
 
   googleSync: () => request<GoogleSyncState>("/google-sync"),
 
-  saveGoogleSyncConfig: (payload: { enabled?: boolean; folderName?: string; credentialsPath?: string; credentialsJson?: string }) =>
+  googleSyncFiles: () => request<GoogleSyncManifest>("/google-sync/files"),
+
+  saveGoogleSyncConfig: (payload: { enabled?: boolean; folderName?: string; credentialsPath?: string; driveRootFolderId?: string; credentialsJson?: string }) =>
     request<GoogleSyncState>("/google-sync/config", {
       method: "PUT",
       body: JSON.stringify(payload),

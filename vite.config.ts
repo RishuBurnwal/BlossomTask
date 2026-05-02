@@ -15,6 +15,14 @@ export default defineConfig({
         target: "http://localhost:8787",
         changeOrigin: true,
       },
+      "/auth/google": {
+        target: "http://localhost:8787",
+        changeOrigin: true,
+      },
+      "/oauth2callback": {
+        target: "http://localhost:8787",
+        changeOrigin: true,
+      },
     },
   },
   plugins: [react()],

@@ -109,6 +109,20 @@ export function OrderStatsPanel() {
   const byDate = dateData?.days ?? statsData?.byDate ?? [];
   const visibleDates = showAllDates ? byDate : byDate.slice(0, 7);
   const models = modelPerf?.models ?? [];
+  const latestDay = byDate[0] || null;
+  const topSummary = breakdownMode === "daily" && latestDay
+    ? {
+        total: latestDay.total,
+        customer: latestDay.customer,
+        found: latestDay.found,
+        notfound: latestDay.notfound,
+        review: latestDay.review,
+        customerPct: latestDay.customerPct ?? formatPercent(latestDay.customer, latestDay.total),
+        foundPct: latestDay.foundPct ?? formatPercent(latestDay.found, latestDay.total),
+        notfoundPct: latestDay.notfoundPct ?? formatPercent(latestDay.notfound, latestDay.total),
+        reviewPct: latestDay.reviewPct ?? formatPercent(latestDay.review, latestDay.total),
+      }
+    : summary;
 
   const overallSummaryItems = useMemo(() => {
     const total = summary?.total ?? 0;
@@ -126,19 +140,34 @@ export function OrderStatsPanel() {
 
   return (
     <section className="space-y-4">
-      <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Daily Breakdown</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Live order status totals now come from the freshest output files, including customer-defined matches.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            {breakdownMode === "daily" ? "Daily Breakdown" : "Overall Breakdown"}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {breakdownMode === "daily" && latestDay
+              ? `Showing freshest daily totals for ${latestDay.date}.`
+              : "Live order status totals now come from the freshest output files, including customer-defined matches."}
+          </p>
+        </div>
+        <Select value={breakdownMode} onValueChange={(value) => setBreakdownMode(value as BreakdownMode)}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Breakdown" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="daily">Daily</SelectItem>
+            <SelectItem value="overall">Overall</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard label="Total" value={statsLoading ? 0 : summary?.total ?? 0} icon={<BarChart3 className="h-4 w-4" />} tone="text-foreground" />
-        <SummaryCard label="Customer" value={summary?.customer ?? 0} percent={summary?.customerPct ?? 0} icon={<UserRound className="h-4 w-4" />} tone="text-sky-600 dark:text-sky-400" />
-        <SummaryCard label="Found" value={summary?.found ?? 0} percent={summary?.foundPct ?? 0} icon={<CheckCircle2 className="h-4 w-4" />} tone="text-emerald-600 dark:text-emerald-400" />
-        <SummaryCard label="Not Found" value={summary?.notfound ?? 0} percent={summary?.notfoundPct ?? 0} icon={<XCircle className="h-4 w-4" />} tone="text-rose-600 dark:text-rose-400" />
-        <SummaryCard label="Review" value={summary?.review ?? 0} percent={summary?.reviewPct ?? 0} icon={<AlertTriangle className="h-4 w-4" />} tone="text-amber-600 dark:text-amber-400" />
+        <SummaryCard label="Total" value={statsLoading ? 0 : topSummary?.total ?? 0} icon={<BarChart3 className="h-4 w-4" />} tone="text-foreground" />
+        <SummaryCard label="Customer" value={topSummary?.customer ?? 0} percent={topSummary?.customerPct ?? 0} icon={<UserRound className="h-4 w-4" />} tone="text-sky-600 dark:text-sky-400" />
+        <SummaryCard label="Found" value={topSummary?.found ?? 0} percent={topSummary?.foundPct ?? 0} icon={<CheckCircle2 className="h-4 w-4" />} tone="text-emerald-600 dark:text-emerald-400" />
+        <SummaryCard label="Not Found" value={topSummary?.notfound ?? 0} percent={topSummary?.notfoundPct ?? 0} icon={<XCircle className="h-4 w-4" />} tone="text-rose-600 dark:text-rose-400" />
+        <SummaryCard label="Review" value={topSummary?.review ?? 0} percent={topSummary?.reviewPct ?? 0} icon={<AlertTriangle className="h-4 w-4" />} tone="text-amber-600 dark:text-amber-400" />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">

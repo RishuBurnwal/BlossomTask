@@ -13,7 +13,7 @@ import {
   readFileContent,
   resolveOutputPath,
 } from "./lib/files.js";
-import { getGoogleSyncState, saveGoogleSyncConfig, syncProjectToGoogleDrive, syncWorkspaceSelectionToGoogleDrive } from "./lib/google-sync.js";
+import { createGoogleOAuthAuthorizationUrl, exchangeGoogleOAuthCode, getGoogleSyncManifest, getGoogleSyncState, recordGoogleSyncFailure, saveGoogleSyncConfig, syncProjectToGoogleDrive, syncWorkspaceSelectionToGoogleDrive } from "./lib/google-sync.js";
 import { getScriptById, scriptCatalog } from "./lib/scripts.js";
 import {
   parseScheduleIntervalFromCron,
@@ -24,7 +24,7 @@ import {
   parseProgressSignal,
   resolveScheduleIntervalMinutes,
 } from "./lib/pipeline-runtime.js";
-import { createId, readJson, writeJson } from "./lib/storage.js";
+import { createId, dataDir, readJson, writeJson } from "./lib/storage.js";
 import {
   authenticateUser,
   availableModels,
@@ -59,13 +59,48 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
 app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 
+function createRateLimiter({ windowMs, max, message }) {
+  const hitsByKey = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = `${req.ip || req.socket?.remoteAddress || "unknown"}:${req.method}:${req.path}`;
+    const current = hitsByKey.get(key);
+    if (!current || now > current.resetAt) {
+      hitsByKey.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    current.count += 1;
+    if (current.count > max) {
+      res.setHeader("Retry-After", String(Math.max(1, Math.ceil((current.resetAt - now) / 1000))));
+      return res.status(429).json({ error: message });
+    }
+    return next();
+  };
+}
+
+const pipelineLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: "Too many pipeline requests. Please wait before retrying.",
+});
+const authLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 5,
+  message: "Too many auth requests. Please wait before retrying.",
+});
+const fileLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: "Too many file requests. Please wait before retrying.",
+});
+
 const PORT = Number(process.env.BACKEND_PORT || 8787);
 const jobsFile = "jobs.json";
 const schedulesFile = "schedules.json";
 const alertsStateFile = "alerts_state.json";
-const runHistoryFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.jsonl");
-const runHistoryBackupFile = path.resolve(process.cwd(), "backend", "data", "run_history_logs.prev.jsonl");
-const pipelineErrorReportFile = path.resolve(process.cwd(), "backend", "data", "pipeline_error_report.json");
+const runHistoryFile = path.resolve(dataDir, "run_history_logs.jsonl");
+const runHistoryBackupFile = path.resolve(dataDir, "run_history_logs.prev.jsonl");
+const pipelineErrorReportFile = path.resolve(dataDir, "pipeline_error_report.json");
 const RUN_HISTORY_MAX_BYTES = Number(process.env.RUN_HISTORY_MAX_BYTES || 50 * 1024 * 1024);
 const runningProcesses = new Map();
 const scheduleTasks = new Map();
@@ -140,6 +175,23 @@ function killJobProcess(childProc) {
       }
     }
   }, 2000);
+}
+
+function requestTerminalRunnerStop(reason = "Stop requested by UI") {
+  const controlFile = path.resolve(process.cwd(), "pipeline_control.json");
+  try {
+    fs.writeFileSync(
+      controlFile,
+      JSON.stringify({
+        stop_requested: true,
+        reason,
+        requested_at: new Date().toISOString(),
+      }, null, 2),
+      "utf-8",
+    );
+  } catch (error) {
+    console.warn(`[pipeline] Could not write terminal runner stop request: ${error.message}`);
+  }
 }
 
 function parseCookies(cookieHeader = "") {
@@ -592,13 +644,33 @@ function loadJobs() {
   }).map(sanitizeJob);
 }
 
+function isJobActuallyActive(job, jobs = loadJobs()) {
+  if (!job || (job.status !== "running" && job.status !== "queued")) {
+    return false;
+  }
+  if (job.status === "queued") {
+    return true;
+  }
+  if (runningProcesses.has(job.id)) {
+    return true;
+  }
+  if (job.kind === "pipeline") {
+    return jobs.some((candidate) => (
+      candidate.parentJobId === job.id
+      && (candidate.status === "running" || candidate.status === "queued")
+      && isJobActuallyActive(candidate, jobs)
+    ));
+  }
+  return false;
+}
+
 function getActiveWorkload() {
   const jobs = loadJobs();
   return (
     jobs.find(
       (job) =>
         (job.kind === "script" || job.kind === "pipeline")
-        && (job.status === "running" || job.status === "queued"),
+        && isJobActuallyActive(job, jobs),
     ) || null
   );
 }
@@ -885,7 +957,7 @@ function updateProgressFromOutput(jobId, output) {
   syncPipelineProgressFromChild(updatedJob ?? { ...job, progress: nextProgress, progressMode: signal.mode });
 }
 
-function updateProgressFromOutput(jobId, output) {
+function updateProgressFromOutputLegacy(jobId, output) {
   const text = String(output || "");
   if (!text) {
     return;
@@ -1020,6 +1092,26 @@ async function syncScriptOutputsIfConfigured(jobId, scriptId) {
     appendLog(jobId, `Google sync complete: ${result.uploadedFiles} files uploaded to ${result.folderName}`);
     return result;
   } catch (error) {
+    recordGoogleSyncFailure(error, `Script ${scriptId} sync failed`);
+    appendLog(jobId, `Google sync failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    return null;
+  }
+}
+
+async function syncPipelineOutputsIfConfigured(jobId) {
+  const syncState = getGoogleSyncState();
+  if (!syncState.enabled || !syncState.configured) {
+    return null;
+  }
+
+  const syncPaths = getApprovedGoogleSyncPaths();
+  appendLog(jobId, "Google sync started for pipeline outputs and runtime files");
+  try {
+    const result = await syncWorkspaceSelectionToGoogleDrive({ paths: syncPaths });
+    appendLog(jobId, `Google sync complete: ${result.uploadedFiles} files uploaded to ${result.folderName}`);
+    return result;
+  } catch (error) {
+    recordGoogleSyncFailure(error, "Pipeline sync failed");
     appendLog(jobId, `Google sync failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     return null;
   }
@@ -1188,6 +1280,8 @@ async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCou
     ...process.env,
     RUN_MODE: effectiveOption || "",
     PYTHONUNBUFFERED: "1",
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUTF8: "1",
     BLOSSOM_CANCEL_FLAG: cancelFlagPath,
     ACTIVE_MODEL: selectedModel,
     PERPLEXITY_MODEL: resolveProviderModel("perplexity", selectedModel),
@@ -1436,7 +1530,7 @@ function saveSchedules(schedules) {
   );
 }
 
-function updateScheduleMetadata(scheduleId, patch) {
+function updateScheduleMetadataLegacy(scheduleId, patch) {
   const schedules = loadSchedules();
   const index = schedules.findIndex((item) => item.id === scheduleId);
   if (index === -1) {
@@ -1559,12 +1653,208 @@ function getRunningPipelineForSchedule(scheduleId) {
   )) ?? null;
 }
 
+function readTerminalPipelineState() {
+  const stateFile = path.resolve(process.cwd(), "pipeline_state.json");
+  if (!fs.existsSync(stateFile)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(stateFile, "utf-8").replace(/^\uFEFF/, ""));
+  } catch {
+    return null;
+  }
+}
+
+function isPidAlive(pid) {
+  const parsed = Number(pid);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return false;
+  }
+  try {
+    process.kill(parsed, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getActiveTerminalPipelineState() {
+  const state = readTerminalPipelineState();
+  if (!state || String(state.status || "").toLowerCase() !== "running") {
+    return null;
+  }
+  if (!state.owner_pid || !isPidAlive(state.owner_pid)) {
+    return null;
+  }
+  return state;
+}
+
+function recoverStaleTerminalPipelineState(context = "backend") {
+  const state = readTerminalPipelineState();
+  if (!state || String(state.status || "").toLowerCase() !== "running") {
+    return false;
+  }
+  if (state.owner_pid && isPidAlive(state.owner_pid)) {
+    return false;
+  }
+
+  const stateFile = path.resolve(process.cwd(), "pipeline_state.json");
+  const nextState = {
+    ...state,
+    status: "failed",
+    reason: `Recovered stale running state from ${context}; previous terminal runner is not active`,
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(stateFile, JSON.stringify(nextState, null, 2), "utf-8");
+    console.warn(`[cron] Recovered stale terminal pipeline state (${context})`);
+    return true;
+  } catch (error) {
+    console.warn(`[cron] Could not recover stale terminal pipeline state: ${error.message}`);
+    return false;
+  }
+}
+
+function runTerminalRunnerPipelineJob(jobId, schedule, modelName) {
+  const selectedModel = String(modelName || getActiveModel() || "sonar-pro");
+  const reverifySource = inferScheduleReverifyOption(schedule, inferScheduleUseReverify(schedule)) || "both";
+  const terminalRunnerPath = path.resolve(process.cwd(), "terminal_runner.py");
+  const args = [
+    terminalRunnerPath,
+    "--once",
+    "--mode=continue",
+    "--updater-mode=complete",
+    `--reverify-source=${reverifySource}`,
+  ];
+  if (DEMO_FAST_PIPELINE) {
+    args.push("--dry-run");
+  }
+
+  upsertJob(jobId, {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    progress: 0,
+    progressMode: "indeterminate",
+    progressNote: "Running via terminal_runner.py",
+    model: selectedModel,
+  });
+  appendLog(jobId, "Pipeline started via terminal_runner.py --once --mode=continue");
+  appendLog(jobId, `Active model: ${selectedModel}`);
+
+  let child;
+  try {
+    child = spawn(PYTHON_BIN, args, {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
+        ACTIVE_MODEL: selectedModel,
+        PERPLEXITY_MODEL: resolveProviderModel("perplexity", selectedModel),
+        OPENAI_MODEL: resolveProviderModel("openai", selectedModel),
+        REVERIFY_DEFAULT_PROVIDER: getReverifyDefaultProvider(),
+        BLOSSOM_TIMEZONE: getConfiguredTimezone(),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const failedJob = upsertJob(jobId, {
+      status: "failed",
+      finishedAt: new Date().toISOString(),
+      progress: 100,
+      progressMode: "determinate",
+      progressNote: "Failed to start terminal_runner.py",
+      exitCode: 1,
+    });
+    appendLog(jobId, `terminal_runner.py failed to start: ${error.message}`);
+    recordPipelineErrorReport(failedJob ?? loadJobs().find((entry) => entry.id === jobId), {
+      message: `terminal_runner.py failed to start: ${error.message}`,
+      scheduleId: schedule.id,
+      scheduleName: schedule.name,
+    });
+    finalizeScheduleCooldown(schedule.id, "failed", new Date().toISOString());
+    return;
+  }
+
+  runningProcesses.set(jobId, child);
+
+  child.stdout.on("data", (chunk) => {
+    const text = chunk.toString().trim();
+    if (text) {
+      appendLog(jobId, text);
+      updateProgressFromOutput(jobId, text);
+    }
+  });
+
+  child.stderr.on("data", (chunk) => {
+    const text = chunk.toString().trim();
+    if (text) {
+      appendLog(jobId, text);
+    }
+  });
+
+  child.on("error", (error) => {
+    runningProcesses.delete(jobId);
+    const failedJob = upsertJob(jobId, {
+      status: "failed",
+      finishedAt: new Date().toISOString(),
+      progress: 100,
+      progressMode: "determinate",
+      progressNote: "Failed",
+      exitCode: 1,
+    });
+    appendLog(jobId, `terminal_runner.py process error: ${error.message}`);
+    recordPipelineErrorReport(failedJob ?? loadJobs().find((entry) => entry.id === jobId), {
+      message: `terminal_runner.py process error: ${error.message}`,
+      scheduleId: schedule.id,
+      scheduleName: schedule.name,
+    });
+    finalizeScheduleCooldown(schedule.id, "failed", new Date().toISOString());
+  });
+
+  child.on("close", async (code) => {
+    runningProcesses.delete(jobId);
+    const current = loadJobs().find((entry) => entry.id === jobId);
+    if (current?.status === "cancelled") {
+      appendLog(jobId, "Pipeline cancelled");
+      finalizeScheduleCooldown(schedule.id, "cancelled", new Date().toISOString());
+      return;
+    }
+
+    const success = code === 0;
+    const finishedJob = upsertJob(jobId, {
+      status: success ? "success" : "failed",
+      finishedAt: new Date().toISOString(),
+      progress: 100,
+      progressMode: "determinate",
+      progressNote: success ? "Completed" : "Failed",
+      exitCode: code ?? 1,
+    });
+    appendLog(jobId, `terminal_runner.py finished with code ${code ?? 1}`);
+    if (success) {
+      resolvePipelineErrorReport({ jobId, scheduleId: schedule.id, recoveredAt: new Date().toISOString() });
+    } else {
+      recordPipelineErrorReport(finishedJob ?? loadJobs().find((entry) => entry.id === jobId), {
+        message: `terminal_runner.py finished with code ${code ?? 1}`,
+        scheduleId: schedule.id,
+        scheduleName: schedule.name,
+      });
+    }
+    await syncPipelineOutputsIfConfigured(jobId);
+    finalizeScheduleCooldown(schedule.id, success ? "success" : "failed", new Date().toISOString());
+  });
+}
+
 function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
   const now = new Date().toISOString();
+  recoverStaleTerminalPipelineState("schedule-trigger");
   const activeWorkload = getActiveWorkload();
+  const activeTerminalState = getActiveTerminalPipelineState();
   const busyPolicy = options.busyPolicy || "skip";
 
-  if (activeWorkload) {
+  if (activeWorkload || activeTerminalState) {
+    const activeId = activeWorkload?.id || `terminal_runner:${activeTerminalState?.owner_pid || "unknown"}`;
     if (busyPolicy === "defer") {
       const retryAt = new Date(Date.now() + SCHEDULE_RETRY_DELAY_MS).toISOString();
       const updated = updateScheduleMetadata(schedule.id, {
@@ -1574,7 +1864,7 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
       if (updated?.enabled) {
         registerSchedule(updated);
       }
-      return { jobId: null, started: false, skipped: false, deferred: true, activeJobId: activeWorkload.id };
+      return { jobId: null, started: false, skipped: false, deferred: true, activeJobId: activeId };
     }
 
     const skippedJob = createJob({
@@ -1587,7 +1877,7 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
         scheduleName: schedule.name,
         skipped: true,
         skippedReason: "active-workload",
-        activeJobId: activeWorkload.id,
+        activeJobId: activeId,
         ...triggerPatch,
       },
     });
@@ -1600,13 +1890,13 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
       progressMode: "determinate",
       exitCode: null,
     });
-    appendLog(skippedJob.id, `Skipped: active workload in progress (${activeWorkload.kind}:${activeWorkload.id})`);
+    appendLog(skippedJob.id, `Skipped: active workload in progress (${activeId})`);
     updateScheduleMetadata(schedule.id, {
       lastJobId: skippedJob.id,
       lastFinishedAt: now,
       lastStatus: "skipped",
     });
-    return { jobId: skippedJob.id, started: false, skipped: true, deferred: false, activeJobId: activeWorkload.id };
+    return { jobId: skippedJob.id, started: false, skipped: true, deferred: false, activeJobId: activeId };
   }
 
   clearScheduleTimer(schedule.id);
@@ -1633,14 +1923,14 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
     },
   });
   appendLog(pipelineJob.id, `Triggered by schedule ${schedule.name}`);
-  appendLog(pipelineJob.id, `Schedule model: ${scheduleModel} | Steps: ${sequence.map((s) => s.scriptId).join(" \u2192 ")}`);
+  appendLog(pipelineJob.id, `Schedule model: ${scheduleModel} | terminal_runner.py owns the pipeline sequence`);
   updateScheduleMetadata(schedule.id, {
     lastJobId: pipelineJob.id,
     lastStartedAt: now,
     lastStatus: "running",
     nextRunAt: null,
   });
-  runPipelineJob(pipelineJob.id, sequence, scheduleModel);
+  runTerminalRunnerPipelineJob(pipelineJob.id, schedule, scheduleModel);
   return { jobId: pipelineJob.id, started: true, skipped: false, deferred: false, activeJobId: null };
 }
 
@@ -1656,6 +1946,7 @@ function resetSchedules() {
 // 4. Seed run history from existing jobs
 reconcileOrphanedJobs();
 reconcileOrphanedSchedules();
+recoverStaleTerminalPipelineState("backend-startup");
 resetSchedules();
 seedRunHistoryFromExistingJobs();
 
@@ -1667,6 +1958,12 @@ app.get("/api/preflight", (_req, res) => {
   const report = createPreflightReport();
   res.json(report);
 });
+
+app.use("/api/auth/login", authLimiter);
+app.use("/api/jobs/run-pipeline", pipelineLimiter);
+app.use("/api/jobs/run-script", pipelineLimiter);
+app.use("/api/schedules/:id/trigger", pipelineLimiter);
+app.use("/api/files", fileLimiter);
 
 app.post("/api/auth/login", (req, res) => {
   const username = String(req.body?.username || "").trim();
@@ -1698,6 +1995,40 @@ app.post("/api/auth/login", (req, res) => {
     sessionTtlMinutes: getSessionTtlMinutes(),
     reverifyDefaultProvider: getReverifyDefaultProvider(),
   });
+});
+
+app.get("/auth/google", (_req, res) => {
+  try {
+    return res.redirect(createGoogleOAuthAuthorizationUrl());
+  } catch (error) {
+    return res.status(400).send(error instanceof Error ? error.message : "Google OAuth configuration failed");
+  }
+});
+
+app.get("/oauth2callback", async (req, res) => {
+  try {
+    const state = await exchangeGoogleOAuthCode({
+      code: req.query.code,
+      state: req.query.state,
+    });
+    return res
+      .status(200)
+      .type("html")
+      .send(`
+        <!doctype html>
+        <html>
+          <head><title>Google Drive connected</title></head>
+          <body style="font-family: system-ui, sans-serif; padding: 32px;">
+            <h1>Google Drive connected</h1>
+            <p>OAuth refresh token saved. You can close this tab and run Drive sync again.</p>
+            <p>Redirect URI: ${String(state.oauthRedirectUri || "")}</p>
+          </body>
+        </html>
+      `);
+  } catch (error) {
+    recordGoogleSyncFailure(error, "OAuth callback failed");
+    return res.status(400).send(error instanceof Error ? error.message : "Google OAuth callback failed");
+  }
 });
 
 app.use("/api", requireAuth);
@@ -1884,12 +2215,21 @@ app.get("/api/google-sync", requireAuth, requireAdmin, (_req, res) => {
   return res.json(getGoogleSyncState());
 });
 
+app.get("/api/google-sync/files", requireAuth, requireAdmin, (_req, res) => {
+  try {
+    return res.json(getGoogleSyncManifest());
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Google sync manifest failed" });
+  }
+});
+
 app.put("/api/google-sync/config", requireAuth, requireAdmin, (req, res) => {
   try {
     const state = saveGoogleSyncConfig({
       enabled: req.body?.enabled,
       folderName: req.body?.folderName,
       credentialsPath: req.body?.credentialsPath,
+      driveRootFolderId: req.body?.driveRootFolderId,
       credentialsJson: req.body?.credentialsJson,
     });
     return res.json(state);
@@ -1909,6 +2249,7 @@ app.post("/api/google-sync/run", requireAuth, requireAdmin, async (req, res) => 
       });
     return res.json(result);
   } catch (error) {
+    recordGoogleSyncFailure(error, "Manual sync failed");
     return res.status(400).json({ error: error instanceof Error ? error.message : "Google sync failed" });
   }
 });
@@ -2104,6 +2445,7 @@ app.post("/api/jobs/:jobId/cancel", (req, res) => {
   } catch {
     // ignore
   }
+  requestTerminalRunnerStop("Cancelled by user");
   killJobProcess(childProc);
   upsertJob(req.params.jobId, { status: "cancelled", finishedAt: new Date().toISOString() });
   if (pipelineChild?.jobId) {
@@ -2186,8 +2528,9 @@ app.patch("/api/schedules/:id", (req, res) => {
   if (wasEnabled && !next.enabled) {
     const runningPipeline = getRunningPipelineForSchedule(req.params.id);
     if (runningPipeline) {
-      const childProc = getRunningChildProcessForPipeline(runningPipeline.id)?.childProc;
+      const childProc = runningProcesses.get(runningPipeline.id) || getRunningChildProcessForPipeline(runningPipeline.id)?.childProc;
       if (childProc) {
+        requestTerminalRunnerStop("Cron stopped from dashboard");
         killJobProcess(childProc);
       }
       upsertJob(runningPipeline.id, {
@@ -2447,10 +2790,10 @@ app.get("/api/pipeline/status", (_req, res) => {
   const jobs = loadJobs();
   const schedules = loadSchedules();
 
-  const runningPipelines = jobs.filter((job) => job.kind === "pipeline" && job.status === "running");
-  const runningScripts = jobs.filter((job) => job.kind === "script" && job.status === "running");
-  const queuedPipelines = jobs.filter((job) => job.kind === "pipeline" && job.status === "queued");
-  const queuedScripts = jobs.filter((job) => job.kind === "script" && job.status === "queued");
+  const runningPipelines = jobs.filter((job) => job.kind === "pipeline" && job.status === "running" && isJobActuallyActive(job, jobs));
+  const runningScripts = jobs.filter((job) => job.kind === "script" && job.status === "running" && isJobActuallyActive(job, jobs));
+  const queuedPipelines = jobs.filter((job) => job.kind === "pipeline" && job.status === "queued" && isJobActuallyActive(job, jobs));
+  const queuedScripts = jobs.filter((job) => job.kind === "script" && job.status === "queued" && isJobActuallyActive(job, jobs));
   const activeWorkloads = runningPipelines.length + runningScripts.length + queuedPipelines.length + queuedScripts.length;
   const enabledSchedules = schedules.filter((schedule) => schedule.enabled);
   const readySchedules = enabledSchedules.filter((schedule) => schedule.configValid);
@@ -2493,7 +2836,7 @@ app.get("/api/pipeline/status", (_req, res) => {
     nextScript: queuedScripts[0] || runningScripts[0] || null,
     nextScheduleInSeconds,
     nextPipelineInSeconds: queuedPipelines[0] ? 0 : nextScheduleInSeconds,
-    nextScriptInSeconds: queuedScripts[0] || runningScripts[0] ? 0 : nextScheduleInSeconds,
+    nextScriptInSeconds: queuedScripts[0] || runningScripts[0] ? 0 : null,
   });
 });
 
@@ -2658,7 +3001,22 @@ function collectAlerts(limit = 50) {
         severity,
         createdAt,
         message: raw,
-        raw,
+        raw: JSON.stringify({
+          title,
+          type,
+          severity,
+          jobId: job.id,
+          jobKind: job.kind,
+          scriptId: job.scriptId || job.kind,
+          status: job.status,
+          exitCode: job.exitCode ?? null,
+          createdAt,
+          startedAt: job.startedAt || null,
+          finishedAt: job.finishedAt || null,
+          errorLine: raw,
+          errorLogIndex: lineIndex,
+          logs: job.logs || [],
+        }, null, 2),
       });
     });
   });

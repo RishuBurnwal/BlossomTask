@@ -109,6 +109,7 @@ function formatAlertRaw(value: string): string {
 export function AlertsPanel() {
   const queryClient = useQueryClient();
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [alertLimit, setAlertLimit] = useState(20);
   const [clearedAt, setClearedAt] = useState<string>(() => window.localStorage.getItem(ALERTS_CLEARED_AT_KEY) || "");
 
   const { data: authData } = useQuery({
@@ -118,8 +119,8 @@ export function AlertsPanel() {
   });
 
   const { data, isLoading } = useQuery({
-    queryKey: ["alerts"],
-    queryFn: () => api.alerts(20),
+    queryKey: ["alerts", alertLimit],
+    queryFn: () => api.alerts(alertLimit),
     refetchInterval: 5000,
   });
 
@@ -130,7 +131,7 @@ export function AlertsPanel() {
       window.localStorage.setItem(ALERTS_CLEARED_AT_KEY, nextClearedAt);
       setClearedAt(nextClearedAt);
       setExpandedIds({});
-      queryClient.setQueryData(["alerts"], { alerts: [] });
+      queryClient.setQueryData(["alerts", alertLimit], { alerts: [] });
       toast.success("Alerts cleared");
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
     },
@@ -228,13 +229,23 @@ export function AlertsPanel() {
                 </div>
 
                 {isExpanded && (
-                  <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 text-[11px] leading-5 text-muted-foreground">
+                  <pre className="mt-3 max-h-[28rem] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 text-[11px] leading-5 text-muted-foreground">
                     {formattedRaw}
                   </pre>
                 )}
               </div>
             );
           })}
+          {alerts.length >= alertLimit ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => setAlertLimit((current) => current + 30)}
+            >
+              View More
+            </Button>
+          ) : null}
         </CardContent>
       </Card>
     </section>

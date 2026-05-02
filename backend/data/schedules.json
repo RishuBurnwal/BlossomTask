@@ -30,13 +30,15 @@
     "reverifyOption": "both",
     "updaterModel": "sonar-pro",
     "createdAt": "2026-03-26T00:56:53.530Z",
-    "updatedAt": "2026-05-02T02:12:00.000Z",
+    "updatedAt": "2026-05-02T19:05:47.566Z",
     "nextRunAt": null,
-    "lastTriggeredAt": "2026-05-01T19:17:37.490Z",
-    "lastStatus": "idle",
-    "lastJobId": "job_1777663057538_t4holr",
-    "lastStartedAt": "2026-05-01T19:17:37.490Z",
-    "lastFinishedAt": "2026-05-01T19:40:38.397Z",
-    "lastCooldownStartedAt": "2026-05-01T19:40:38.397Z"
+    "lastTriggeredAt": "2026-05-02T19:05:44.206Z",
+    "lastStatus": "cancelled",
+    "lastJobId": "job_1777748744283_yw4lmi",
+    "lastStartedAt": "2026-05-02T19:05:44.206Z",
+    "lastFinishedAt": "2026-05-02T19:05:47.565Z",
+    "lastCooldownStartedAt": "2026-05-02T16:27:36.231Z",
+    "intervalUnit": "minutes",
+    "intervalValue": 30
   }
 ]

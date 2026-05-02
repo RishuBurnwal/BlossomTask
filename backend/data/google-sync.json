@@ -1,12 +1,22 @@
 {
-  "enabled": false,
+  "enabled": true,
   "folderName": "Blossom flower",
   "credentials": null,
-  "credentialsPath": "",
-  "driveRootFolderId": "",
+  "credentialsPath": "blossom-obituary-automation-api.json",
+  "driveRootFolderId": "1fmeW0S-rzJ4MraxcZbCyjfaCekC9FCto",
   "lastSyncAt": null,
   "lastSyncScope": "",
   "lastSyncTarget": "",
   "lastSyncedFiles": 0,
-  "lastError": null
+  "lastError": "Google Drive request failed (403) {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n    \"errors\": [\n      {\n        \"message\": \"Service Accounts do not have storage quota. Leverage shared drives (https://developers.google.com/workspace/drive/api/guides/about-shareddrives), or use OAuth delegation (http://support.google.com/a/answer/7281227) instead.\",\n        \"domain\": \"usageLimits\",\n        \"reason\": \"storageQuotaExceeded\"\n      }\n    ]\n  }\n}\n This service-account JSON is valid, but Google will not let a service account create/upload files into a normal My Drive folder because service accounts do not have storage quota. Move the target folder into a Shared Drive and add the service account as Content manager/Contributor, or switch to OAuth user delegation.",
+  "oauth": {
+    "refreshToken": "",
+    "accessToken": "",
+    "accessTokenExpiresAt": null,
+    "tokenType": "Bearer",
+    "scope": "",
+    "connectedAt": null,
+    "lastRefreshAt": null,
+    "state": "e0da7e1427937414a9e0eb578811b6cfb7d80352f616eaeb"
+  }
 }

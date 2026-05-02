@@ -74,13 +74,16 @@ class RuntimeStore:
         if not path.exists():
             return dict(default)
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8-sig"))
         except Exception:
             return dict(default)
 
     @staticmethod
     def _write_json(path: Path, payload: dict) -> None:
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp_path.replace(path)
 
     def load_checkpoint(self) -> dict:
         return self._safe_read_json(
@@ -235,6 +238,7 @@ class TerminalPipelineRunner:
 
     def run(self) -> int:
         print("\n=== BlossomTask Terminal Pipeline Runner ===")
+        self._recover_stale_state()
         start_mode = self._ask_start_mode()
         run_mode = self._ask_run_mode()
         execution_mode = self._ask_execution_mode()
@@ -248,6 +252,30 @@ class TerminalPipelineRunner:
             schedule_plan = self._ask_schedule_plan()
 
         return self._run_loop(start_mode, run_mode, sequence, updater_mode, reverify_source, schedule_plan)
+
+    def _recover_stale_state(self) -> None:
+        """Recover stale running state left behind by a crashed previous runner."""
+        try:
+            state = self.store._safe_read_json(STATE_FILE, {})
+            if str(state.get("status") or "").lower() != "running":
+                return
+
+            owner_pid = state.get("owner_pid")
+            if owner_pid is not None and self._is_process_alive(owner_pid):
+                return
+
+            reason = "Recovered from stale running state on startup; previous runner is no longer active"
+            print("[Runner] WARNING: Found stale 'running' state from a previous session.")
+            print("[Runner] Resetting pipeline state to 'failed'.")
+            self.store.save_state({**state, "status": "failed", "reason": reason})
+            self.store.log_event({
+                "event": "stale_state_recovered",
+                "previous_status": "running",
+                "recovered_to": "failed",
+                "previous_owner_pid": owner_pid,
+            })
+        except Exception as exc:
+            print(f"[Runner] Could not check/recover stale state: {exc}")
 
     def _ask_start_mode(self) -> str:
         while True:
@@ -467,8 +495,11 @@ class TerminalPipelineRunner:
                 return 130
 
             if run_mode == "scheduled" and cycle > 1:
-                # Scheduled runs should execute a fresh full cycle, not remain stuck at checkpoint end.
-                start_mode = "fresh"
+                # Scheduled cycles should run the full sequence again, but scripts
+                # must keep their own idempotency guards. Do not auto-enable --force.
+                start_mode = "continue"
+                self.store.reset_checkpoint()
+                self._clear_cycle_locks()
 
             result = self._execute_once(start_mode, run_mode, sequence, updater_mode, reverify_source, cycle)
             result_total_duration = total_duration_seconds(result.get("script_results", []))
@@ -530,6 +561,8 @@ class TerminalPipelineRunner:
             "cycle": cycle,
             "sequence": sequence,
             "start_index": start_index,
+            "owner_pid": os.getpid(),
+            "owner_run_id": self.run_id,
             "ui_stop_instruction": "Set pipeline_control.json stop_requested=true (optional reason) to stop current script and cron.",
         }
         self.store.save_state({"status": "running", **run_context})
@@ -538,70 +571,22 @@ class TerminalPipelineRunner:
         print(f"\nRunning {'complete pipeline' if sequence == PIPELINE_SEQUENCE else 'manual pipeline'}")
         script_results: List[dict] = []
 
-        if start_index >= len(sequence):
-            print("All scripts already completed in checkpoint. Nothing to run.")
-            self.store.save_state({"status": "success", "reason": "Nothing to run", **run_context})
-            self.store.log_event({"event": "run_completed", "reason": "nothing_to_run", **run_context})
-            return {
-                "status": "success",
-                "message": "No remaining scripts to run",
-                "script_results": script_results,
-                "run_context": run_context,
-                "next_scheduled_time": None,
-            }
-
-        for script_id in sequence[start_index:]:
-            self._sync_external_stop_request()
-            if self.stop_requested:
-                self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
+        try:
+            if start_index >= len(sequence):
+                print("All scripts already completed in checkpoint. Nothing to run.")
+                self.store.save_state({"status": "success", "reason": "Nothing to run", **run_context})
+                self.store.log_event({"event": "run_completed", "reason": "nothing_to_run", **run_context})
                 return {
-                    "status": "stopped",
-                    "message": "Interrupted by user",
+                    "status": "success",
+                    "message": "No remaining scripts to run",
                     "script_results": script_results,
                     "run_context": run_context,
                     "next_scheduled_time": None,
                 }
 
-            print(f"Executing script {script_id}")
-            if not self._acquire_script_lock(script_id):
-                message = f"Script lock active for {script_id}; another runner is executing it"
-                self.store.save_state({"status": "failed", "reason": message, **run_context})
-                self.store.log_event({"event": "lock_conflict", "script": script_id, **run_context})
-                return {
-                    "status": "failed",
-                    "message": message,
-                    "script_results": script_results,
-                    "run_context": run_context,
-                    "next_scheduled_time": None,
-                }
-            self.store.log_event({
-                "event": "script_started",
-                "script": script_id,
-                "step": sequence.index(script_id) + 1,
-                "total_steps": len(sequence),
-                **run_context,
-            })
-
-            success_result = self._run_script_with_retry(
-                script_id=script_id,
-                updater_mode=updater_mode,
-                reverify_source=reverify_source,
-                force=(start_mode == "fresh"),
-                run_context=run_context,
-            )
-            script_results.append({
-                "script_id": success_result.script_id,
-                "status": "success" if success_result.success else "failed",
-                "exit_code": success_result.exit_code,
-                "processed_count": success_result.processed_count,
-                "attempts": success_result.attempts,
-                "error_reason": success_result.error_reason,
-                "duration_sec": success_result.duration_sec,
-            })
-
-            if not success_result.success:
-                if success_result.interrupted:
-                    self._set_script_lock(script_id, "stopped")
+            for script_id in sequence[start_index:]:
+                self._sync_external_stop_request()
+                if self.stop_requested:
                     self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
                     return {
                         "status": "stopped",
@@ -611,55 +596,114 @@ class TerminalPipelineRunner:
                         "next_scheduled_time": None,
                     }
 
-                message = (
-                    "Graceful exit: script failed after retries | "
-                    f"script={script_id} | retries={success_result.attempts} | "
-                    f"last_successful={completed[-1] if completed else 'none'}"
-                )
-                self.store.save_state({"status": "failed", "reason": message, **run_context})
+                print(f"Executing script {script_id}")
+                if not self._acquire_script_lock(script_id):
+                    message = f"Script lock active for {script_id}; another runner is executing it"
+                    self.store.save_state({"status": "failed", "reason": message, **run_context})
+                    self.store.log_event({"event": "lock_conflict", "script": script_id, **run_context})
+                    return {
+                        "status": "failed",
+                        "message": message,
+                        "script_results": script_results,
+                        "run_context": run_context,
+                        "next_scheduled_time": None,
+                    }
                 self.store.log_event({
-                    "event": "run_failed",
+                    "event": "script_started",
                     "script": script_id,
-                    "reason": success_result.error_reason,
-                    "retries": success_result.attempts,
-                    "last_successful_script": completed[-1] if completed else None,
+                    "step": sequence.index(script_id) + 1,
+                    "total_steps": len(sequence),
                     **run_context,
                 })
-                self._set_script_lock(script_id, "failed")
-                return {
-                    "status": "failed",
-                    "message": message,
-                    "script_results": script_results,
-                    "run_context": run_context,
-                    "next_scheduled_time": None,
-                }
 
-            completed.append(script_id)
-            self._set_script_lock(script_id, "completed")
-            self.store.save_checkpoint(script_id, completed)
+                success_result = self._run_script_with_retry(
+                    script_id=script_id,
+                    updater_mode=updater_mode,
+                    reverify_source=reverify_source,
+                    force=(start_mode == "fresh"),
+                    run_context=run_context,
+                )
+                script_results.append({
+                    "script_id": success_result.script_id,
+                    "status": "success" if success_result.success else "failed",
+                    "exit_code": success_result.exit_code,
+                    "processed_count": success_result.processed_count,
+                    "attempts": success_result.attempts,
+                    "error_reason": success_result.error_reason,
+                    "duration_sec": success_result.duration_sec,
+                })
+
+                if not success_result.success:
+                    if success_result.interrupted:
+                        self._set_script_lock(script_id, "stopped")
+                        self._flush_interrupt_state(run_mode, sequence, updater_mode, reverify_source, cycle)
+                        return {
+                            "status": "stopped",
+                            "message": "Interrupted by user",
+                            "script_results": script_results,
+                            "run_context": run_context,
+                            "next_scheduled_time": None,
+                        }
+
+                    message = (
+                        "Graceful exit: script failed after retries | "
+                        f"script={script_id} | retries={success_result.attempts} | "
+                        f"last_successful={completed[-1] if completed else 'none'}"
+                    )
+                    self.store.save_state({"status": "failed", "reason": message, **run_context})
+                    self.store.log_event({
+                        "event": "run_failed",
+                        "script": script_id,
+                        "reason": success_result.error_reason,
+                        "retries": success_result.attempts,
+                        "last_successful_script": completed[-1] if completed else None,
+                        **run_context,
+                    })
+                    self._set_script_lock(script_id, "failed")
+                    return {
+                        "status": "failed",
+                        "message": message,
+                        "script_results": script_results,
+                        "run_context": run_context,
+                        "next_scheduled_time": None,
+                    }
+
+                completed.append(script_id)
+                self._set_script_lock(script_id, "completed")
+                self.store.save_checkpoint(script_id, completed)
+                self.store.log_event({
+                    "event": "script_completed",
+                    "script": script_id,
+                    "processed_count": success_result.processed_count,
+                    "attempts": success_result.attempts,
+                    "duration_sec": success_result.duration_sec,
+                    **run_context,
+                })
+                print(f"Script {script_id} completed")
+                if success_result.processed_count is not None:
+                    print(f"Processed {success_result.processed_count} records")
+                if success_result.duration_sec is not None:
+                    print(f"Duration: {format_duration_label(success_result.duration_sec)}")
+
+            self.store.save_state({"status": "success", **run_context})
+            self.store.log_event({"event": "run_completed", **run_context})
+            return {
+                "status": "success",
+                "message": "Pipeline completed successfully",
+                "script_results": script_results,
+                "run_context": run_context,
+                "next_scheduled_time": None,
+            }
+        except Exception as exc:
+            message = f"Unexpected runner error: {exc}"
+            self.store.save_state({"status": "failed", "reason": message, **run_context})
             self.store.log_event({
-                "event": "script_completed",
-                "script": script_id,
-                "processed_count": success_result.processed_count,
-                "attempts": success_result.attempts,
-                "duration_sec": success_result.duration_sec,
+                "event": "unexpected_runner_error",
+                "error": str(exc),
+                "traceback": traceback.format_exc(limit=4),
                 **run_context,
             })
-            print(f"Script {script_id} completed")
-            if success_result.processed_count is not None:
-                print(f"Processed {success_result.processed_count} records")
-            if success_result.duration_sec is not None:
-                print(f"Duration: {format_duration_label(success_result.duration_sec)}")
-
-        self.store.save_state({"status": "success", **run_context})
-        self.store.log_event({"event": "run_completed", **run_context})
-        return {
-            "status": "success",
-            "message": "Pipeline completed successfully",
-            "script_results": script_results,
-            "run_context": run_context,
-            "next_scheduled_time": None,
-        }
+            raise
 
     def _run_script_with_retry(self, script_id: str, updater_mode: str, reverify_source: str, force: bool, run_context: dict) -> ScriptRunResult:
         last_error: Optional[str] = None
@@ -693,6 +737,26 @@ class TerminalPipelineRunner:
 
     def _run_single_script(self, script_id: str, updater_mode: str, reverify_source: str, force: bool) -> ScriptRunResult:
         config = SCRIPT_CONFIG[script_id]
+        if os.getenv("BLOSSOM_DEMO_FAST_PIPELINE") == "1" or os.getenv("BLOSSOM_TERMINAL_DRY_RUN") == "1":
+            started = time.monotonic()
+            print(f"[dry-run] {config['name']} would run now")
+            for current in range(1, 4):
+                if self.stop_requested:
+                    break
+                print(f"[{current}/3] {config['name']} dry-run step")
+                self.sleep(0.2)
+            elapsed = int(time.monotonic() - started)
+            return ScriptRunResult(
+                script_id=script_id,
+                success=not self.stop_requested,
+                exit_code=0 if not self.stop_requested else 130,
+                processed_count=0,
+                attempts=1,
+                error_reason=self.interruption_reason if self.stop_requested else None,
+                interrupted=self.stop_requested,
+                duration_sec=elapsed,
+            )
+
         cmd = [sys.executable, config["file"]]
 
         if force:
@@ -703,6 +767,8 @@ class TerminalPipelineRunner:
             cmd.extend(["--source", reverify_source])
 
         env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         if script_id == "updater":
             env["RUN_MODE"] = updater_mode
         if script_id == "reverify":
@@ -900,4 +966,37 @@ def request_runner_stop(reason: str = "Stop requested by UI") -> None:
 
 
 if __name__ == "__main__":
+    import argparse as _argparse
+
+    parser = _argparse.ArgumentParser(description="Run the BlossomTask terminal pipeline")
+    parser.add_argument("--once", action="store_true", help="Run one non-interactive pipeline cycle and exit")
+    parser.add_argument("--mode", choices=["fresh", "continue"], default="continue", help="Start mode for --once")
+    parser.add_argument("--updater-mode", choices=UPDATER_MODES, default="complete", help="Updater mode for --once")
+    parser.add_argument("--reverify-source", choices=["both", "not_found", "review"], default="both", help="Reverify source for --once")
+    parser.add_argument("--dry-run", action="store_true", help="Simulate each script without calling CRM or AI providers")
+    args = parser.parse_args()
+
+    if args.once:
+        if args.dry_run:
+            os.environ["BLOSSOM_TERMINAL_DRY_RUN"] = "1"
+        runner = TerminalPipelineRunner()
+        runner._recover_stale_state()
+        runner.store.clear_stop_request()
+        if args.mode == "continue":
+            runner.store.reset_checkpoint()
+            runner._clear_cycle_locks()
+        result = runner._execute_once(
+            start_mode=args.mode,
+            run_mode="scheduled",
+            sequence=list(PIPELINE_SEQUENCE),
+            updater_mode=args.updater_mode,
+            reverify_source=args.reverify_source,
+            cycle=1,
+        )
+        result_total_duration = total_duration_seconds(result.get("script_results", []))
+        result["total_duration_sec"] = result_total_duration
+        runner.store.save_summary(result)
+        runner._print_run_summary(result)
+        raise SystemExit(0 if result.get("status") == "success" else 1)
+
     raise SystemExit(run_terminal_pipeline())

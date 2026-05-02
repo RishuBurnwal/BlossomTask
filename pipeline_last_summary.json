@@ -1,68 +1,37 @@
 {
-  "status": "success",
-  "message": "Pipeline completed successfully",
+  "status": "stopped",
+  "message": "Interrupted by user",
   "script_results": [
     {
       "script_id": "get-task",
-      "status": "success",
-      "exit_code": 0,
+      "status": "failed",
+      "exit_code": 1,
       "processed_count": null,
       "attempts": 1,
-      "error_reason": null,
-      "duration_sec": 3
-    },
-    {
-      "script_id": "get-order-inquiry",
-      "status": "success",
-      "exit_code": 0,
-      "processed_count": null,
-      "attempts": 1,
-      "error_reason": null,
-      "duration_sec": 186
-    },
-    {
-      "script_id": "funeral-finder",
-      "status": "success",
-      "exit_code": 0,
-      "processed_count": 133,
-      "attempts": 1,
-      "error_reason": null,
-      "duration_sec": 718
-    },
-    {
-      "script_id": "updater",
-      "status": "success",
-      "exit_code": 0,
-      "processed_count": 133,
-      "attempts": 1,
-      "error_reason": null,
-      "duration_sec": 198
-    },
-    {
-      "script_id": "closing-task",
-      "status": "success",
-      "exit_code": 0,
-      "processed_count": 133,
-      "attempts": 1,
-      "error_reason": null,
-      "duration_sec": 188
+      "error_reason": "Cron stopped from dashboard",
+      "duration_sec": 2
     }
   ],
   "run_context": {
     "run_mode": "scheduled",
     "execution_mode": "complete",
-    "start_mode": "fresh",
+    "start_mode": "continue",
     "updater_mode": "complete",
+    "reverify_source": "both",
     "cycle": 1,
     "sequence": [
       "get-task",
       "get-order-inquiry",
       "funeral-finder",
+      "reverify",
       "updater",
       "closing-task"
     ],
-    "start_index": 0
+    "start_index": 0,
+    "owner_pid": 37320,
+    "owner_run_id": "37320-1777748744720",
+    "ui_stop_instruction": "Set pipeline_control.json stop_requested=true (optional reason) to stop current script and cron."
   },
   "next_scheduled_time": null,
-  "total_duration_sec": 1293
+  "total_duration_sec": 2
 }

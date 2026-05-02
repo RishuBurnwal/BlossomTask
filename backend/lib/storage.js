@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const dataDir = path.resolve(process.cwd(), "backend", "data");
+export const dataDir = path.resolve(process.env.BLOSSOM_DATA_DIR || path.resolve(process.cwd(), "backend", "data"));
 
 export function ensureDataDir() {
   fs.mkdirSync(dataDir, { recursive: true });

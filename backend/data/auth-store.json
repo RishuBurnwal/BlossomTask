@@ -12,11 +12,41 @@
   ],
   "sessions": [
     {
-      "id": "89ada2fd-1995-48a9-a1a7-83261f0f4c12",
+      "id": "67b5cda2-394e-4de4-8426-fff5613d02bd",
       "user_id": "5e7034e6-6477-4aa2-9eae-519f9bff5bc4",
-      "created_at": "2026-05-01T19:51:41.974Z",
-      "expires_at": "2026-05-02T03:51:41.974Z",
-      "last_seen_at": "2026-05-01T21:31:18.180Z",
+      "created_at": "2026-05-02T15:49:48.122Z",
+      "expires_at": "2026-05-02T23:49:48.122Z",
+      "last_seen_at": "2026-05-02T16:31:43.819Z",
+      "revoked_at": "2026-05-02T16:31:43.822Z",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+      "ip_address": "::1"
+    },
+    {
+      "id": "715b908f-aa51-49a5-96f4-db4096cac024",
+      "user_id": "5e7034e6-6477-4aa2-9eae-519f9bff5bc4",
+      "created_at": "2026-05-02T16:31:51.780Z",
+      "expires_at": "2026-05-03T00:31:51.780Z",
+      "last_seen_at": "2026-05-02T16:32:16.091Z",
+      "revoked_at": "2026-05-02T16:32:16.092Z",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+      "ip_address": "::1"
+    },
+    {
+      "id": "b2d9ddd0-ac8c-40e2-9c8d-015e321b6a3f",
+      "user_id": "5e7034e6-6477-4aa2-9eae-519f9bff5bc4",
+      "created_at": "2026-05-02T16:32:02.553Z",
+      "expires_at": "2026-05-03T00:32:02.553Z",
+      "last_seen_at": "2026-05-02T16:32:02.553Z",
+      "revoked_at": null,
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+      "ip_address": "::1"
+    },
+    {
+      "id": "817075de-f2b9-472d-b100-8c06333c6907",
+      "user_id": "5e7034e6-6477-4aa2-9eae-519f9bff5bc4",
+      "created_at": "2026-05-02T16:32:21.405Z",
+      "expires_at": "2026-05-03T00:32:21.405Z",
+      "last_seen_at": "2026-05-02T20:43:04.087Z",
       "revoked_at": null,
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
       "ip_address": "::1"
@@ -898,6 +928,356 @@
       "source": "reverify",
       "created_at": "2026-05-01T20:39:10.027Z",
       "finished_at": "2026-05-01T21:02:49.750Z"
+    },
+    {
+      "id": "87a792e2-973e-4cbf-9222-a83eae4caedb",
+      "job_id": "job_1777696489378_5exxuq",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "cancelled",
+      "source": "get-task",
+      "created_at": "2026-05-02T04:34:49.495Z",
+      "finished_at": "2026-05-02T04:35:02.328Z"
+    },
+    {
+      "id": "108a717f-6904-4d3a-bdcf-cd1b0077e41d",
+      "job_id": "job_1777697387647_fvgpon",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T04:49:47.659Z",
+      "finished_at": "2026-05-02T04:49:49.748Z"
+    },
+    {
+      "id": "ee3468ea-c4f6-4acf-b97f-ecde0ceb7222",
+      "job_id": "job_1777697389796_brfgs7",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "cancelled",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-02T04:49:49.813Z",
+      "finished_at": "2026-05-02T04:49:58.548Z"
+    },
+    {
+      "id": "911a5834-e493-4546-a82c-0479893161cb",
+      "job_id": "job_1777697853610_ym3f76",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T04:57:33.614Z",
+      "finished_at": "2026-05-02T04:57:35.676Z"
+    },
+    {
+      "id": "2cd70fdf-af2b-488f-b192-7d2c7bc575f6",
+      "job_id": "job_1777697861335_muozr0",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-02T04:57:41.340Z",
+      "finished_at": "2026-05-02T04:58:42.587Z"
+    },
+    {
+      "id": "d802e024-cacd-4b69-bcc4-7637acaeba2a",
+      "job_id": "job_1777698085833_5uk1q8",
+      "script_id": "funeral-finder",
+      "model_name": "gpt-4o-search-preview",
+      "status": "cancelled",
+      "source": "funeral-finder",
+      "created_at": "2026-05-02T05:01:25.837Z",
+      "finished_at": "2026-05-02T05:06:47.318Z"
+    },
+    {
+      "id": "61666eb5-1510-44a0-8298-cb5501665202",
+      "job_id": "job_1777698435035_07f7v5",
+      "script_id": "funeral-finder",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-02T05:07:15.039Z",
+      "finished_at": "2026-05-02T05:07:38.799Z"
+    },
+    {
+      "id": "cab3f7da-2460-4237-ae11-889a7caa0c96",
+      "job_id": "job_1777698490779_nmhce2",
+      "script_id": "reverify",
+      "model_name": "gpt-4o-search-preview",
+      "status": "cancelled",
+      "source": "reverify",
+      "created_at": "2026-05-02T05:08:10.787Z",
+      "finished_at": "2026-05-02T05:09:16.904Z"
+    },
+    {
+      "id": "1ffc2382-4bde-425e-a46c-e6dc842d0254",
+      "job_id": "job_1777698572382_8wn6rh",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T05:09:32.388Z",
+      "finished_at": "2026-05-02T05:09:34.598Z"
+    },
+    {
+      "id": "686aa685-2a3f-40df-85d1-9d31a6385fb4",
+      "job_id": "job_1777698581267_r2pall",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T05:09:41.271Z",
+      "finished_at": "2026-05-02T05:09:43.399Z"
+    },
+    {
+      "id": "a7fc5b7e-1e1a-40f4-b44b-5bee40b38354",
+      "job_id": "job_1777698692050_c6d8xs",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T05:11:32.073Z",
+      "finished_at": "2026-05-02T05:11:34.157Z"
+    },
+    {
+      "id": "8b6320e1-5b35-4011-8575-397c61996591",
+      "job_id": "job_1777698694214_figl9x",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-02T05:11:34.233Z",
+      "finished_at": "2026-05-02T05:11:34.927Z"
+    },
+    {
+      "id": "730373e1-b1c7-480b-866a-9f4997819906",
+      "job_id": "job_1777698695012_po6aaj",
+      "script_id": "funeral-finder",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-02T05:11:35.033Z",
+      "finished_at": "2026-05-02T05:11:35.720Z"
+    },
+    {
+      "id": "0ec7c81a-a793-4bc1-84fe-9cd789f5fede",
+      "job_id": "job_1777698695834_wt16sd",
+      "script_id": "reverify",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-02T05:11:35.877Z",
+      "finished_at": "2026-05-02T05:28:10.594Z"
+    },
+    {
+      "id": "e6682dea-b843-423b-97b5-64a18eef00c4",
+      "job_id": "job_1777699690649_yzyu9e",
+      "script_id": "updater",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-02T05:28:10.669Z",
+      "finished_at": "2026-05-02T05:29:26.690Z"
+    },
+    {
+      "id": "164cd491-4488-4f74-bcbd-29de339d9c5c",
+      "job_id": "job_1777699766744_c6wim2",
+      "script_id": "closing-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-02T05:29:26.763Z",
+      "finished_at": "2026-05-02T05:32:18.436Z"
+    },
+    {
+      "id": "f41c766b-d95b-43ee-bcd1-98ad25a25c60",
+      "job_id": "job_1777737839572_vvzt5r",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "running",
+      "source": "get-task",
+      "created_at": "2026-05-02T16:03:59.578Z",
+      "finished_at": null
+    },
+    {
+      "id": "95efdf7d-bab2-4f73-8d08-151a120ffd12",
+      "job_id": "job_1777739290685_bdlsmz",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T16:28:10.749Z",
+      "finished_at": "2026-05-02T16:28:13.592Z"
+    },
+    {
+      "id": "6214639e-d6c5-49e5-a18c-114c6ef0ddb6",
+      "job_id": "job_1777739310019_opv8xy",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-02T16:28:30.079Z",
+      "finished_at": "2026-05-02T16:28:32.201Z"
+    },
+    {
+      "id": "2b00d282-376a-4d97-af40-99462b238ce0",
+      "job_id": "job_1777739326770_cw2cnz",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T16:28:46.828Z",
+      "finished_at": "2026-05-02T16:28:49.701Z"
+    },
+    {
+      "id": "0d528978-797d-4fc8-a14a-5b43dad31f47",
+      "job_id": "job_1777739338738_oeon9o",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-02T16:28:58.795Z",
+      "finished_at": "2026-05-02T16:29:00.841Z"
+    },
+    {
+      "id": "f0c64a1f-3318-49b4-9e02-78d360ec5970",
+      "job_id": "job_1777739352321_szbppa",
+      "script_id": "funeral-finder",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-02T16:29:12.377Z",
+      "finished_at": "2026-05-02T16:29:14.974Z"
+    },
+    {
+      "id": "72d7e078-f027-4165-83d6-43523c608e47",
+      "job_id": "job_1777739362085_o6qw5h",
+      "script_id": "reverify",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-02T16:29:22.139Z",
+      "finished_at": "2026-05-02T16:29:24.286Z"
+    },
+    {
+      "id": "58627569-8719-41fa-951a-4c2d559c6d64",
+      "job_id": "job_1777739437803_il6lvw",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T16:30:38.143Z",
+      "finished_at": "2026-05-02T16:30:40.721Z"
+    },
+    {
+      "id": "d88a58ba-33f5-4aef-baed-56e9a0ff0ad0",
+      "job_id": "job_1777739449506_2mxyc6",
+      "script_id": "get-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-task",
+      "created_at": "2026-05-02T16:30:49.865Z",
+      "finished_at": "2026-05-02T16:30:53.226Z"
+    },
+    {
+      "id": "1941cb93-3e46-4bda-af9a-c9c20ee8ea7c",
+      "job_id": "job_1777739451931_j4whji",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-02T16:30:52.262Z",
+      "finished_at": "2026-05-02T16:30:54.476Z"
+    },
+    {
+      "id": "04ce1021-ba84-4c8b-a3bf-0d00338b17c7",
+      "job_id": "job_1777739466747_ck7vdg",
+      "script_id": "funeral-finder",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-02T16:31:06.999Z",
+      "finished_at": "2026-05-02T16:31:14.318Z"
+    },
+    {
+      "id": "65a5424a-4bb0-48d6-82b4-05ad2cbd708d",
+      "job_id": "job_1777739467785_5v26wp",
+      "script_id": "get-order-inquiry",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "get-order-inquiry",
+      "created_at": "2026-05-02T16:31:08.106Z",
+      "finished_at": "2026-05-02T16:31:12.289Z"
+    },
+    {
+      "id": "2ca514f9-5b62-4aae-9efb-25a817d30864",
+      "job_id": "job_1777739486783_dimjxg",
+      "script_id": "reverify",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-02T16:31:27.142Z",
+      "finished_at": "2026-05-02T16:31:32.666Z"
+    },
+    {
+      "id": "d1ff96c2-56ec-450b-aef4-8940ceedbf17",
+      "job_id": "job_1777739488258_e0rrgy",
+      "script_id": "funeral-finder",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "funeral-finder",
+      "created_at": "2026-05-02T16:31:28.634Z",
+      "finished_at": "2026-05-02T16:31:35.169Z"
+    },
+    {
+      "id": "5c7e0585-5212-421e-a109-cb76fdefbc60",
+      "job_id": "job_1777739505613_w2az27",
+      "script_id": "updater",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-02T16:31:45.939Z",
+      "finished_at": "2026-05-02T16:31:48.124Z"
+    },
+    {
+      "id": "cfb2a95e-4ee5-4a27-964a-52ab4bf2d633",
+      "job_id": "job_1777739507040_b2lc6w",
+      "script_id": "reverify",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "reverify",
+      "created_at": "2026-05-02T16:31:47.325Z",
+      "finished_at": "2026-05-02T16:31:49.507Z"
+    },
+    {
+      "id": "085f37d0-dc3d-404b-a88a-07b7d44a0f53",
+      "job_id": "job_1777739518110_dc41s9",
+      "script_id": "closing-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-02T16:31:58.363Z",
+      "finished_at": "2026-05-02T16:31:59.787Z"
+    },
+    {
+      "id": "e880d135-eb6d-4f05-afa5-30ca22f44b87",
+      "job_id": "job_1777739521563_qty6ai",
+      "script_id": "updater",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "updater",
+      "created_at": "2026-05-02T16:32:01.877Z",
+      "finished_at": "2026-05-02T16:32:03.464Z"
+    },
+    {
+      "id": "34fc0dbc-9b51-4401-8939-a139d6719ceb",
+      "job_id": "job_1777739534600_wg1xzd",
+      "script_id": "closing-task",
+      "model_name": "gpt-4o-search-preview",
+      "status": "success",
+      "source": "closing-task",
+      "created_at": "2026-05-02T16:32:14.998Z",
+      "finished_at": "2026-05-02T16:32:16.852Z"
     }
   ]
 }

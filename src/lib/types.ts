@@ -346,8 +346,54 @@ export interface GoogleSyncState {
   lastSyncTarget: string;
   lastSyncedFiles: number;
   lastError: string | null;
+  oauthConfigured?: boolean;
+  oauthConnected?: boolean;
+  oauthRedirectUri?: string;
+  oauthScope?: string;
+  oauthClientSecretPath?: string;
+  oauthConnectedAt?: string | null;
+  oauthLastRefreshAt?: string | null;
   outputsRoot: string;
   workspaceRoot: string;
+}
+
+export interface GoogleSyncFileEntry {
+  relativePath: string;
+  name: string;
+  group: string;
+  size: number;
+  modifiedAt: string | null;
+  exists: boolean;
+  deleted: boolean;
+  status: "available" | "synced" | "deleted" | string;
+  driveFileId: string;
+  driveUrl: string;
+  syncedAt: string | null;
+  deletedAt: string | null;
+  lastError: string | null;
+}
+
+export interface GoogleSyncGroup {
+  name: string;
+  folderUrl?: string;
+  totalFiles: number;
+  syncedFiles: number;
+  deletedFiles: number;
+  files: GoogleSyncFileEntry[];
+}
+
+export interface GoogleSyncLogEntry {
+  id: string;
+  at: string;
+  level: string;
+  message: string;
+}
+
+export interface GoogleSyncManifest extends GoogleSyncState {
+  rootFolderUrl: string;
+  groups: GoogleSyncGroup[];
+  files: GoogleSyncFileEntry[];
+  logs: GoogleSyncLogEntry[];
 }
 
 export interface GoogleSyncRunResult extends GoogleSyncState {
@@ -357,6 +403,7 @@ export interface GoogleSyncRunResult extends GoogleSyncState {
   uploadedFiles?: number;
   syncTarget?: string;
   syncedScope?: string;
+  manifest?: GoogleSyncManifest;
 }
 
 export interface AuthUser {
