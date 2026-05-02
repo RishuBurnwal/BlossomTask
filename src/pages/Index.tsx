@@ -47,12 +47,6 @@ const Index = () => {
     refetchInterval: 2_000,
   });
 
-  const { data: pipelineStatusData } = useQuery({
-    queryKey: ["pipeline-status"],
-    queryFn: api.pipelineStatus,
-    refetchInterval: 2000,
-  });
-
   const scripts = scriptsData?.scripts ?? [];
   const jobs = jobsData?.jobs ?? [];
   const executionLocked = (pipelineStatusData?.activeWorkloads ?? 0) > 0;

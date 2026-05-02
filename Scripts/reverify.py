@@ -1188,18 +1188,6 @@ def filter_records_by_logged_ids(rows: list, logged_ids: set[str]) -> tuple[list
     return filtered_rows, skipped_count
 
 
-def filter_records_by_logged_ids(rows: list, logged_ids: set[str]) -> tuple[list, int]:
-    filtered_rows = []
-    skipped_count = 0
-    for row in rows:
-        order_id = _normalize_order_id(row.get("order_id"))
-        if order_id and order_id in logged_ids:
-            skipped_count += 1
-            continue
-        filtered_rows.append(row)
-    return filtered_rows, skipped_count
-
-
 def write_records(csv_path: Path, rows: list):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2210,9 +2198,6 @@ def main():
             if progress_total > 0:
                 progress_completed = min(progress_total, progress_completed + 1)
                 print(f"REVERIFY_PROGRESS|{progress_completed}|{progress_total}")
-
-        if stop_due_to_limit:
-            break
 
         if stop_due_to_limit:
             break
