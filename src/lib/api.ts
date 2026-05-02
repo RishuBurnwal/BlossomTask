@@ -167,10 +167,14 @@ export const api = {
 
   scripts: () => request<{ scripts: ScriptConfig[] }>("/scripts"),
 
-  runScript: (scriptId: string, option?: string) =>
+  runScript: (scriptId: string, payload?: { option?: string; forceLatestCount?: number }) =>
     request<{ jobId: string }>("/jobs/run-script", {
       method: "POST",
-      body: JSON.stringify({ scriptId, option }),
+      body: JSON.stringify({
+        scriptId,
+        option: payload?.option,
+        forceLatestCount: payload?.forceLatestCount,
+      }),
     }),
 
   runPipeline: (sequence?: Array<{ scriptId: string; option?: string }>) =>

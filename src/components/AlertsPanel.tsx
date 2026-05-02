@@ -160,9 +160,9 @@ export function AlertsPanel() {
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
         Alerts
       </h2>
-      <Card className="border-red-500/20">
+      <Card className="overflow-hidden border-red-500/20">
         <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-1">
             <CardTitle className="text-base">Failure and Error Alerts</CardTitle>
             <CardDescription>
               Latest API, script, and job-level issues with clean summaries and expandable raw details.
@@ -179,7 +179,7 @@ export function AlertsPanel() {
             Clear Alerts
           </Button>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 overflow-hidden">
           {!isLoading && alerts.length === 0 && (
             <p className="text-sm text-muted-foreground">No active alerts found in recent runs.</p>
           )}
@@ -189,24 +189,26 @@ export function AlertsPanel() {
             const formattedMessage = formatAlertMessage(alert.message);
             const formattedRaw = formatAlertRaw(alert.raw);
             return (
-              <div key={alert.id} className="rounded-lg border bg-background px-3 py-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div key={alert.id} className="overflow-hidden rounded-lg border bg-background px-3 py-3">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
                       <span className="flex min-w-0 items-center gap-2 font-medium text-foreground">
                         <Icon className="h-3.5 w-3.5 shrink-0 text-red-500" />
-                        <span>{alert.title}</span>
+                        <span className="min-w-0 truncate">{alert.title}</span>
                       </span>
-                      <Badge variant="outline" className="max-w-full break-all">
+                      <Badge variant="outline" className="max-w-[14rem] shrink-0 truncate">
                         {alert.scriptId}
                       </Badge>
-                      <Badge variant="secondary">{alert.status}</Badge>
+                      <Badge variant="secondary" className="shrink-0 whitespace-nowrap">
+                        {alert.status}
+                      </Badge>
                     </div>
-                    <p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-foreground">
+                    <p className="whitespace-pre-line break-words text-sm leading-6 text-foreground">
                       {formattedMessage}
                     </p>
                   </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground sm:justify-end">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground sm:justify-end sm:text-right">
                     <span className="whitespace-nowrap">{new Date(alert.createdAt).toLocaleString()}</span>
                     <Button
                       variant="ghost"
@@ -226,7 +228,7 @@ export function AlertsPanel() {
                 </div>
 
                 {isExpanded && (
-                  <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/40 p-3 text-[11px] leading-5 text-muted-foreground">
+                  <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 text-[11px] leading-5 text-muted-foreground">
                     {formattedRaw}
                   </pre>
                 )}

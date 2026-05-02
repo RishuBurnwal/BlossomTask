@@ -58,6 +58,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPTS_DIR / "outputs" / "Funeral_Finder"
 DATE_WISE_DIR = OUTPUT_DIR / "date_wise"
 DEFAULT_PROMPT_TEMPLATE = SCRIPTS_DIR / "prompts" / "funeral_search_template.md"
+INPUT_CSV = SCRIPTS_DIR / "outputs" / "GetOrderInquiry" / "data.csv"
+GET_ORDER_INQUIRY_LOGS_PATH = SCRIPTS_DIR / "outputs" / "GetOrderInquiry" / "logs.txt"
 
 SOURCE_FILES = {
     "not_found": OUTPUT_DIR / "Funeral_data_not_found.csv",
@@ -76,6 +78,7 @@ LOGS_PATH = OUTPUT_DIR / "reverify_logs.txt"
 RUN_GUARD_PATH = OUTPUT_DIR / "reverify_run_state.json"
 REVERIFY_LOGS_BY_DATE_DIR = OUTPUT_DIR / "reverify_logs_by_date"
 ERROR_REPORT_PATH = OUTPUT_DIR / "reverify_error_report.json"
+CONCURRENT_RUN_EXIT_CODE = 75
 
 FIELDNAMES = [
     "order_id", "task_id", "ship_name", "ship_city", "ship_state", "ship_zip",
@@ -171,6 +174,30 @@ def _provider_order() -> list[str]:
 
 def get_now_iso() -> str:
     return runtime_now_iso()
+
+
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    text = _safe_str(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _is_process_active(pid_value) -> bool:
+    try:
+        pid = int(pid_value)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def _load_prompt_template() -> str:
@@ -701,10 +728,17 @@ def _parse_date_candidate(raw_text: str) -> str:
             "%b %d",
         ):
             try:
-                parsed_source = candidate_with_year if "%Y" in fmt else candidate
-                parsed = datetime.strptime(parsed_source, fmt)
-                if "%Y" not in fmt:
-                    parsed = parsed.replace(year=current_year)
+                # Always supply a year to avoid Python 3.15 DeprecationWarning for
+                # year-less strptime formats like %m/%d, %B %d, etc.
+                if "%Y" in fmt:
+                    parsed_source = candidate_with_year
+                    parsed = datetime.strptime(parsed_source, fmt)
+                else:
+                    # Prepend current year and adjust the format accordingly
+                    year_prefix = f"{current_year}/"
+                    year_fmt = f"%Y/{fmt}"
+                    parsed_source = f"{current_year}/{candidate}"
+                    parsed = datetime.strptime(parsed_source, year_fmt)
                 return parsed.date().isoformat()
             except ValueError:
                 continue
@@ -1088,6 +1122,58 @@ def load_records(csv_path: Path) -> list:
         normalized_row["_source_row_number"] = row_index
         rows.append(normalized_row)
     return rows
+
+
+def load_latest_inquiry_order_ids(latest_count: int) -> set[str]:
+    if latest_count <= 0 or not INPUT_CSV.exists():
+        return set()
+    _, rows, encoding_used = _read_csv_dict_rows(INPUT_CSV)
+    if encoding_used not in {"utf-8-sig", "utf-8"}:
+        print(f"[{SCRIPT_NAME}] INFO: Read {INPUT_CSV.name} using {encoding_used} fallback")
+
+    normalized = []
+    for row in rows:
+        order_id = _normalize_order_id(row.get("order_id"))
+        if not order_id:
+            continue
+        normalized.append({
+            "order_id": order_id,
+            "last_processed_at": _safe_str(row.get("last_processed_at")),
+        })
+
+    normalized.sort(
+        key=lambda entry: _parse_iso_datetime(entry.get("last_processed_at")) or datetime.min,
+        reverse=True,
+    )
+    latest_order_ids = []
+    seen = set()
+    for entry in normalized:
+        order_id = entry["order_id"]
+        if order_id in seen:
+            continue
+        seen.add(order_id)
+        latest_order_ids.append(order_id)
+        if len(latest_order_ids) >= latest_count:
+            break
+    return set(latest_order_ids)
+
+
+def infer_latest_inquiry_batch_count() -> int:
+    if not GET_ORDER_INQUIRY_LOGS_PATH.exists():
+        return 0
+    try:
+        log_lines = GET_ORDER_INQUIRY_LOGS_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0
+
+    for line in reversed(log_lines):
+        saved_match = re.search(r"(?i)\bDONE\s*--\s*Saved:\s*(\d+)\b", line)
+        if saved_match:
+            return int(saved_match.group(1))
+        compact_match = re.search(r"(?i)\bSaved:\s*(\d+)\s*\|\s*Skipped:", line)
+        if compact_match:
+            return int(compact_match.group(1))
+    return 0
 
 
 def filter_records_by_logged_ids(rows: list, logged_ids: set[str]) -> tuple[list, int]:
@@ -1909,10 +1995,18 @@ def main():
                         help="Cap how many records to process (0 = unlimited)")
     parser.add_argument("--attempts", type=int, default=4,
                         help="How many strategies to try per record (1-6).")
+    parser.add_argument("--latest-count", type=int, default=0,
+                        help="Force reprocess only the newest N GetOrderInquiry rows by last_processed_at")
     args = parser.parse_args()
 
     load_dotenv_file()
     run_date_key = _run_date_key()
+    latest_count = int(args.latest_count or 0)
+    if latest_count <= 0 and not args.force:
+        inferred_latest_count = infer_latest_inquiry_batch_count()
+        if inferred_latest_count > 0:
+            latest_count = inferred_latest_count
+            print(f"[{SCRIPT_NAME}] Inferred latest-count={latest_count} from GetOrderInquiry logs")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     reverify_daily_log_path = ensure_reverify_log_files(run_date_key)
@@ -1931,24 +2025,23 @@ def main():
             and int(run_guard.get("limit") or 0) == int(args.limit or 0)
             and bool(run_guard.get("force")) == bool(args.force)
             and int(run_guard.get("attempts") or 0) == int(args.attempts or 0)
+            and int(run_guard.get("latest_count") or 0) == latest_count
         )
         guard_is_fresh = False
         started_at_text = _safe_str(run_guard.get("started_at"))
-        if started_at_text:
-            try:
-                started_dt = datetime.fromisoformat(started_at_text)
-                current_dt = datetime.now(started_dt.tzinfo) if started_dt.tzinfo else datetime.now()
-                age_seconds = (current_dt - started_dt).total_seconds()
-                guard_is_fresh = age_seconds < 3 * 60 * 60
-            except (TypeError, ValueError):
-                guard_is_fresh = False
+        started_dt = _parse_iso_datetime(started_at_text)
+        if started_dt:
+            current_dt = datetime.now(started_dt.tzinfo) if started_dt.tzinfo else datetime.now()
+            age_seconds = (current_dt - started_dt).total_seconds()
+            guard_is_fresh = age_seconds < 3 * 60 * 60
+        guard_process_active = _is_process_active(run_guard.get("pid"))
 
-        if same_config and guard_is_fresh and not args.force:
+        if same_config and guard_is_fresh and guard_process_active and not args.force:
             print(
                 f"[{SCRIPT_NAME}] Another run with same config is active since {started_at_text}; "
                 "skipping to avoid concurrent file updates."
             )
-            return
+            raise SystemExit(CONCURRENT_RUN_EXIT_CODE)
 
         print(f"[{SCRIPT_NAME}] Previous run marker detected; proceeding with current run.")
 
@@ -1959,6 +2052,7 @@ def main():
         "attempts": args.attempts,
         "force": bool(args.force),
         "limit": args.limit,
+        "latest_count": latest_count,
         "started_at": run_started_at,
         "pid": os.getpid(),
     })
@@ -1975,15 +2069,40 @@ def main():
     source_order = ["not_found", "review"] if args.source == "both" else [args.source]
     source_rows = {name: load_records(path) for name, path in SOURCE_FILES.items()}
 
+    if latest_count > 0:
+        latest_order_ids = load_latest_inquiry_order_ids(latest_count)
+        if latest_order_ids:
+            for source_name in source_order:
+                before = len(source_rows.get(source_name, []))
+                source_rows[source_name] = [
+                    row for row in source_rows.get(source_name, [])
+                    if _normalize_order_id(row.get("order_id")) in latest_order_ids
+                ]
+                filtered = before - len(source_rows[source_name])
+                if filtered > 0:
+                    print(f"[{SCRIPT_NAME}] Latest-count filter removed {filtered} older rows from {source_name}")
+            print(f"[{SCRIPT_NAME}] Latest window enabled – newest {latest_count} GetOrderInquiry rows will be reprocessed")
+        else:
+            print(f"[{SCRIPT_NAME}] Latest-count filter requested, but no GetOrderInquiry rows were available; skipping to avoid processing the full backlog")
+            for source_name in source_order:
+                source_rows[source_name] = []
+
     if not args.force:
         for source_name in source_order:
             rows = source_rows.get(source_name, [])
-            original = len(rows)
             filtered_rows, skipped_here = filter_records_by_logged_ids(rows, logged_ids)
             source_rows[source_name] = filtered_rows
             if skipped_here:
                 skipped_logged += skipped_here
                 print(f"[{SCRIPT_NAME}] Pre-filtered {skipped_here} already-processed IDs from {source_name}")
+
+    progress_total = sum(len(source_rows.get(source_name, [])) for source_name in source_order)
+    if args.limit > 0:
+        progress_total = min(progress_total, int(args.limit))
+    progress_total = max(0, int(progress_total))
+    progress_completed = 0
+    if progress_total > 0:
+        print(f"REVERIFY_TOTAL|{progress_total}")
 
     stop_due_to_limit = False
 
@@ -2001,6 +2120,9 @@ def main():
             if order_id in logged_ids and not args.force:
                 print(f"[{SCRIPT_NAME}] SKIP {order_id} (already logged)")
                 skipped_logged += 1
+                if progress_total > 0:
+                    progress_completed = min(progress_total, progress_completed + 1)
+                    print(f"REVERIFY_PROGRESS|{progress_completed}|{progress_total}")
                 continue
             if args.limit > 0 and processed >= args.limit:
                 print(f"[{SCRIPT_NAME}] Reached --limit={args.limit}; stopping early.")
@@ -2073,6 +2195,9 @@ def main():
             append_reverify_daily_log(order_id, status, source_name, run_date_key)
             logged_ids.add(order_id)
             processed += 1
+            if progress_total > 0:
+                progress_completed = min(progress_total, progress_completed + 1)
+                print(f"REVERIFY_PROGRESS|{progress_completed}|{progress_total}")
 
         if stop_due_to_limit:
             break
@@ -2084,6 +2209,7 @@ def main():
         "source": args.source,
         "force": bool(args.force),
         "limit": args.limit,
+        "latest_count": latest_count,
         "started_at": run_started_at,
         "finished_at": get_now_iso(),
         "pid": os.getpid(),
@@ -2104,4 +2230,25 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as exc:
+        try:
+            _record_error_report("fatal", str(exc), {"type": exc.__class__.__name__})
+        except Exception:
+            pass
+        try:
+            run_guard = load_run_guard()
+            if _safe_str(run_guard.get("status")) == "running" and int(run_guard.get("pid") or 0) == os.getpid():
+                save_run_guard({
+                    **run_guard,
+                    "status": "failed",
+                    "finished_at": get_now_iso(),
+                    "error": str(exc),
+                    "pid": os.getpid(),
+                })
+        except Exception:
+            pass
+        raise

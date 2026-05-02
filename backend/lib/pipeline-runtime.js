@@ -102,43 +102,62 @@ export function parseProgressSignal(output) {
   let current = null;
   let total = null;
 
+  // [N/M] bracket pattern
   const bracketMatch = text.match(/\[(\d+)\/(\d+)\]/);
   if (bracketMatch) {
     current = Number(bracketMatch[1]);
     total = Number(bracketMatch[2]);
   }
 
+  // "Processing/Verifying N of M" pattern
   const ofMatch = text.match(/(?:Processing|Task|Order|Row|Record|Closing|Uploading|Verifying|Re-verifying)\s+(\d+)\s+of\s+(\d+)/i);
   if (ofMatch) {
     current = Number(ofMatch[1]);
     total = Number(ofMatch[2]);
   }
 
+  // Percent complete pattern
   const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%\s*(?:complete|done|progress|finished)/i);
   if (percentMatch) {
     current = Number(percentMatch[1]);
     total = 100;
   }
 
+  // "processed so far: N" pattern
   const processedMatch = text.match(/processed so far:\s*(\d+)/i);
   if (processedMatch && current === null) {
     current = Number(processedMatch[1]);
   }
 
+  // LIVE PROCESSING - N tasks/orders (total signal)
   const totalMatch = text.match(/LIVE PROCESSING\s+[-–]\s+(\d+)\s+(?:tasks|orders)\b/i);
   if (totalMatch && total === null) {
     total = Number(totalMatch[1]);
+  }
+
+  // Reverify: "Checking XXXXXX [not_found|review]" with REVERIFY_TOTAL signal
+  // Reverify emits: "REVERIFY_TOTAL|N" at start and "REVERIFY_PROGRESS|current|total" per row
+  const reverifyTotalMatch = text.match(/REVERIFY_TOTAL\|(\d+)/i);
+  if (reverifyTotalMatch) {
+    total = Number(reverifyTotalMatch[1]);
+    current = current ?? 0;
+  }
+  const reverifyProgressMatch = text.match(/REVERIFY_PROGRESS\|(\d+)\|(\d+)/i);
+  if (reverifyProgressMatch) {
+    current = Number(reverifyProgressMatch[1]);
+    total = Number(reverifyProgressMatch[2]);
   }
 
   if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
     return null;
   }
 
+  // Use 99 as ceiling — 100% is only set when the job actually finishes
   return {
     mode: "determinate",
     current,
     total,
-    progress: Math.max(0, Math.min(95, Math.round((current / total) * 100))),
+    progress: Math.max(0, Math.min(99, Math.round((current / total) * 100))),
   };
 }
 
@@ -149,6 +168,7 @@ export function computePipelineProgress({ totalSteps, completedSteps, currentSte
     ? Math.max(0, Math.min(100, Number(currentStepProgress))) / 100
     : 0;
   const exactProgress = ((normalizedCompleted + currentFraction) / normalizedTotal) * 100;
+  // Cap at 99 — the pipeline sets 100 only when all steps truly finish
   return Math.max(0, Math.min(99, Math.round(exactProgress)));
 }
 

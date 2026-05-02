@@ -12,28 +12,31 @@
         "scriptId": "get-order-inquiry"
       },
       {
-        "scriptId": "funeral-finder",
-        "option": "batch"
+        "scriptId": "funeral-finder"
       },
       {
         "scriptId": "reverify",
         "option": "both"
       },
       {
-        "scriptId": "updater"
+        "scriptId": "updater",
+        "option": "complete"
       },
       {
         "scriptId": "closing-task"
       }
     ],
+    "useReverify": true,
+    "reverifyOption": "both",
+    "updaterModel": "sonar-pro",
     "createdAt": "2026-03-26T00:56:53.530Z",
-    "updatedAt": "2026-05-01T00:49:22.570Z",
-    "nextRunAt": "2026-05-01T01:19:22.567Z",
-    "lastTriggeredAt": "2026-05-01T00:49:10.438Z",
-    "lastStatus": "success",
-    "lastJobId": "job_1777596550516_ve58ab",
-    "lastStartedAt": "2026-05-01T00:49:10.438Z",
-    "lastFinishedAt": "2026-05-01T00:49:22.567Z",
-    "lastCooldownStartedAt": "2026-05-01T00:49:22.567Z"
+    "updatedAt": "2026-05-02T02:12:00.000Z",
+    "nextRunAt": null,
+    "lastTriggeredAt": "2026-05-01T19:17:37.490Z",
+    "lastStatus": "idle",
+    "lastJobId": "job_1777663057538_t4holr",
+    "lastStartedAt": "2026-05-01T19:17:37.490Z",
+    "lastFinishedAt": "2026-05-01T19:40:38.397Z",
+    "lastCooldownStartedAt": "2026-05-01T19:40:38.397Z"
   }
 ]

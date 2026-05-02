@@ -54,6 +54,20 @@ function buildPipelineSequence(reverifySource: string) {
   ];
 }
 
+function buildCronSequence(useReverify: boolean, reverifySource: string) {
+  const sequence = [
+    { scriptId: "get-task" },
+    { scriptId: "get-order-inquiry" },
+    { scriptId: "funeral-finder" },
+  ];
+  if (useReverify) {
+    sequence.push({ scriptId: "reverify", option: reverifySource || "both" });
+  }
+  sequence.push({ scriptId: "updater", option: "complete" });
+  sequence.push({ scriptId: "closing-task" });
+  return sequence;
+}
+
 function buildScheduleCron(intervalValue: string, intervalUnit: "minutes" | "seconds") {
   const normalizedValue = Math.max(1, Number(intervalValue || "1"));
   return intervalUnit === "seconds"
@@ -90,6 +104,9 @@ export function DashboardHeader() {
   const { isDark, toggleDark } = useTheme();
   const [cronFrequency, setCronFrequency] = useState("30");
   const [cronUnit, setCronUnit] = useState<"minutes" | "seconds">("minutes");
+  const [cronUseReverify, setCronUseReverify] = useState<"yes" | "no" | "">("");
+  const [cronReverifySource, setCronReverifySource] = useState("both");
+  const [cronUpdaterModel, setCronUpdaterModel] = useState("");
   const [pipelineReverifySource, setPipelineReverifySource] = useState("both");
   const [selectedModel, setSelectedModel] = useState("sonar-pro");
   const [configuredTimezone, setConfiguredTimezone] = useState("UTC");
@@ -140,6 +157,11 @@ export function DashboardHeader() {
     const parsed = parseScheduleCron(firstCron);
     setCronFrequency(parsed.value);
     setCronUnit(parsed.unit);
+    if (schedules[0]) {
+      setCronUseReverify(schedules[0].useReverify === false ? "no" : schedules[0].useReverify === true ? "yes" : "");
+      setCronReverifySource(schedules[0].reverifyOption || "both");
+      setCronUpdaterModel(schedules[0].updaterModel || "");
+    }
   }, [schedules]);
 
   const runPipeline = useMutation({
@@ -154,20 +176,35 @@ export function DashboardHeader() {
 
   const saveSchedule = useMutation({
     mutationFn: async () => {
+      const useReverify = cronUseReverify === "yes";
+      if (!cronUpdaterModel.trim()) {
+        throw new Error("Select a scheduled model before saving cron.");
+      }
+      if (!cronUseReverify) {
+        throw new Error("Choose whether cron should use Reverify before saving.");
+      }
+      if (useReverify && !cronReverifySource) {
+        throw new Error("Choose a Reverify source before saving.");
+      }
       const cron = buildScheduleCron(cronFrequency, cronUnit);
       const current = schedules[0];
+      const payload = {
+        cron,
+        useReverify,
+        reverifyOption: useReverify ? cronReverifySource : null,
+        updaterModel: cronUpdaterModel,
+        sequence: buildCronSequence(useReverify, cronReverifySource),
+      };
       if (current) {
         return api.updateSchedule(current.id, {
-          cron,
           enabled: current.enabled,
-          sequence: buildPipelineSequence(pipelineReverifySource),
+          ...payload,
         });
       }
       return api.createSchedule({
         name: "Default Sequential Pipeline",
-        cron,
         enabled: true,
-        sequence: buildPipelineSequence(pipelineReverifySource),
+        ...payload,
       });
     },
     onSuccess: () => {
@@ -251,6 +288,7 @@ export function DashboardHeader() {
     onSuccess: ({ removed }) => {
       toast.success(removed > 0 ? `${removed} other sessions cleared` : "No other sessions were active");
       queryClient.invalidateQueries({ queryKey: ["auth"] });
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
     onError: (error) => toast.error(error.message || "Failed to clear other sessions"),
   });
@@ -285,6 +323,8 @@ export function DashboardHeader() {
   const nextScheduleDetail = pipelineStatus?.nextSchedule?.name
     ? pipelineStatus.nextSchedule.lastStatus === "running"
       ? `${pipelineStatus.nextSchedule.name} cooldown starts after the current pipeline finishes`
+      : pipelineStatus.nextSchedule.lastStatus === "waiting"
+        ? `${pipelineStatus.nextSchedule.name} is waiting for the active workload to clear before its cooldown can resume`
       : `${pipelineStatus.nextSchedule.name} in ${formatCountdown(pipelineStatus.nextScheduleInSeconds)}`
     : "No enabled schedule";
 
@@ -383,35 +423,122 @@ export function DashboardHeader() {
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">Cron Schedule</CardTitle>
-                      <CardDescription>Each next run waits for the full pipeline to finish, then starts the cooldown timer.</CardDescription>
+                      <CardDescription>
+                        After each pipeline completes, the cooldown timer starts. When it expires, the next pipeline runs automatically.
+                        <span className="mt-1 block font-medium text-amber-600 dark:text-amber-400">
+                          ⚠ Reverify choice and scheduled model are mandatory before cron can start.
+                        </span>
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="flex items-end gap-2">
-                        <div className="flex-1 space-y-2">
-                          <div className="text-xs font-medium text-muted-foreground">Run every</div>
-                          <div className="flex gap-2">
-                            <Input
-                              type="number"
-                              min="1"
-                              value={cronFrequency}
-                              onChange={(event) => setCronFrequency(event.target.value)}
-                            />
-                            <Select value={cronUnit} onValueChange={(value) => setCronUnit(value as "minutes" | "seconds")}>
-                              <SelectTrigger className="w-32">
-                                <SelectValue placeholder="Unit" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="minutes">Minutes</SelectItem>
-                                <SelectItem value="seconds">Seconds</SelectItem>
-                              </SelectContent>
-                            </Select>
+                      {/* Step 1: Mandatory — Use Reverify & Scheduled Model */}
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-muted-foreground">
+                            Use Reverify in cron <span className="text-destructive">*</span>
                           </div>
+                          <Select value={cronUseReverify || undefined} onValueChange={(value) => setCronUseReverify(value as "yes" | "no")}>
+                            <SelectTrigger className={!cronUseReverify ? "border-amber-500/50" : ""}>
+                              <SelectValue placeholder="Select yes or no" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="yes">Yes, run Reverify</SelectItem>
+                              <SelectItem value="no">No, skip Reverify</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
-                        <Button onClick={() => saveSchedule.mutate()} disabled={saveSchedule.isPending} className="gap-2">
-                          <Save className="h-4 w-4" />
-                          Save
-                        </Button>
+
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-muted-foreground">
+                            Scheduled model <span className="text-destructive">*</span>
+                          </div>
+                          <Select value={cronUpdaterModel || undefined} onValueChange={setCronUpdaterModel}>
+                            <SelectTrigger className={!cronUpdaterModel ? "border-amber-500/50" : ""}>
+                              <SelectValue placeholder="Select model" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {availableModels.map((model) => (
+                                <SelectItem key={model} value={model}>
+                                  {model}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
+
+                      {/* Step 2: Reverify source (only shown when reverify is "yes") */}
+                      {cronUseReverify === "yes" ? (
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-muted-foreground">
+                            Reverify source for cron <span className="text-destructive">*</span>
+                          </div>
+                          <Select value={cronReverifySource} onValueChange={setCronReverifySource}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select source" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="both">Both</SelectItem>
+                              <SelectItem value="not_found">Not Found Only</SelectItem>
+                              <SelectItem value="review">Review Only</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+
+                      {/* Step 3: Interval */}
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-muted-foreground">Cooldown interval (run every)</div>
+                        <div className="flex gap-2">
+                          <Input
+                            type="number"
+                            min="1"
+                            value={cronFrequency}
+                            onChange={(event) => setCronFrequency(event.target.value)}
+                          />
+                          <Select value={cronUnit} onValueChange={(value) => setCronUnit(value as "minutes" | "seconds")}>
+                            <SelectTrigger className="w-32">
+                              <SelectValue placeholder="Unit" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="minutes">Minutes</SelectItem>
+                              <SelectItem value="seconds">Seconds</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
+                        <div>
+                          <span className="font-medium">Pipeline:</span>{" "}
+                          {cronUseReverify === "no"
+                            ? "GetTask → GetOrderInquiry → Funeral_Finder → Updater → ClosingTask"
+                            : "GetTask → GetOrderInquiry → Funeral_Finder → Reverify → Updater → ClosingTask"}
+                        </div>
+                        <div className="mt-1">
+                          <span className="font-medium">Timing:</span>{" "}
+                          Pipeline runs → completes → {cronFrequency} {cronUnit} cooldown → next run
+                        </div>
+                      </div>
+
+                      {/* Validation warning before Save */}
+                      {(!cronUseReverify || !cronUpdaterModel) && (
+                        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                          <span className="font-semibold">Required before saving:</span>
+                          {!cronUseReverify && <span className="ml-1">• Reverify choice</span>}
+                          {!cronUpdaterModel && <span className="ml-1">• Scheduled model</span>}
+                        </div>
+                      )}
+
+                      {/* Save button at the bottom after all mandatory fields */}
+                      <Button
+                        onClick={() => saveSchedule.mutate()}
+                        disabled={saveSchedule.isPending || !cronUseReverify || !cronUpdaterModel}
+                        className="w-full gap-2"
+                      >
+                        <Save className="h-4 w-4" />
+                        {saveSchedule.isPending ? "Saving..." : "Save Schedule"}
+                      </Button>
 
                       <div className="space-y-3">
                         {schedules.length === 0 && <p className="text-sm text-muted-foreground">No schedules saved yet.</p>}
@@ -423,12 +550,19 @@ export function DashboardHeader() {
                                 <div className="text-xs text-muted-foreground">{describeScheduleInterval(schedule)} • {schedule.cron}</div>
                               </div>
                               <div className="flex items-center gap-2">
-                                <Button variant="outline" size="sm" onClick={() => triggerSchedule.mutate(schedule.id)}>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={!schedule.configValid || triggerSchedule.isPending}
+                                  onClick={() => triggerSchedule.mutate(schedule.id)}
+                                >
                                   Trigger
                                 </Button>
                                 <Button
                                   variant={schedule.enabled ? "secondary" : "outline"}
                                   size="sm"
+                                  disabled={!schedule.configValid && !schedule.enabled}
+                                  title={!schedule.configValid ? (schedule.configError || "Configure model and reverify first") : undefined}
                                   onClick={() => toggleSchedule.mutate({ id: schedule.id, enabled: !schedule.enabled })}
                                 >
                                   {schedule.enabled ? "Pause" : "Enable"}
@@ -440,12 +574,20 @@ export function DashboardHeader() {
                               <div>Last trigger: {formatDateTime(schedule.lastTriggeredAt, currentTimezone)}</div>
                               <div>Last finish: {formatDateTime(schedule.lastFinishedAt, currentTimezone)}</div>
                               <div>Status: {schedule.lastStatus || "Never"}</div>
+                              <div>Reverify: {schedule.useReverify === false ? "Disabled" : `Enabled (${schedule.reverifyOption || "both"})`}</div>
+                              <div>Scheduled model: {schedule.updaterModel || <span className="text-amber-600">Not set</span>}</div>
+                              {!schedule.configValid ? (
+                                <div className="font-medium text-destructive">
+                                  ⚠ {schedule.configError || "Schedule cannot start until required settings are selected."}
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         ))}
                       </div>
                     </CardContent>
                   </Card>
+
 
                   <Card>
                     <CardHeader>

@@ -91,11 +91,11 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <DashboardHeader />
 
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 lg:px-6">
+      <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 lg:px-6">
         <OrderStatsPanel />
 
         <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-6">
+          <div className="min-w-0 space-y-6">
             <section className="space-y-3">
               <div>
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Pipeline Preview</h2>
@@ -121,19 +121,24 @@ const Index = () => {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-blue-500 to-cyan-400 transition-all duration-500"
-                          style={{ width: `${Math.min(activePipelineJob.progress || 0, 100)}%` }}
-                        />
+                      <div className="space-y-2">
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-blue-500 to-cyan-400 transition-all duration-500"
+                            style={{ width: `${Math.min(activePipelineJob.progress || 0, 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                          <span>Child job: {activeScriptJob?.id || "pending"}</span>
+                          <span>
+                            Step progress: {activeScriptJob?.progressCurrent != null && activeScriptJob?.progressTotal != null
+                              ? `${activeScriptJob.progressCurrent}/${activeScriptJob.progressTotal} | ${activeScriptJob.progress ?? 0}%`
+                              : (activeScriptJob?.progressNote || activeScriptJob?.status || "queued")}
+                          </span>
+                          <span>Elapsed: {formatElapsed(activeScriptJob?.startedAt || activePipelineJob.startedAt || activePipelineJob.createdAt)}</span>
+                          <span>Pipeline: {activePipelineJob.progress ?? 0}%</span>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        <span>Child job: {activeScriptJob?.id || "pending"}</span>
-                        <span>Step progress: {activeScriptJob?.progressNote || activeScriptJob?.status || "queued"}</span>
-                        <span>Elapsed: {formatElapsed(activeScriptJob?.startedAt || activePipelineJob.startedAt || activePipelineJob.createdAt)}</span>
-                      </div>
-                    </div>
 
                     <div className="rounded-xl border border-zinc-800/60 bg-zinc-950 p-3">
                       <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-zinc-400">Live Output</div>
@@ -184,7 +189,7 @@ const Index = () => {
             </section>
           </div>
 
-          <div className="space-y-6">
+          <div className="min-w-0 space-y-6">
             <AlertsPanel />
             <MetricsPanel />
             <UserAdminPanel />

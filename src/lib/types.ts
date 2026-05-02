@@ -6,6 +6,8 @@ export interface ScriptConfig {
   description: string;
   hasOptions: boolean;
   options: string[];
+  supportsForceLatest?: boolean;
+  forceLatestOptions?: number[];
   status?: ScriptStatus;
   lastRun?: string | null;
   duration?: string | null;
@@ -21,6 +23,7 @@ export interface Job {
   scriptId?: string | null;
   sequence?: Array<{ scriptId: string; option?: string }> | null;
   option?: string | null;
+  forceLatestCount?: number | null;
   trigger?: {
     type: "manual" | "schedule";
     scheduleId?: string;
@@ -107,6 +110,12 @@ export interface ScheduleItem {
   sequence: Array<{ scriptId: string; option?: string }>;
   createdAt: string;
   updatedAt?: string;
+  useReverify?: boolean | null;
+  reverifyOption?: "both" | "not_found" | "review" | null;
+  updaterModel?: string | null;
+  configValid?: boolean;
+  configError?: string | null;
+  missingConfig?: "updaterModel" | "reverifyConfig" | null;
   lastTriggeredAt?: string;
   lastStartedAt?: string;
   lastFinishedAt?: string;

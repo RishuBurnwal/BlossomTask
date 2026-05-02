@@ -14,7 +14,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
 
   useEffect(() => {
-    const maybeStored = window.localStorage.getItem("blossom_username") || "";
+    const maybeStored = window.sessionStorage.getItem("blossom_username") || "";
     if (maybeStored) {
       setUsername(maybeStored);
     }
@@ -23,7 +23,7 @@ export default function Login() {
   const loginMutation = useMutation({
     mutationFn: () => api.login(username, password),
     onSuccess: (_data) => {
-      window.localStorage.setItem("blossom_username", username);
+      window.sessionStorage.setItem("blossom_username", username);
       queryClient.invalidateQueries({ queryKey: ["auth"] });
       toast.success("Session started");
       setPassword("");

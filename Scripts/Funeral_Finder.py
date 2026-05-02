@@ -76,6 +76,7 @@ PAYLOAD_PATH          = OUTPUT_DIR / "payload.json"
 LOGS_PATH             = OUTPUT_DIR / "logs.txt"
 RUN_GUARD_PATH        = OUTPUT_DIR / "run_state.json"
 ERROR_REPORT_PATH     = OUTPUT_DIR / "runtime_error_report.json"
+CONCURRENT_RUN_EXIT_CODE = 75
 
 
 def _run_date_key() -> str:
@@ -245,6 +246,30 @@ def load_run_guard() -> dict:
 def save_run_guard(payload: dict) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     RUN_GUARD_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    text = _safe_str(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _is_process_active(pid_value) -> bool:
+    try:
+        pid = int(pid_value)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def _extract_json_from_text(text: str) -> dict:
@@ -840,10 +865,16 @@ def _parse_date_candidate(raw_text: str) -> str:
             "%b %d",
         ):
             try:
-                parsed_source = candidate_with_year if "%Y" in fmt else candidate
-                parsed = datetime.strptime(parsed_source, fmt)
-                if "%Y" not in fmt:
-                    parsed = parsed.replace(year=current_year)
+                # Always supply a year to avoid Python 3.15 DeprecationWarning for
+                # year-less strptime formats like %m/%d, %B %d, etc.
+                if "%Y" in fmt:
+                    parsed_source = candidate_with_year
+                    parsed = datetime.strptime(parsed_source, fmt)
+                else:
+                    # Prepend current year and adjust the format accordingly
+                    year_fmt = f"%Y/{fmt}"
+                    parsed_source = f"{current_year}/{candidate}"
+                    parsed = datetime.strptime(parsed_source, year_fmt)
                 return parsed.date().isoformat()
             except ValueError:
                 continue
@@ -1256,7 +1287,7 @@ def load_order_ids_from_csv(csv_path: Path) -> set:
 
 # ── Input reader ─────────────────────────────────────────────────────────────
 
-def load_orders_from_inquiry() -> list:
+def load_orders_from_inquiry(latest_count: int = 0) -> list:
     """
     Read order data from GetOrderInquiry/data.csv.
     Returns list of dicts with the combined column data.
@@ -1266,20 +1297,16 @@ def load_orders_from_inquiry() -> list:
         print(f"[{SCRIPT_NAME}]   → Run GetOrderInquiry.py first.")
         return []
 
-    orders = []
-    seen_ids = set()
-
     _, rows, encoding_used = _read_csv_dict_rows(INPUT_CSV)
     if encoding_used not in {"utf-8-sig", "utf-8"}:
         print(f"[{SCRIPT_NAME}] INFO: Read {INPUT_CSV.name} using {encoding_used} fallback")
 
+    normalized_rows = []
     for row in rows:
         oid = _safe_str(row.get("order_id"))
-        if not oid or oid in seen_ids:
+        if not oid:
             continue
-        seen_ids.add(oid)
-
-        orders.append({
+        normalized_rows.append({
             "order_id":          oid,
             "task_id":           _safe_str(row.get("task_id")),
             "ship_name":         _safe_str(row.get("ship_name")),
@@ -1291,7 +1318,24 @@ def load_orders_from_inquiry() -> list:
             "ship_address_unit": _safe_str(row.get("ship_address_unit")),
             "ship_country":      _safe_str(row.get("ship_country")),
             "ord_instruct":      _safe_str(row.get("ord_instruct")),
+            "last_processed_at": _safe_str(row.get("last_processed_at")),
         })
+
+    normalized_rows.sort(
+        key=lambda entry: _parse_iso_datetime(entry.get("last_processed_at")) or datetime.min,
+        reverse=True,
+    )
+
+    orders = []
+    seen_ids = set()
+    for row in normalized_rows:
+        oid = _safe_str(row.get("order_id"))
+        if not oid or oid in seen_ids:
+            continue
+        seen_ids.add(oid)
+        orders.append(row)
+        if latest_count > 0 and len(orders) >= latest_count:
+            break
 
     return orders
 
@@ -1651,6 +1695,8 @@ def main():
                         help="Reprocess rows that are already in Funeral_data_not_found.csv")
     parser.add_argument("--limit", type=int, default=0,
                         help="Cap how many orders to process (0 = unlimited)")
+    parser.add_argument("--latest-count", type=int, default=0,
+                        help="Force reprocess only the newest N GetOrderInquiry rows by last_processed_at")
     args = parser.parse_args()
 
     load_dotenv_file()
@@ -1661,11 +1707,23 @@ def main():
         and _safe_str(run_guard.get("date_key")) == run_date_key
         and not args.force
     ):
+        started_at_text = _safe_str(run_guard.get("started_at"))
+        started_dt = _parse_iso_datetime(started_at_text)
+        guard_is_fresh = False
+        if started_dt:
+            current_dt = datetime.now(started_dt.tzinfo) if started_dt.tzinfo else datetime.now()
+            guard_is_fresh = (current_dt - started_dt).total_seconds() < 3 * 60 * 60
+        guard_process_active = _is_process_active(run_guard.get("pid"))
+        if guard_is_fresh and guard_process_active:
+            print(
+                f"[{SCRIPT_NAME}] Another run is already active since {started_at_text}. "
+                "Use --force to override."
+            )
+            raise SystemExit(CONCURRENT_RUN_EXIT_CODE)
         print(
-            f"[{SCRIPT_NAME}] Another run is already active since {_safe_str(run_guard.get('started_at'))}. "
-            "Use --force to override."
+            f"[{SCRIPT_NAME}] Previous run marker was stale; proceeding with current run. "
+            f"(started_at={started_at_text or 'unknown'}, pid={_safe_str(run_guard.get('pid')) or 'unknown'})"
         )
-        return
 
     save_run_guard({
         "status": "running",
@@ -1674,6 +1732,7 @@ def main():
         "pid": os.getpid(),
         "force": bool(args.force),
         "limit": int(args.limit or 0),
+        "latest_count": int(args.latest_count or 0),
     })
 
     date_wise_csv_path = get_date_wise_csv_path(run_date_key)
@@ -1696,9 +1755,21 @@ def main():
         print(f"[{SCRIPT_NAME}]   → Using built-in fallback prompt")
 
     # ── 1. Load orders from GetOrderInquiry output ───────────────────────────
-    orders = load_orders_from_inquiry()
+    orders = load_orders_from_inquiry(int(args.latest_count or 0))
     if not orders:
         print(f"[{SCRIPT_NAME}] No orders to process.")
+        save_run_guard({
+            "status": "completed",
+            "date_key": run_date_key,
+            "started_at": _safe_str(load_run_guard().get("started_at")) or get_now_iso(),
+            "finished_at": get_now_iso(),
+            "pid": os.getpid(),
+            "processed": 0,
+            "found": 0,
+            "review": 0,
+            "not_found": 0,
+            "latest_count": int(args.latest_count or 0),
+        })
         return
 
     print(f"\n┌─────────────────────────────────────────────────────────┐")
@@ -1706,6 +1777,8 @@ def main():
     print(f"│  Orders loaded (de-duped) : {len(orders):<29}│")
     print(f"│  Source file              : GetOrderInquiry/data.csv     │")
     print(f"└─────────────────────────────────────────────────────────┘")
+    if args.latest_count:
+        print(f"[{SCRIPT_NAME}] Force latest mode enabled – newest {args.latest_count} GetOrderInquiry rows will be reprocessed")
 
     # ── 2. Load already-processed IDs from logs.txt ──────────────────────────
     logged_ids = set() if args.force else load_logged_ids()
@@ -1921,8 +1994,30 @@ def main():
         "found": found_count,
         "review": review_count,
         "not_found": not_found_count,
+        "latest_count": int(args.latest_count or 0),
     })
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as exc:
+        try:
+            _record_error_report("fatal", str(exc), {"type": exc.__class__.__name__})
+        except Exception:
+            pass
+        try:
+            run_guard = load_run_guard()
+            if _safe_str(run_guard.get("status")) == "running" and int(run_guard.get("pid") or 0) == os.getpid():
+                save_run_guard({
+                    **run_guard,
+                    "status": "failed",
+                    "finished_at": get_now_iso(),
+                    "error": str(exc),
+                    "pid": os.getpid(),
+                })
+        except Exception:
+            pass
+        raise

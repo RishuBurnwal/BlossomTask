@@ -55,7 +55,8 @@ import {
 } from "./lib/auth-store.js";
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
+app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 
 const PORT = Number(process.env.BACKEND_PORT || 8787);
@@ -156,7 +157,8 @@ function parseCookies(cookieHeader = "") {
 
 function serializeSessionCookie(sessionId, expiresAt) {
   const maxAgeSeconds = Math.max(60, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
-  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+  const isProduction = process.env.NODE_ENV === "production";
+  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${isProduction ? "; Secure" : ""}`;
 }
 
 function clearSessionCookie() {
@@ -347,33 +349,103 @@ function defaultPipelineSequence() {
   ];
 }
 
+function inferScheduleUseReverify(schedule) {
+  if (typeof schedule?.useReverify === "boolean") {
+    return schedule.useReverify;
+  }
+  return Array.isArray(schedule?.sequence)
+    ? schedule.sequence.some((step) => step?.scriptId === "reverify")
+    : null;
+}
+
+function inferScheduleReverifyOption(schedule, useReverify) {
+  if (useReverify === false) {
+    return null;
+  }
+  const fromField = String(schedule?.reverifyOption || "").trim();
+  if (fromField) {
+    return fromField;
+  }
+  const reverifyStep = Array.isArray(schedule?.sequence)
+    ? schedule.sequence.find((step) => step?.scriptId === "reverify")
+    : null;
+  return reverifyStep?.option || "both";
+}
+
+function buildScheduledSequence(schedule) {
+  const useReverify = inferScheduleUseReverify(schedule);
+  const reverifyOption = inferScheduleReverifyOption(schedule, useReverify);
+  const sequence = [
+    { scriptId: "get-task" },
+    { scriptId: "get-order-inquiry" },
+    { scriptId: "funeral-finder" },
+  ];
+  if (useReverify !== false) {
+    sequence.push({ scriptId: "reverify", option: reverifyOption || "both" });
+  }
+  sequence.push({ scriptId: "updater", option: "complete" });
+  sequence.push({ scriptId: "closing-task" });
+  return sequence;
+}
+
+function validateScheduleConfig(schedule) {
+  const updaterModel = String(schedule?.updaterModel || "").trim();
+  const useReverify = inferScheduleUseReverify(schedule);
+  const reverifyOption = inferScheduleReverifyOption(schedule, useReverify);
+
+  if (!updaterModel) {
+    return {
+      ok: false,
+      error: "updaterModel is required. Select a scheduled model before enabling cron.",
+      missingConfig: "updaterModel",
+    };
+  }
+  if (typeof useReverify !== "boolean") {
+    return {
+      ok: false,
+      error: "Choose whether cron should use Reverify before enabling the schedule.",
+      missingConfig: "reverifyConfig",
+    };
+  }
+  if (useReverify && !String(reverifyOption || "").trim()) {
+    return {
+      ok: false,
+      error: "Choose a Reverify source before enabling the schedule.",
+      missingConfig: "reverifyConfig",
+    };
+  }
+  return { ok: true, error: null, missingConfig: null };
+}
+
 function normalizeSequence(inputSequence) {
   const requested = Array.isArray(inputSequence) ? inputSequence : [];
+
+  // If no input at all, return the default full pipeline
+  if (requested.length === 0) {
+    return defaultPipelineSequence();
+  }
+
   const byScriptId = new Map(
     requested
       .filter((step) => step && typeof step.scriptId === "string")
       .map((step) => [step.scriptId, step]),
   );
 
+  // Only include steps that were EXPLICITLY in the input, enforcing PIPELINE_ORDER ordering.
+  // This allows callers to skip steps (e.g., omit reverify) by not including them.
   const normalized = [];
   PIPELINE_ORDER.forEach((scriptId) => {
     const fromInput = byScriptId.get(scriptId);
-    if (fromInput) {
-      const step = { scriptId };
-      if (scriptId === "reverify") {
-        step.option = fromInput.option || "both";
-      } else if (fromInput.option) {
-        step.option = fromInput.option;
-      }
-      normalized.push(step);
-      return;
+    if (!fromInput) {
+      return; // Step not in input — skip it (don't inject defaults)
     }
-
+    const step = { scriptId };
     if (scriptId === "reverify") {
-      normalized.push({ scriptId, option: "both" });
-    } else {
-      normalized.push({ scriptId });
+      step.option = fromInput.option || "both";
+    } else if (fromInput.option) {
+      step.option = fromInput.option;
     }
+    normalized.push(step);
   });
 
   return normalized.length > 0 ? normalized : defaultPipelineSequence();
@@ -538,10 +610,20 @@ function saveJobs(jobs) {
 function reconcileOrphanedJobs() {
   const jobs = loadJobs();
   const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const ORPHAN_AGE_LIMIT_MS = 48 * 60 * 60 * 1000; // 48 hours
   let changed = false;
+  const recoveredIds = [];
 
   const updated = jobs.map((job) => {
     if (job.status !== "running" && job.status !== "queued") {
+      return job;
+    }
+
+    // Skip very old jobs — they may have been left in a historical weird state
+    const createdAtMs = job.createdAt ? new Date(job.createdAt).getTime() : 0;
+    if (Number.isFinite(createdAtMs) && nowMs - createdAtMs > ORPHAN_AGE_LIMIT_MS) {
+      console.warn(`[reconcile] Skipping old orphaned job ${job.id} (created ${job.createdAt}); too old to reconcile safely`);
       return job;
     }
 
@@ -551,6 +633,7 @@ function reconcileOrphanedJobs() {
       : "Recovered after backend restart: queued job marked as cancelled";
     const logLine = `[${now}] ${reason}`;
 
+    recoveredIds.push(job.id);
     changed = true;
     return {
       ...job,
@@ -559,15 +642,51 @@ function reconcileOrphanedJobs() {
       updatedAt: now,
       progress: 100,
       exitCode: nextStatus === "failed" ? 1 : job.exitCode,
-      logs: [...(job.logs || []), logLine].slice(-500),
+      logs: [...(job.logs || []), logLine].slice(-100),
     };
   });
 
   if (changed) {
     saveJobs(updated);
-    console.warn("Recovered orphaned queued/running jobs after backend restart");
+    console.warn(`[reconcile] Recovered ${recoveredIds.length} orphaned job(s) after backend restart: ${recoveredIds.join(", ")}`);
   }
 }
+
+// After jobs are reconciled, fix any schedules that are stuck in 'running' state
+// with no corresponding active pipeline job (e.g., backend restarted mid-pipeline).
+function reconcileOrphanedSchedules() {
+  const schedules = loadSchedules();
+  const now = new Date().toISOString();
+  let changed = false;
+
+  schedules.forEach((schedule) => {
+    if (schedule.lastStatus !== "running" && schedule.lastStatus !== "queued") {
+      return;
+    }
+    // Check whether there's actually a live pipeline job for this schedule
+    const activeJob = loadJobs().find(
+      (job) =>
+        job.kind === "pipeline"
+        && (job.status === "running" || job.status === "queued")
+        && job.trigger?.scheduleId === schedule.id,
+    );
+    if (!activeJob) {
+      // No live job — the schedule is stuck; finalize its cooldown as failed
+      console.warn(`[cron] Reconciling orphaned schedule '${schedule.name}' (${schedule.id}): no active pipeline found`);
+      finalizeScheduleCooldown(schedule.id, "failed", schedule.lastStartedAt || now);
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    console.warn("[cron] Orphaned schedules reconciled after backend restart");
+  }
+}
+
+// In-memory log buffer for deferred jobs.json writes
+// Map<jobId, {lines: string[], timer: NodeJS.Timeout | null}>
+const logBuffer = new Map();
+const LOG_FLUSH_INTERVAL_MS = 3000;
 
 function upsertJob(jobId, patch) {
   const jobs = loadJobs();
@@ -575,8 +694,33 @@ function upsertJob(jobId, patch) {
   if (index === -1) return null;
   jobs[index] = { ...jobs[index], ...patch, updatedAt: new Date().toISOString() };
   saveJobs(jobs);
+  // If job is reaching a terminal state, merge any pending buffered logs immediately
+  const terminalStatuses = ["success", "failed", "cancelled"];
+  if (patch.status && terminalStatuses.includes(patch.status)) {
+    // Flush the log buffer into the already-saved record
+    const buffer = logBuffer.get(jobId);
+    if (buffer && buffer.lines.length > 0) {
+      if (buffer.timer) {
+        clearTimeout(buffer.timer);
+        buffer.timer = null;
+      }
+      const linesToMerge = [...buffer.lines];
+      buffer.lines = [];
+      logBuffer.delete(jobId);
+      // Re-load, merge, re-save
+      const freshJobs = loadJobs();
+      const freshIndex = freshJobs.findIndex((entry) => entry.id === jobId);
+      if (freshIndex !== -1) {
+        freshJobs[freshIndex].logs = [...(freshJobs[freshIndex].logs || []), ...linesToMerge].slice(-100);
+        freshJobs[freshIndex].updatedAt = new Date().toISOString();
+        saveJobs(freshJobs);
+        return freshJobs[freshIndex];
+      }
+    }
+  }
   return jobs[index];
 }
+
 
 function createJob(payload) {
   const jobs = loadJobs();
@@ -589,6 +733,7 @@ function createJob(payload) {
     scriptId: payload.scriptId ?? null,
     sequence: payload.sequence ?? null,
     option: payload.option ?? null,
+    forceLatestCount: payload.forceLatestCount ?? null,
     model: payload.model ?? null,
     trigger: payload.trigger ?? { type: "manual" },
     status: "queued",
@@ -605,7 +750,7 @@ function createJob(payload) {
     exitCode: null,
   };
   jobs.unshift(job);
-  saveJobs(jobs.slice(0, 200));
+  saveJobs(jobs.slice(0, 50));
   return job;
 }
 
@@ -622,18 +767,41 @@ function getRunningChildProcessForPipeline(pipelineJobId) {
   };
 }
 
-function appendLog(jobId, line) {
+
+function flushLogBuffer(jobId) {
+  const buffer = logBuffer.get(jobId);
+  if (!buffer || buffer.lines.length === 0) {
+    logBuffer.delete(jobId);
+    return;
+  }
+  const linesToFlush = [...buffer.lines];
+  buffer.lines = [];
+  if (buffer.timer) {
+    clearTimeout(buffer.timer);
+    buffer.timer = null;
+  }
+  logBuffer.delete(jobId);
+
   const jobs = loadJobs();
   const index = jobs.findIndex((entry) => entry.id === jobId);
   if (index === -1) return;
   const job = jobs[index];
-  const timestamp = new Date().toISOString();
-  const sanitizedLine = sanitizeLogText(line);
-  const formattedLine = `[${timestamp}] ${sanitizedLine}`;
-  job.logs = [...job.logs, formattedLine].slice(-500);
+  job.logs = [...(job.logs || []), ...linesToFlush].slice(-100);
   job.updatedAt = new Date().toISOString();
   jobs[index] = job;
   saveJobs(jobs);
+}
+
+function appendLog(jobId, line) {
+  const timestamp = new Date().toISOString();
+  const sanitizedLine = sanitizeLogText(line);
+  const formattedLine = `[${timestamp}] ${sanitizedLine}`;
+
+  // Always write to run history immediately (append-only, cheap)
+  // Resolve job metadata from buffer or disk for run history
+  const jobs = loadJobs();
+  const job = jobs.find((entry) => entry.id === jobId);
+  if (!job) return;
 
   appendRunHistoryEntry({
     taskId: job.id,
@@ -644,8 +812,19 @@ function appendLog(jobId, line) {
     progress: job.progress,
     timestamp,
     message: sanitizedLine,
-    fullLogs: job.logs,
+    // fullLogs intentionally omitted — prevents O(n^2) growth in run_history_logs.jsonl
   });
+
+  // Buffer log lines for deferred jobs.json write
+  if (!logBuffer.has(jobId)) {
+    logBuffer.set(jobId, { lines: [], timer: null });
+  }
+  const buffer = logBuffer.get(jobId);
+  buffer.lines.push(formattedLine);
+
+  if (!buffer.timer) {
+    buffer.timer = setTimeout(() => flushLogBuffer(jobId), LOG_FLUSH_INTERVAL_MS);
+  }
 }
 
 function syncPipelineProgressFromChild(job) {
@@ -761,6 +940,16 @@ function waitMs(durationMs) {
   return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
+function detectConcurrentRunGuard(job) {
+  const logs = Array.isArray(job?.logs) ? job.logs : [];
+  const guardLine = logs.find((line) => (
+    /Another run is already active/i.test(String(line || ""))
+    || /Another run with same config is active/i.test(String(line || ""))
+    || /skipping to avoid concurrent file updates/i.test(String(line || ""))
+  ));
+  return guardLine ? String(guardLine) : "";
+}
+
 async function runDemoScriptJob({ jobId, scriptId, option, modelName, script, modelRunId }) {
   const selectedModel = String(modelName || getActiveModel() || "sonar-pro");
   const previousErrorReport = readPipelineErrorReport();
@@ -779,6 +968,10 @@ async function runDemoScriptJob({ jobId, scriptId, option, modelName, script, mo
   appendLog(jobId, "Demo fast pipeline mode enabled");
   if (option) {
     appendLog(jobId, `Run mode: ${option}`);
+  }
+  const currentJob = loadJobs().find((entry) => entry.id === jobId);
+  if (currentJob?.forceLatestCount) {
+    appendLog(jobId, `Force latest window: newest ${currentJob.forceLatestCount} GetOrderInquiry rows`);
   }
   if (previousErrorReport?.status === "open") {
     appendLog(
@@ -843,7 +1036,7 @@ async function runDemoScriptJob({ jobId, scriptId, option, modelName, script, mo
   return { success: true, exitCode: 0 };
 }
 
-async function runScriptJob({ jobId, scriptId, option, modelName }) {
+async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCount = 0 }) {
   const script = getScriptById(scriptId);
   if (!script) {
     upsertJob(jobId, { status: "failed", finishedAt: new Date().toISOString(), exitCode: 1 });
@@ -897,6 +1090,9 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
   if (effectiveOption) {
     appendLog(jobId, `Run mode: ${effectiveOption}`);
   }
+  if (forceLatestCount > 0) {
+    appendLog(jobId, `Force latest window: newest ${forceLatestCount} GetOrderInquiry rows`);
+  }
 
   const cancelFlagPath = path.join(process.cwd(), "Scripts", "outputs", `.cancel_${jobId}`);
   const env = {
@@ -912,6 +1108,9 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
   };
 
   const scriptArgs = [];
+  if (forceLatestCount > 0 && (scriptId === "funeral-finder" || scriptId === "reverify")) {
+    scriptArgs.push("--force", "--latest-count", String(forceLatestCount));
+  }
   if (scriptId === "reverify" && effectiveOption) {
     scriptArgs.push("--source", effectiveOption);
   }
@@ -973,7 +1172,9 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
         resolve({ success: false, exitCode: code ?? 1 });
         return;
       }
-      const success = code === 0;
+      const concurrentGuardMessage = detectConcurrentRunGuard(current);
+      const success = code === 0 && !concurrentGuardMessage;
+      const finalExitCode = concurrentGuardMessage ? 75 : code;
       finishModelRun(modelRunId, success ? "success" : "failed");
       const finishedJob = upsertJob(jobId, {
         status: success ? "success" : "failed",
@@ -981,19 +1182,22 @@ async function runScriptJob({ jobId, scriptId, option, modelName }) {
         progress: 100,
         progressMode: "determinate",
         progressNote: success ? "Completed" : "Failed",
-        exitCode: code,
+        exitCode: finalExitCode,
       });
-      appendLog(jobId, `${script.name} finished with code ${code}`);
+      if (concurrentGuardMessage) {
+        appendLog(jobId, `${script.name} blocked by active-run guard; failing this step so the pipeline cannot continue with stale or incomplete data.`);
+      }
+      appendLog(jobId, `${script.name} finished with code ${finalExitCode}`);
       if (success) {
         resolvePipelineErrorReport({ jobId, scriptId, recoveredAt: new Date().toISOString() });
       } else {
         recordPipelineErrorReport(finishedJob ?? loadJobs().find((entry) => entry.id === jobId), {
-          message: `${script.name} finished with code ${code}`,
+          message: concurrentGuardMessage || `${script.name} finished with code ${finalExitCode}`,
         });
       }
       appendScriptRunSummary(jobId, scriptId);
       await syncScriptOutputsIfConfigured(jobId, scriptId);
-      resolve({ success, exitCode: code ?? 1 });
+      resolve({ success, exitCode: finalExitCode ?? 1 });
     });
   });
 }
@@ -1102,13 +1306,32 @@ async function runPipelineJob(jobId, sequence, modelName) {
 function normalizeSchedule(schedule) {
   const intervalSpec = parseScheduleIntervalFromCron(schedule?.cron);
   const intervalMinutes = resolveScheduleIntervalMinutes(schedule);
+  const useReverify = inferScheduleUseReverify(schedule);
+  const reverifyOption = inferScheduleReverifyOption(schedule, useReverify);
+  const updaterModel = schedule?.updaterModel ? String(schedule.updaterModel).trim() : null;
+  const validation = validateScheduleConfig({
+    ...schedule,
+    useReverify,
+    reverifyOption,
+    updaterModel,
+  });
   return {
     ...schedule,
     intervalMinutes,
     intervalUnit: intervalSpec?.unit || "minutes",
     intervalValue: intervalSpec?.interval ?? Math.max(1, Math.round(intervalMinutes)),
     nextRunAt: schedule?.nextRunAt || null,
-    sequence: normalizeSequence(schedule?.sequence),
+    sequence: normalizeSequence(buildScheduledSequence({
+      ...schedule,
+      useReverify,
+      reverifyOption,
+    })),
+    useReverify,
+    reverifyOption,
+    updaterModel,
+    configValid: validation.ok,
+    configError: validation.error,
+    missingConfig: validation.missingConfig,
   };
 }
 
@@ -1120,7 +1343,7 @@ function loadSchedules() {
 function saveSchedules(schedules) {
   writeJson(
     schedulesFile,
-    schedules.map(({ intervalMinutes, ...schedule }) => schedule),
+    schedules.map(({ intervalMinutes, configValid, configError, missingConfig, ...schedule }) => schedule),
   );
 }
 
@@ -1151,6 +1374,17 @@ function clearScheduleTimer(scheduleId) {
 function registerSchedule(schedule) {
   clearScheduleTimer(schedule.id);
   if (!schedule.enabled) {
+    return;
+  }
+
+  if (!schedule.configValid) {
+    if (schedule.lastStatus !== "needs_config" || schedule.nextRunAt) {
+      updateScheduleMetadata(schedule.id, {
+        lastStatus: "needs_config",
+        nextRunAt: null,
+      });
+    }
+    console.warn(`[cron] Schedule '${schedule.name}' is enabled but missing required config: ${schedule.configError || "unknown-config-error"}`);
     return;
   }
 
@@ -1278,11 +1512,13 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
     nextRunAt: null,
   });
 
+  // Use schedule-specific model override if set, otherwise fall back to global active model
+  const scheduleModel = schedule.updaterModel || getActiveModel();
   const sequence = normalizeSequence(schedule.sequence);
   const pipelineJob = createJob({
     kind: "pipeline",
     sequence,
-    model: getActiveModel(),
+    model: scheduleModel,
     progressMode: "determinate",
     progressNote: sequence.length > 0 ? `0/${sequence.length} steps` : "",
     trigger: {
@@ -1293,13 +1529,14 @@ function triggerSchedulePipeline(schedule, triggerPatch = {}, options = {}) {
     },
   });
   appendLog(pipelineJob.id, `Triggered by schedule ${schedule.name}`);
+  appendLog(pipelineJob.id, `Schedule model: ${scheduleModel} | Steps: ${sequence.map((s) => s.scriptId).join(" \u2192 ")}`);
   updateScheduleMetadata(schedule.id, {
     lastJobId: pipelineJob.id,
     lastStartedAt: now,
     lastStatus: "running",
     nextRunAt: null,
   });
-  runPipelineJob(pipelineJob.id, sequence, getActiveModel());
+  runPipelineJob(pipelineJob.id, sequence, scheduleModel);
   return { jobId: pipelineJob.id, started: true, skipped: false, deferred: false, activeJobId: null };
 }
 
@@ -1308,8 +1545,14 @@ function resetSchedules() {
   scheduleTasks.clear();
   loadSchedules().forEach(registerSchedule);
 }
-resetSchedules();
+// Startup sequence — order matters:
+// 1. Reconcile orphaned jobs first (marks them failed/cancelled in jobs.json)
+// 2. Reconcile orphaned schedules (depends on reconciled job state above)
+// 3. Register schedule timers (reads clean schedule state)
+// 4. Seed run history from existing jobs
 reconcileOrphanedJobs();
+reconcileOrphanedSchedules();
+resetSchedules();
 seedRunHistoryFromExistingJobs();
 
 app.get("/api/health", (_req, res) => {
@@ -1573,6 +1816,8 @@ app.get("/api/scripts", (_req, res) => {
     description: script.description,
     hasOptions: script.hasOptions,
     options: script.options,
+    supportsForceLatest: Boolean(script.supportsForceLatest),
+    forceLatestOptions: Array.isArray(script.forceLatestOptions) ? script.forceLatestOptions : [],
     status: "idle",
   }));
   res.json({ scripts });
@@ -1689,9 +1934,13 @@ app.get("/api/metrics", (_req, res) => {
 });
 
 app.post("/api/jobs/run-script", async (req, res) => {
-  const { scriptId, option } = req.body || {};
+  const { scriptId, option, forceLatestCount } = req.body || {};
   if (!scriptId) {
     return res.status(400).json({ error: "scriptId is required" });
+  }
+  const normalizedForceLatestCount = Number(forceLatestCount || 0);
+  if (!Number.isFinite(normalizedForceLatestCount) || normalizedForceLatestCount < 0) {
+    return res.status(400).json({ error: "forceLatestCount must be a non-negative number" });
   }
   const activeWorkload = getActiveWorkload();
   if (activeWorkload) {
@@ -1700,8 +1949,20 @@ app.post("/api/jobs/run-script", async (req, res) => {
     });
   }
   const model = getActiveModel();
-  const job = createJob({ kind: "script", scriptId, option: option || null, model });
-  runScriptJob({ jobId: job.id, scriptId, option, modelName: model });
+  const job = createJob({
+    kind: "script",
+    scriptId,
+    option: option || null,
+    forceLatestCount: normalizedForceLatestCount > 0 ? normalizedForceLatestCount : null,
+    model,
+  });
+  runScriptJob({
+    jobId: job.id,
+    scriptId,
+    option,
+    modelName: model,
+    forceLatestCount: normalizedForceLatestCount,
+  });
   return res.json({ jobId: job.id });
 });
 
@@ -1767,9 +2028,19 @@ app.post("/api/schedules", (req, res) => {
     cron: body.cron,
     enabled: body.enabled ?? true,
     sequence: normalizeSequence(body.sequence),
+    useReverify: typeof body.useReverify === "boolean" ? body.useReverify : null,
+    reverifyOption: body.reverifyOption || null,
+    updaterModel: body.updaterModel || null,
     createdAt: new Date().toISOString(),
     nextRunAt: null,
   });
+
+  if (schedule.enabled && !schedule.configValid) {
+    return res.status(400).json({
+      error: `Cannot create enabled schedule: ${schedule.configError}`,
+      missingConfig: schedule.missingConfig,
+    });
+  }
 
   const schedules = loadSchedules();
   schedules.push(schedule);
@@ -1792,10 +2063,18 @@ app.patch("/api/schedules/:id", (req, res) => {
   if (next.cron && !parseScheduleIntervalFromCron(next.cron)) {
     return res.status(400).json({ error: "Use */30 * * * * for minutes or */1 * * * * * for seconds demo mode" });
   }
-  if ("cron" in (req.body || {}) || wasEnabled !== Boolean(next.enabled)) {
-    next.nextRunAt = null;
+  const normalizedNext = normalizeSchedule(next);
+  if (Boolean(normalizedNext.enabled) && !normalizedNext.configValid) {
+    return res.status(400).json({
+      error: `Cannot enable schedule: ${normalizedNext.configError}`,
+      missingConfig: normalizedNext.missingConfig,
+    });
   }
-  schedules[index] = normalizeSchedule(next);
+
+  if ("cron" in (req.body || {}) || wasEnabled !== Boolean(next.enabled)) {
+    normalizedNext.nextRunAt = null;
+  }
+  schedules[index] = normalizedNext;
   saveSchedules(schedules);
   resetSchedules();
 
@@ -1817,7 +2096,7 @@ app.patch("/api/schedules/:id", (req, res) => {
       finalizeScheduleCooldown(req.params.id, "cancelled", new Date().toISOString());
     }
   }
-  return res.json({ schedule: next });
+  return res.json({ schedule: schedules[index] });
 });
 
 app.delete("/api/schedules/:id", (req, res) => {
@@ -1831,6 +2110,12 @@ app.post("/api/schedules/:id/trigger", (req, res) => {
   const schedule = loadSchedules().find((item) => item.id === req.params.id);
   if (!schedule) {
     return res.status(404).json({ error: "Schedule not found" });
+  }
+  if (!schedule.configValid) {
+    return res.status(400).json({
+      error: `Cannot trigger schedule: ${schedule.configError}`,
+      missingConfig: schedule.missingConfig,
+    });
   }
   const result = triggerSchedulePipeline(schedule, { manual: true });
   if (result.started) {
@@ -2064,12 +2349,15 @@ app.get("/api/pipeline/status", (_req, res) => {
   const queuedScripts = jobs.filter((job) => job.kind === "script" && job.status === "queued");
   const activeWorkloads = runningPipelines.length + runningScripts.length + queuedPipelines.length + queuedScripts.length;
   const enabledSchedules = schedules.filter((schedule) => schedule.enabled);
-  const nextSchedule = enabledSchedules
+  const readySchedules = enabledSchedules.filter((schedule) => schedule.configValid);
+  const nextSchedule = readySchedules
     .map((schedule) => ({
       id: schedule.id,
       name: schedule.name,
       cron: schedule.cron,
       intervalMinutes: schedule.intervalMinutes,
+      intervalUnit: schedule.intervalUnit,
+      intervalValue: schedule.intervalValue,
       lastStatus: schedule.lastStatus || "idle",
       nextRunAt: schedule.nextRunAt || schedule.lastStartedAt || computeNextScheduleRunAt(schedule),
     }))
@@ -2079,7 +2367,7 @@ app.get("/api/pipeline/status", (_req, res) => {
   let state = "idle";
   if (activeWorkloads > 0) {
     state = "running";
-  } else if (enabledSchedules.length === 0) {
+  } else if (readySchedules.length === 0) {
     state = "disabled";
   }
 

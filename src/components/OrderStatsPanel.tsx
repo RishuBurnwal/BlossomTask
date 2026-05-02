@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
 
 type SummaryCardProps = {
@@ -22,6 +23,13 @@ type SummaryCardProps = {
   tone: string;
   icon: ReactNode;
 };
+
+type BreakdownMode = "daily" | "overall";
+
+function formatPercent(value: number, total: number) {
+  if (!total) return 0;
+  return Number(((value / total) * 100).toFixed(1));
+}
 
 function SummaryCard({ label, value, percent, tone, icon }: SummaryCardProps) {
   return (
@@ -33,10 +41,10 @@ function SummaryCard({ label, value, percent, tone, icon }: SummaryCardProps) {
         </CardDescription>
         <CardTitle className={`text-3xl tabular-nums ${tone}`}>
           {value}
-          {typeof percent === "number" ? (
-            <span className="ml-2 text-sm font-normal text-muted-foreground">{percent}%</span>
-          ) : null}
         </CardTitle>
+        {typeof percent === "number" ? (
+          <div className="text-xs text-muted-foreground">{percent}% of total</div>
+        ) : null}
       </CardHeader>
     </Card>
   );
@@ -54,11 +62,15 @@ function ProgressRow({
   className: string;
 }) {
   const width = total > 0 ? Math.min((value / total) * 100, 100) : 0;
+  const percent = formatPercent(value, total);
+
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
-        <span>{label}</span>
-        <span className="text-muted-foreground">{value}</span>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="font-medium">{label}</span>
+        <span className="text-right text-muted-foreground">
+          {value} / {total} | {percent}%
+        </span>
       </div>
       <div className="h-2.5 overflow-hidden rounded-full bg-secondary">
         <div className={`h-full rounded-full ${className}`} style={{ width: `${width}%` }} />
@@ -72,6 +84,7 @@ export function OrderStatsPanel() {
   const [dateTo, setDateTo] = useState("");
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [showAllDates, setShowAllDates] = useState(false);
+  const [breakdownMode, setBreakdownMode] = useState<BreakdownMode>("daily");
 
   const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ["order-processing-stats"],
@@ -97,6 +110,20 @@ export function OrderStatsPanel() {
   const visibleDates = showAllDates ? byDate : byDate.slice(0, 7);
   const models = modelPerf?.models ?? [];
 
+  const overallSummaryItems = useMemo(() => {
+    const total = summary?.total ?? 0;
+    const matched = reconciliation?.matchedToStatusFiles ?? 0;
+    const statusTotal = reconciliation?.statusFileTotal ?? 0;
+    return [
+      { label: "Main rows", value: reconciliation?.mainRows ?? total },
+      { label: "Status-file total", value: statusTotal },
+      { label: "Matched records", value: matched },
+      { label: "Coverage", value: total > 0 ? `${formatPercent(matched, total)}%` : "0%" },
+      { label: "Visible days", value: byDate.length },
+      { label: "Customer file rows", value: reconciliation?.customerFileRows ?? 0 },
+    ];
+  }, [byDate.length, reconciliation, summary?.total]);
+
   return (
     <section className="space-y-4">
       <div>
@@ -117,21 +144,38 @@ export function OrderStatsPanel() {
       <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
         <Card>
           <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <CalendarDays className="h-4 w-4" />
-                  Daily Status Breakdown
+                  {breakdownMode === "daily" ? "Daily Status Breakdown" : "Overall Run Summary"}
                 </CardTitle>
-                <CardDescription>See which day produced customer, found, review, and not found records.</CardDescription>
+                <CardDescription>
+                  {breakdownMode === "daily"
+                    ? "See which day produced customer, found, review, and not found records."
+                    : "See the combined status mix and file-level totals across the full dataset."}
+                </CardDescription>
               </div>
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowDateFilter((current) => !current)}>
-                <Filter className="h-3.5 w-3.5" />
-                Filter
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={breakdownMode} onValueChange={(value) => setBreakdownMode(value as BreakdownMode)}>
+                  <SelectTrigger className="w-[140px]">
+                    <SelectValue placeholder="View mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="overall">Overall</SelectItem>
+                  </SelectContent>
+                </Select>
+                {breakdownMode === "daily" ? (
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowDateFilter((current) => !current)}>
+                    <Filter className="h-3.5 w-3.5" />
+                    Filter
+                  </Button>
+                ) : null}
+              </div>
             </div>
 
-            {showDateFilter ? (
+            {breakdownMode === "daily" && showDateFilter ? (
               <div className="mt-4 flex flex-wrap gap-2 rounded-lg border bg-background p-3">
                 <InputBlock label="From" value={dateFrom} onChange={setDateFrom} />
                 <InputBlock label="To" value={dateTo} onChange={setDateTo} />
@@ -142,25 +186,63 @@ export function OrderStatsPanel() {
             ) : null}
           </CardHeader>
           <CardContent className="space-y-3">
-            {visibleDates.length === 0 ? <p className="text-sm text-muted-foreground">No daily data available yet.</p> : null}
-            {visibleDates.map((day) => (
-              <div key={day.date} className="rounded-xl border p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="font-medium">{day.date}</div>
-                  <Badge variant="outline">{day.total} rows</Badge>
+            {breakdownMode === "overall" ? (
+              <>
+                <div className="rounded-xl border p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-medium">Overall status mix</div>
+                    <Badge variant="outline">{summary?.total ?? 0} total rows</Badge>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <ProgressRow label="Customer" value={summary?.customer ?? 0} total={summary?.total ?? 0} className="bg-sky-500" />
+                    <ProgressRow label="Found" value={summary?.found ?? 0} total={summary?.total ?? 0} className="bg-emerald-500" />
+                    <ProgressRow label="Not Found" value={summary?.notfound ?? 0} total={summary?.total ?? 0} className="bg-rose-500" />
+                    <ProgressRow label="Review" value={summary?.review ?? 0} total={summary?.total ?? 0} className="bg-amber-500" />
+                  </div>
                 </div>
-                <div className="mt-3 grid gap-2 md:grid-cols-2">
-                  <ProgressRow label="Customer" value={day.customer} total={day.total} className="bg-sky-500" />
-                  <ProgressRow label="Found" value={day.found} total={day.total} className="bg-emerald-500" />
-                  <ProgressRow label="Not Found" value={day.notfound} total={day.total} className="bg-rose-500" />
-                  <ProgressRow label="Review" value={day.review} total={day.total} className="bg-amber-500" />
+
+                <div className="rounded-xl border p-4">
+                  <div className="mb-3 font-medium">Overall run summary</div>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {overallSummaryItems.map((item) => (
+                      <div key={item.label} className="rounded-lg border bg-background px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">{item.label}</div>
+                        <div className="mt-1 text-base font-semibold tabular-nums">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {reconciliation ? (
+                    <div className="mt-3 rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                      Main {reconciliation.mainRows} | customer {reconciliation.customerFileRows ?? 0} | found {reconciliation.foundFileRows} | not found {reconciliation.notFoundFileRows} | review {reconciliation.reviewFileRows}
+                    </div>
+                  ) : null}
                 </div>
-              </div>
-            ))}
-            {byDate.length > 7 ? (
-              <Button variant="ghost" size="sm" className="w-full" onClick={() => setShowAllDates((current) => !current)}>
-                {showAllDates ? "Show Less" : `Show All ${byDate.length} Days`}
-              </Button>
+              </>
+            ) : null}
+
+            {breakdownMode === "daily" ? (
+              <>
+                {visibleDates.length === 0 ? <p className="text-sm text-muted-foreground">No daily data available yet.</p> : null}
+                {visibleDates.map((day) => (
+                  <div key={day.date} className="rounded-xl border p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium">{day.date}</div>
+                      <Badge variant="outline">{day.total} rows</Badge>
+                    </div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <ProgressRow label="Customer" value={day.customer} total={day.total} className="bg-sky-500" />
+                      <ProgressRow label="Found" value={day.found} total={day.total} className="bg-emerald-500" />
+                      <ProgressRow label="Not Found" value={day.notfound} total={day.total} className="bg-rose-500" />
+                      <ProgressRow label="Review" value={day.review} total={day.total} className="bg-amber-500" />
+                    </div>
+                  </div>
+                ))}
+                {byDate.length > 7 ? (
+                  <Button variant="ghost" size="sm" className="w-full" onClick={() => setShowAllDates((current) => !current)}>
+                    {showAllDates ? "Show Less" : `Show All ${byDate.length} Days`}
+                  </Button>
+                ) : null}
+              </>
             ) : null}
           </CardContent>
         </Card>

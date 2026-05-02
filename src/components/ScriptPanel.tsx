@@ -54,6 +54,7 @@ function isActiveJob(job?: Job | null): boolean {
 export function ScriptPanel({ script, liveJob, executionLocked = false }: ScriptPanelProps) {
   const [status, setStatus] = useState<"idle" | "running" | "success" | "error">("idle");
   const [selectedOption, setSelectedOption] = useState(script.options?.[0] ?? "");
+  const [selectedForceLatestCount, setSelectedForceLatestCount] = useState<number>(script.forceLatestOptions?.[0] ?? 25);
   const [showViewOptions, setShowViewOptions] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -76,11 +77,13 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
   }, [status]);
 
   const runMutation = useMutation({
-    mutationFn: (option?: string) => api.runScript(script.id, option),
-    onSuccess: ({ jobId }) => {
+    mutationFn: (payload?: { option?: string; forceLatestCount?: number }) => api.runScript(script.id, payload),
+    onSuccess: ({ jobId }, variables) => {
       setActiveJobId(jobId);
       setStatus("running");
-      toast.info(`Running ${script.name}${selectedOption ? ` (${selectedOption})` : ""}...`);
+      const forceLabel = variables?.forceLatestCount ? ` [force latest ${variables.forceLatestCount}]` : "";
+      const optionLabel = variables?.option ? ` (${variables.option})` : "";
+      toast.info(`Running ${script.name}${optionLabel}${forceLabel}...`);
     },
     onError: (error) => {
       setStatus("error");
@@ -148,13 +151,18 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
     }
   }, [liveJob]);
 
-  const runScript = (option?: string) => {
+  const runScript = (payload?: { option?: string; forceLatestCount?: number }) => {
+    const option = payload?.option;
+    const forceLatestCount = payload?.forceLatestCount;
     const resolvedOption = option ?? (script.hasOptions ? selectedOption : undefined);
     if (resolvedOption) setSelectedOption(resolvedOption);
     setProgress(0);
     setShowTerminal(true);
     setStickToBottom(true);
-    runMutation.mutate(resolvedOption);
+    runMutation.mutate({
+      option: resolvedOption,
+      forceLatestCount,
+    });
   };
 
   const handleRun = () => {
@@ -165,11 +173,30 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
     runScript();
   };
 
+  const handleForceRun = () => {
+    if (executionLocked) {
+      toast.info("Another script/pipeline is running. Wait for completion before starting a new run.");
+      return;
+    }
+    runScript({
+      option: script.hasOptions ? selectedOption : undefined,
+      forceLatestCount: selectedForceLatestCount,
+    });
+  };
+
   useEffect(() => {
     if (script.hasOptions && !selectedOption && script.options?.length) {
       setSelectedOption(script.options[0]);
     }
   }, [script.hasOptions, script.options, selectedOption]);
+
+  useEffect(() => {
+    if (script.forceLatestOptions?.length) {
+      setSelectedForceLatestCount((current) => (
+        script.forceLatestOptions?.includes(current) ? current : script.forceLatestOptions[0]
+      ));
+    }
+  }, [script.forceLatestOptions]);
 
   const reset = () => {
     setStatus("idle");
@@ -305,16 +332,21 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
 
         {/* Progress bar */}
         {displayStatus === "running" && displayProgressMode === "determinate" && (
-          <div className="mb-3 relative">
+          <div className="mb-3 space-y-1">
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-500 ease-out"
                 style={{ width: `${Math.min(displayProgress, 100)}%` }}
               />
             </div>
-            <span className="absolute right-0 -top-4 text-[10px] text-muted-foreground tabular-nums">
-              {displayProgress}%
-            </span>
+              <div className="flex items-center justify-between gap-3 text-[10px] text-muted-foreground tabular-nums">
+                <span>
+                {displayJob?.progressCurrent != null && displayJob?.progressTotal != null
+                  ? `${displayJob.progressCurrent}/${displayJob.progressTotal}`
+                  : (displayProgressNote || "Live progress")}
+                </span>
+                <span>{displayProgress}%</span>
+              </div>
           </div>
         )}
 
@@ -381,6 +413,41 @@ export function ScriptPanel({ script, liveJob, executionLocked = false }: Script
             </span>
           </div>
         )}
+
+        {script.supportsForceLatest && script.forceLatestOptions?.length ? (
+          <div className="mb-3 rounded-lg border bg-muted/20 p-3">
+            <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              Force Run Latest Data
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Newest rows:</span>
+              <select
+                value={String(selectedForceLatestCount)}
+                onChange={(event) => setSelectedForceLatestCount(Number(event.target.value))}
+                className="h-8 min-w-[110px] rounded-md border bg-background px-2 text-xs"
+              >
+                {script.forceLatestOptions.map((count) => (
+                  <option key={count} value={String(count)}>
+                    Last {count}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleForceRun}
+                disabled={runMutation.isPending || executionLocked}
+                className="gap-1.5"
+              >
+                <Play className="h-3 w-3" />
+                Force Run
+              </Button>
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Reprocesses the newest GetOrderInquiry rows by `last_processed_at`, even if they were already logged before.
+            </p>
+          </div>
+        ) : null}
 
         {/* Buttons */}
         <div className="relative flex flex-wrap gap-2">

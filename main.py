@@ -75,6 +75,8 @@ DEFAULT_FRONTEND_PORT = 8080
 DEFAULT_BACKEND_PORT = 8787
 LOGS_DIR = ROOT / "outputs" / "logs"
 BG_STATE_FILE = LOGS_DIR / "background_servers.json"
+PROJECT_REMOTE_URL = "https://github.com/RishuBurnwal/BlossomTask"
+UPDATE_MANIFEST_PATH = ROOT / "project_update_manifest.json"
 
 # ── Colors (ANSI) ───────────────────────────────────────────────────────────
 class C:
@@ -328,6 +330,215 @@ def _kill_pid(pid):
         return True
     except Exception:
         return False
+
+
+def _run_git_command(args, *, capture_output=True, check=False):
+    """Run a git command from the project root."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(ROOT),
+        capture_output=capture_output,
+        text=True,
+        check=check,
+    )
+
+
+def _git_available():
+    try:
+        result = _run_git_command(["--version"])
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _is_git_repo():
+    try:
+        result = _run_git_command(["rev-parse", "--is-inside-work-tree"])
+        return result.returncode == 0 and result.stdout.strip().lower() == "true"
+    except Exception:
+        return False
+
+
+def _sha256_file(path_obj):
+    digest = hashlib.sha256()
+    with open(path_obj, "rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _tracked_file_hash_entries():
+    result = _run_git_command(["ls-files", "-z"])
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Unable to enumerate tracked files")
+    entries = []
+    for rel_path in [item for item in result.stdout.split("\0") if item]:
+        absolute_path = ROOT / rel_path
+        if not absolute_path.exists() or not absolute_path.is_file():
+            continue
+        entries.append({
+            "path": rel_path.replace("\\", "/"),
+            "size": absolute_path.stat().st_size,
+            "sha256": _sha256_file(absolute_path),
+        })
+    entries.sort(key=lambda item: item["path"])
+    manifest_digest = hashlib.sha256(
+        "\n".join(f"{item['path']}:{item['sha256']}" for item in entries).encode("utf-8")
+    ).hexdigest()
+    return entries, manifest_digest
+
+
+def _write_update_manifest(payload):
+    with open(UPDATE_MANIFEST_PATH, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+def _project_update_manager(remote_name="origin", remote_url=PROJECT_REMOTE_URL, allow_dirty=False, auto_confirm=False):
+    """Verify git state, sync from GitHub, and generate a hash manifest."""
+    print_section("Project Update Manager", "🔄")
+
+    if not _git_available():
+        print_error("Git is not installed or not available in PATH.")
+        return False
+    if not _is_git_repo():
+        print_error("This folder is not a git repository.")
+        return False
+
+    current_branch_result = _run_git_command(["branch", "--show-current"])
+    current_branch = current_branch_result.stdout.strip() or "main"
+
+    existing_remote_result = _run_git_command(["remote", "get-url", remote_name])
+    if existing_remote_result.returncode != 0:
+        add_remote_result = _run_git_command(["remote", "add", remote_name, remote_url], capture_output=True)
+        if add_remote_result.returncode != 0:
+            print_error(add_remote_result.stderr.strip() or f"Failed to add remote '{remote_name}'")
+            return False
+        print_success(f"Added remote '{remote_name}' -> {remote_url}")
+    else:
+        existing_remote = existing_remote_result.stdout.strip()
+        if existing_remote != remote_url:
+            set_remote_result = _run_git_command(["remote", "set-url", remote_name, remote_url], capture_output=True)
+            if set_remote_result.returncode != 0:
+                print_error(set_remote_result.stderr.strip() or f"Failed to update remote '{remote_name}'")
+                return False
+            print_warn(f"Remote '{remote_name}' URL was updated to {remote_url}")
+
+    status_result = _run_git_command(["status", "--short"])
+    dirty_entries = [line for line in status_result.stdout.splitlines() if line.strip()]
+    if dirty_entries and not allow_dirty:
+        print_warn("Working tree has local changes. Update aborted to protect in-progress work.")
+        for line in dirty_entries[:15]:
+            print(f"    {line}")
+        print_info("Use a clean worktree before pulling updates.")
+        return False
+
+    local_head_before = _run_git_command(["rev-parse", "HEAD"]).stdout.strip()
+    fetch_result = _run_git_command(["fetch", remote_name, "--prune"], capture_output=True)
+    if fetch_result.returncode != 0:
+        print_error(fetch_result.stderr.strip() or "git fetch failed")
+        return False
+
+    remote_head_ref_result = _run_git_command(["symbolic-ref", f"refs/remotes/{remote_name}/HEAD"])
+    if remote_head_ref_result.returncode == 0 and remote_head_ref_result.stdout.strip():
+        remote_ref = remote_head_ref_result.stdout.strip().replace("refs/remotes/", "")
+    else:
+        remote_ref = f"{remote_name}/{current_branch}"
+
+    remote_branch = remote_ref.split("/", 1)[1] if "/" in remote_ref else current_branch
+    remote_head_result = _run_git_command(["rev-parse", remote_ref])
+    if remote_head_result.returncode != 0:
+        print_error(remote_head_result.stderr.strip() or f"Unable to resolve {remote_ref}")
+        return False
+    remote_head = remote_head_result.stdout.strip()
+
+    ahead_behind_result = _run_git_command(["rev-list", "--left-right", "--count", f"HEAD...{remote_ref}"])
+    ahead = 0
+    behind = 0
+    if ahead_behind_result.returncode == 0:
+        counts = ahead_behind_result.stdout.strip().split()
+        if len(counts) == 2:
+            ahead = int(counts[0] or 0)
+            behind = int(counts[1] or 0)
+
+    changed_files_result = _run_git_command(["diff", "--name-only", f"HEAD..{remote_ref}"])
+    changed_files = [line.strip() for line in changed_files_result.stdout.splitlines() if line.strip()]
+
+    print_info(f"Branch: {current_branch}")
+    print_info(f"Remote: {remote_name} -> {remote_url}")
+    print_info(f"Remote branch: {remote_branch}")
+    print_info(f"Local HEAD:  {local_head_before}")
+    print_info(f"Remote HEAD: {remote_head}")
+    print_info(f"Ahead: {ahead} | Behind: {behind}")
+
+    if ahead > 0 and behind == 0:
+        print_warn("Local branch is ahead of remote. Auto-pull skipped to avoid overwriting unpublished local commits.")
+    elif ahead > 0 and behind > 0:
+        print_warn("Local branch has diverged from remote. Resolve divergence manually before updating.")
+        return False
+
+    should_pull = behind > 0 and ahead == 0
+    if should_pull and not auto_confirm:
+        confirm = _ask_yes_no(f"Pull {behind} remote update(s) from {remote_name}/{remote_branch}?", default=True)
+        if not confirm:
+            print_warn("Update cancelled by user.")
+            return False
+
+    pulled = False
+    if should_pull:
+        pull_result = _run_git_command(["pull", "--ff-only", remote_name, remote_branch], capture_output=True)
+        if pull_result.returncode != 0:
+            print_error(pull_result.stderr.strip() or "git pull --ff-only failed")
+            return False
+        pulled = True
+        print_success(f"Fast-forward pull completed from {remote_name}/{remote_branch}")
+    else:
+        print_info("No pull needed. Repository is already up to date or requires manual reconciliation.")
+
+    local_head_after = _run_git_command(["rev-parse", "HEAD"]).stdout.strip()
+    fsck_result = _run_git_command(["fsck", "--full"], capture_output=True)
+    fsck_ok = fsck_result.returncode == 0
+    if fsck_ok:
+        print_success("git fsck verification passed")
+    else:
+        print_warn(fsck_result.stderr.strip() or fsck_result.stdout.strip() or "git fsck reported issues")
+
+    tracked_entries, manifest_digest = _tracked_file_hash_entries()
+    changed_file_hashes = []
+    for rel_path in changed_files:
+        file_path = ROOT / rel_path
+        if file_path.exists() and file_path.is_file():
+            changed_file_hashes.append({
+                "path": rel_path.replace("\\", "/"),
+                "sha256": _sha256_file(file_path),
+                "size": file_path.stat().st_size,
+            })
+
+    manifest_payload = {
+        "generated_at": int(time.time()),
+        "remote_name": remote_name,
+        "remote_url": remote_url,
+        "branch": current_branch,
+        "remote_branch": remote_branch,
+        "local_head_before": local_head_before,
+        "local_head_after": local_head_after,
+        "remote_head": remote_head,
+        "pulled": pulled,
+        "ahead_before": ahead,
+        "behind_before": behind,
+        "dirty_before": dirty_entries,
+        "changed_files_from_remote": changed_files,
+        "changed_file_hashes": changed_file_hashes,
+        "tracked_file_count": len(tracked_entries),
+        "tracked_manifest_sha256": manifest_digest,
+        "tracked_files": tracked_entries,
+        "git_fsck_ok": fsck_ok,
+    }
+    _write_update_manifest(manifest_payload)
+    print_success(f"Update manifest written to {UPDATE_MANIFEST_PATH.name}")
+    return True
 
 
 def _background_start_menu():
@@ -1729,6 +1940,7 @@ def interactive_menu():
         print(f"    {C.CYAN}[10]{C.RESET} 🚀  One-Click Server Setup      {C.DIM}(Install + Build + Run backend){C.RESET}")
         print(f"    {C.CYAN}[11]{C.RESET} ☠️  Program Killer               {C.DIM}(Kill ports + programs){C.RESET}")
         print(f"    {C.CYAN}[12]{C.RESET} 🔐  Access Control Manager       {C.DIM}(Users / Sessions / Model){C.RESET}")
+        print(f"    {C.CYAN}[13]{C.RESET}  UPD Project Update Manager    {C.DIM}(Verify remote + pull + hash manifest){C.RESET}")
         print()
         print(f"    {C.RED}[0]{C.RESET}  🚪  Exit")
         print()
@@ -1777,6 +1989,9 @@ def interactive_menu():
             input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice == "12":
             manage_access_controls()
+        elif choice == "13":
+            _project_update_manager()
+            input(f"\n  {C.DIM}Press Enter to continue...{C.RESET}")
         elif choice in ["0", "q", "quit", "exit"]:
             print(f"\n  {C.CYAN}👋 Goodbye!{C.RESET}\n")
             sys.exit(0)
@@ -1816,6 +2031,12 @@ Examples:
                         help="Install all Python and Node.js dependencies")
     parser.add_argument("--health", action="store_true",
                         help="Run system health check")
+    parser.add_argument("--project-update", action="store_true",
+                        help="Verify remote state, pull fast-forward updates, and generate a hash manifest")
+    parser.add_argument("--project-update-allow-dirty", action="store_true",
+                        help="Allow project update checks even when the worktree is dirty (pull is still safety-limited)")
+    parser.add_argument("--project-update-remote", type=str, default=PROJECT_REMOTE_URL,
+                        help="Remote repository URL to verify and sync from")
     parser.add_argument("--pipeline", action="store_true",
                         help="Run the full data processing pipeline")
     parser.add_argument("--terminal-runner", action="store_true",
@@ -1898,6 +2119,14 @@ Examples:
     if args.health:
         system_health_check()
         return
+
+    if args.project_update:
+        success = _project_update_manager(
+            remote_url=args.project_update_remote,
+            allow_dirty=args.project_update_allow_dirty,
+            auto_confirm=True,
+        )
+        sys.exit(0 if success else 1)
 
     if args.pipeline or args.stage or args.force or args.dry_run:
         success = run_pipeline(

@@ -26,6 +26,8 @@ export const scriptCatalog = [
     file: path.join(scriptsRoot, "Funeral_Finder.py"),
     hasOptions: false,
     options: [],
+    supportsForceLatest: true,
+    forceLatestOptions: [10, 25, 50, 100],
   },
   {
     id: "reverify",
@@ -34,6 +36,8 @@ export const scriptCatalog = [
     file: path.join(scriptsRoot, "reverify.py"),
     hasOptions: true,
     options: ["both", "not_found", "review"],
+    supportsForceLatest: true,
+    forceLatestOptions: [10, 25, 50, 100],
   },
   {
     id: "updater",

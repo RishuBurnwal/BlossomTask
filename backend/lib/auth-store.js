@@ -83,7 +83,19 @@ function cloneStore(store) {
 
 function saveStore(store) {
   ensureDataDir();
-  fs.writeFileSync(storePath, JSON.stringify(store, null, 2), "utf-8");
+  const payload = JSON.stringify(store, null, 2);
+  const tempPath = `${storePath}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, payload, "utf-8");
+    fs.renameSync(tempPath, storePath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {
+      // ignore cleanup errors
+    }
+    throw error;
+  }
   storeCache = store;
 }
 

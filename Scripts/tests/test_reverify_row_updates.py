@@ -160,6 +160,19 @@ def test_extract_json_from_text_handles_nested_objects():
     assert parsed["status"] == "Found"
 
 
+def test_infer_latest_inquiry_batch_count_reads_get_order_inquiry_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    logs_path = tmp_path / "GetOrderInquiry" / "logs.txt"
+    logs_path.parent.mkdir(parents=True, exist_ok=True)
+    logs_path.write_text(
+        "[2026-05-02T00:00:00Z] DONE  --  Saved: 40  |  Skipped: 12  |  Errors: 0\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(reverify, "GET_ORDER_INQUIRY_LOGS_PATH", logs_path)
+
+    assert reverify.infer_latest_inquiry_batch_count() == 40
+
+
 def test_upsert_record_appends_when_row_number_hits_unrelated_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     csv_path = tmp_path / "main.csv"
     _write_csv(

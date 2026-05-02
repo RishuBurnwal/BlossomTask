@@ -1,27 +1,33 @@
 {
-  "status": "failed",
+  "status": "resolved",
+  "resolvedAt": "2026-05-02T02:12:00.000Z",
+  "resolution": { "note": "Manually resolved during audit remediation; subsequent runs completed successfully" },
   "kind": "pipeline",
-  "jobId": "job_1777594124453_klhx3f",
+  "jobId": "job_1777663057538_t4holr",
   "parentJobId": null,
   "scriptId": null,
   "exitCode": 1,
-  "createdAt": "2026-05-01T00:08:53.762Z",
-  "startedAt": "2026-05-01T00:08:44.477Z",
-  "finishedAt": "2026-05-01T00:08:53.704Z",
+  "createdAt": "2026-05-01T19:40:38.396Z",
+  "startedAt": "2026-05-01T19:17:37.658Z",
+  "finishedAt": "2026-05-01T19:40:38.283Z",
   "progress": 100,
-  "message": "Pipeline failed at updater",
-  "scheduleId": null,
-  "scheduleName": null,
+  "message": "Pipeline failed at reverify",
+  "scheduleId": "schedule_1774486613530_jv1cv9",
+  "scheduleName": "Default Sequential Pipeline",
   "trigger": {
-    "type": "manual"
+    "type": "schedule",
+    "scheduleId": "schedule_1774486613530_jv1cv9",
+    "scheduleName": "Default Sequential Pipeline",
+    "immediate": false
   },
   "logs": [
-    "[2026-05-01T00:08:44.499Z] Pipeline started with 6 steps",
-    "[2026-05-01T00:08:44.517Z] Active model: sonar-pro",
-    "[2026-05-01T00:08:44.555Z] Step 1/6 -> get-task (job_1777594124538_jv917r)",
-    "[2026-05-01T00:08:47.134Z] Step 2/6 -> get-order-inquiry (job_1777594127106_w8hjig)",
-    "[2026-05-01T00:08:50.952Z] Step 3/6 -> funeral-finder (job_1777594130926_iy3xg0)",
-    "[2026-05-01T00:08:51.866Z] Step 4/6 -> reverify (job_1777594131852_u544on)",
-    "[2026-05-01T00:08:52.838Z] Step 5/6 -> updater (job_1777594132809_oetgsi)"
+    "[2026-05-01T19:17:37.573Z] Triggered by schedule Default Sequential Pipeline",
+    "[2026-05-01T19:17:37.615Z] Schedule model: gpt-4o-search-preview | Steps: get-task → get-order-inquiry → funeral-finder → reverify → updater → closing-task",
+    "[2026-05-01T19:17:37.711Z] Pipeline started with 6 steps",
+    "[2026-05-01T19:17:37.744Z] Active model: gpt-4o-search-preview",
+    "[2026-05-01T19:17:37.835Z] Step 1/6 -> get-task (job_1777663057797_rnh657)",
+    "[2026-05-01T19:17:50.844Z] Step 2/6 -> get-order-inquiry (job_1777663070787_c9nkg9)",
+    "[2026-05-01T19:18:26.917Z] Step 3/6 -> funeral-finder (job_1777663106892_qf0xkm)",
+    "[2026-05-01T19:21:53.766Z] Step 4/6 -> reverify (job_1777663313714_v9johe)"
   ]
 }
