@@ -92,6 +92,31 @@ def _safe_str(val) -> str:
     return str(val).strip()
 
 
+def _parse_sort_datetime(value: str) -> datetime:
+    text = _safe_str(value)
+    if not text:
+        return datetime.min
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+    return datetime.min
+
+
+def _latest_row_sort_key(row: dict) -> tuple[datetime, datetime, datetime, str]:
+    return (
+        _parse_sort_datetime(row.get("last_processed_at")),
+        _parse_sort_datetime(row.get("updated_at")),
+        _parse_sort_datetime(row.get("created_at")),
+        _safe_str(row.get("order_id")),
+    )
+
+
 def _is_found_status(*values) -> bool:
     """Return True only when any provided status value is exactly Found."""
     for value in values:
@@ -140,14 +165,13 @@ def load_updater_data() -> list:
         print(f"[{SCRIPT_NAME}]   → Run Updater.py first.")
         return []
 
-    orders = []
-    seen_ids = set()
+    latest_rows = {}
 
     with open(INPUT_CSV, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             oid = _safe_str(row.get("order_id"))
-            if not oid or oid in seen_ids:
+            if not oid:
                 continue
 
             upload_status = _safe_str(row.get("upload_status"))
@@ -159,10 +183,11 @@ def load_updater_data() -> list:
             if not _is_found_status(row.get("match_status"), row.get("status"), row.get("trResult")):
                 continue
 
-            seen_ids.add(oid)
-            orders.append(row)
+            existing = latest_rows.get(oid)
+            if existing is None or _latest_row_sort_key(row) >= _latest_row_sort_key(existing):
+                latest_rows[oid] = row
 
-    return orders
+    return sorted(latest_rows.values(), key=_latest_row_sort_key, reverse=True)
 
 
 def filter_orders_by_logged_ids(orders: list, logged_ids: set[str]) -> tuple[list, int]:
@@ -338,17 +363,8 @@ def main():
             print(f"  ⏭  SKIP – status/trResult is not Found (status={raw_status}, trResult={raw_tr_result})")
             skipped_count += 1
             continue
-        tr_result = "Found"
-
-        # Determine close reason
-        if tr_result == "Found":
-            close_reason = "FOUND"
-        elif tr_result == "NotFound":
-            close_reason = "NOT_FOUND"
-        else:
-            close_reason = "REVIEW_REQUIRED"
-
-        status_icon = {"FOUND": "✅", "NOT_FOUND": "❌", "REVIEW_REQUIRED": "⚠️"}.get(close_reason, "❓")
+        close_reason = "FOUND"
+        status_icon = "✅"
 
         print(f"[{idx}/{total}] {'─'*45}")
         print(f"  Order ID : {order_id}")
@@ -434,7 +450,7 @@ def main():
             "order_id":             order_id,
             "task_id":              task_id,
             "ship_name":            ship_name,
-            "trResult":             tr_result,
+            "trResult":             "Found",
             "close_reason":         close_reason,
             "trSubject":            payload["trSubject"],
             "toNameID":             payload["toNameID"],

@@ -34,9 +34,9 @@ def _configure_windows_stdout_utf8() -> None:
 
 _configure_windows_stdout_utf8()
 
-ACTIVE_MODEL = os.getenv("ACTIVE_MODEL", os.getenv("PERPLEXITY_MODEL", "sonar-pro"))
-PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-pro")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-search-preview")
+PERPLEXITY_MODEL = os.getenv("PERPLEXITY_MODEL", "sonar-pro")
+ACTIVE_MODEL = os.getenv("ACTIVE_MODEL", os.getenv("OPENAI_MODEL", os.getenv("PERPLEXITY_MODEL", "gpt-4o-search-preview")))
 
 # ── Optional openpyxl for Excel output ──────────────────────────────────────
 try:
@@ -142,6 +142,10 @@ SYSTEM_PROMPT = (
     "Work like an OSINT detective: triangulate obituary pages, funeral-home pages, church/cemetery notices, customer instructions, dates, times, and venue details before deciding. "
     "If the evidence is incomplete, conflicting, or only partially supports the identity, prefer Review. "
     "Use any direct obituary detail URL already supplied by the user as authoritative evidence; do not reclassify it as weak directory evidence. "
+    "Strictly format JSON date fields as YYYY-MM-DD and JSON time fields as HH:mm 24-hour time only. "
+    "The downstream CRM accepts only combined YYYY-MM-DD HH:mm values; never return display formats like May 4, 2026, 10:00 a.m., 10am, or time ranges in JSON fields. "
+    "For time ranges, use the start time only, for example 10:00 a.m. - 11:00 a.m. becomes 10:00. "
+    "Normalize customer-provided dates/times into the same YYYY-MM-DD and HH:mm format before returning JSON. "
     "Set Customer when the only trustworthy timing evidence comes from customer order instructions and outside sources do not confirm the service details. "
     "If outside sources do not confirm the schedule but ord_instruct contains a usable funeral, memorial, visitation, viewing, burial, or ceremony schedule, normalize that customer-provided schedule into structured JSON fields and set status=Customer. "
     "When using ord_instruct fallback, preserve the requested person as matched_name, format the best available schedule fields, and explain in notes that the schedule came from customer instructions. "
@@ -150,7 +154,10 @@ SYSTEM_PROMPT = (
     "Set Review, not NotFound, for date-only/time-only evidence with identity confirmation. "
     "Set Review when names or dates conflict between source evidence and customer instructions. "
     "Set NotFound only when timing evidence is absent and identity confirmation is weak or missing. "
-    "Do not use delivery recommendation fields as service datetime fallback."
+    "Keep notes concise, English-only, and structured for downstream CRM formatting. Limit notes to a short evidence summary and decision reason, and use N/A for missing values instead of long narrative text. "
+    "When a source URL exists, prefer the single best exact obituary/detail permalink in source_urls rather than a homepage, directory page, or long multi-link list. "
+    "Return structured date, time, location, address, phone, and notes fields cleanly so the downstream CRM can render the final Funeral AI note in the required sectioned format. "
+    "Use service time first, then viewing/visitation time, then delivery by time, then funeral/ceremony time as the service datetime fallback priority."
 )
 
 
@@ -453,14 +460,18 @@ def _normalize_service_datetime(
     service_time: str,
     visitation_date: str,
     visitation_time: str,
+    delivery_date: str,
+    delivery_time: str,
     ceremony_date: str,
     ceremony_time: str,
 ) -> tuple[str, str, str]:
-    """Normalize canonical service datetime using service/visitation/ceremony pairs only."""
+    """Normalize canonical service datetime using service/visitation/delivery/ceremony priority."""
     if service_date and service_time:
         return service_date, service_time, "service"
     if visitation_date and visitation_time:
         return visitation_date, visitation_time, "visitation"
+    if delivery_date and delivery_time:
+        return delivery_date, delivery_time, "delivery"
     if ceremony_date and ceremony_time:
         return ceremony_date, ceremony_time, "ceremony"
     return service_date, service_time, "none"
@@ -765,6 +776,21 @@ def _is_obituary_like_url(url: str) -> bool:
     return any(keyword in path for keyword in ("obituary", "obituaries", "tribute", "memorial"))
 
 
+def _is_strong_source_url(url: str) -> bool:
+    parsed = urlparse(_safe_str(url))
+    path = parsed.path.strip("/").lower()
+    if _is_obituary_like_url(url):
+        return True
+    if not path:
+        return False
+    segments = [segment for segment in path.split("/") if segment]
+    if not segments:
+        return False
+    if len(segments) >= 2:
+        return True
+    return any(keyword in segments[0] for keyword in ("obit", "obituary", "memorial", "tribute", "service"))
+
+
 def _decode_url_name_candidate(segment: str) -> str:
     candidate = unquote(_safe_str(segment))
     if not candidate:
@@ -904,11 +930,77 @@ def _extract_dates_from_text(text: str) -> list[str]:
     return _unique_non_empty(normalized_dates)
 
 
+def _collect_reference_dates(order: dict) -> list[str]:
+    values = []
+    values.extend(_extract_dates_from_text(order.get("ord_instruct")))
+    for key in ("delivery_date", "ship_delivery_date", "service_date", "ord_date", "order_date"):
+        normalized = _parse_date_candidate(order.get(key))
+        if normalized:
+            values.append(normalized)
+    return _unique_non_empty(values)
+
+
+def _evaluate_source_freshness(order: dict, parsed: dict) -> tuple[str, str]:
+    parsed_dates = _unique_non_empty([
+        _parse_date_candidate(parsed.get("service_date")),
+        _parse_date_candidate(parsed.get("visitation_date")),
+        _parse_date_candidate(parsed.get("ceremony_date")),
+        _parse_date_candidate(parsed.get("delivery_recommendation_date")),
+    ])
+    if not parsed_dates:
+        return "unknown", "Source freshness unavailable: no normalized source date"
+
+    reference_dates = _collect_reference_dates(order)
+    parsed_date_objects = [datetime.fromisoformat(value) for value in parsed_dates]
+    reference_date_objects = [datetime.fromisoformat(value) for value in reference_dates]
+    if reference_date_objects:
+        for source_date in parsed_date_objects:
+            for reference_date in reference_date_objects:
+                if abs((source_date - reference_date).days) <= 14:
+                    return "aligned", f"Source date aligned with order timing window: {source_date.date().isoformat()}"
+        latest_reference = max(reference_date_objects)
+        oldest_source = min(parsed_date_objects)
+        if (latest_reference - oldest_source).days > 14:
+            return "backdated", f"Source date appears backdated: source={oldest_source.date().isoformat()} reference={latest_reference.date().isoformat()}"
+        return "review", f"Source date requires review: source={', '.join(parsed_dates)} reference={', '.join(reference_dates)}"
+
+    newest_source = max(parsed_date_objects)
+    age_days = (datetime.now() - newest_source).days
+    if age_days > 30:
+        return "stale", f"Source date is stale for an open-task workflow: {newest_source.date().isoformat()}"
+    return "source_only_recent", f"Source date is recent but not anchored to customer timing: {newest_source.date().isoformat()}"
+
+
+def _normalized_venue_tokens(value: str) -> set[str]:
+    tokens = re.findall(r"[a-z0-9]+", _safe_str(value).lower())
+    ignore = {
+        "the", "and", "of", "for", "funeral", "home", "church", "chapel", "cemetery",
+        "mortuary", "cremation", "crematory", "memorial", "service", "services", "center",
+    }
+    return {token for token in tokens if token not in ignore and len(token) > 2}
+
+
+def _evaluate_venue_alignment(order: dict, parsed: dict) -> tuple[str, str]:
+    expected = _safe_str(order.get("ship_care_of"))
+    actual = _safe_str(parsed.get("funeral_home_name"))
+    if not expected or not actual:
+        return "unknown", "Venue alignment unavailable"
+    expected_tokens = _normalized_venue_tokens(expected)
+    actual_tokens = _normalized_venue_tokens(actual)
+    if not expected_tokens or not actual_tokens:
+        return "unknown", "Venue alignment unavailable"
+    overlap = expected_tokens.intersection(actual_tokens)
+    if overlap:
+        return "aligned", f"Venue aligned on token(s): {', '.join(sorted(overlap))}"
+    return "conflict", f"Venue mismatch: recipient='{expected}' source='{actual}'"
+
+
 def _evaluate_date_verification(order: dict, parsed: dict) -> tuple[str, str]:
     parsed_date_values = _unique_non_empty(
         [
             _safe_str(parsed.get("service_date")),
             _safe_str(parsed.get("visitation_date")),
+            _safe_str(parsed.get("delivery_recommendation_date")),
             _safe_str(parsed.get("ceremony_date")),
         ]
     )
@@ -959,14 +1051,23 @@ def _extract_time_from_text(text: str) -> str:
     value = _safe_str(text)
     if not value:
         return ""
-    match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", value, re.IGNORECASE)
-    if not match:
-        return ""
-    hour = int(match.group(1))
-    minute = int(match.group(2) or 0)
-    if hour < 1 or hour > 12 or minute > 59:
-        return ""
-    return f"{hour}:{minute:02d} {match.group(3).upper()}"
+    normalized = re.sub(r"(?i)\b([ap])\.?\s*m\.?\b", r"\1m", value)
+    match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", normalized, re.IGNORECASE)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        marker = match.group(3).lower()
+        if hour < 1 or hour > 12 or minute > 59:
+            return ""
+        if marker == "pm" and hour != 12:
+            hour += 12
+        if marker == "am" and hour == 12:
+            hour = 0
+        return f"{hour:02d}:{minute:02d}"
+    hour24_match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", normalized)
+    if hour24_match:
+        return f"{int(hour24_match.group(1)):02d}:{int(hour24_match.group(2)):02d}"
+    return ""
 
 
 def _infer_service_type_from_instructions(text: str) -> str:
@@ -1087,6 +1188,7 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
     has_datetime_pair = bool(
         (_safe_str(adjusted.get("service_date")) and _safe_str(adjusted.get("service_time")))
         or (_safe_str(adjusted.get("visitation_date")) and _safe_str(adjusted.get("visitation_time")))
+        or (_safe_str(adjusted.get("delivery_recommendation_date")) and _safe_str(adjusted.get("delivery_recommendation_time")))
         or (_safe_str(adjusted.get("ceremony_date")) and _safe_str(adjusted.get("ceremony_time")))
     )
     has_any_timing = bool(
@@ -1094,6 +1196,8 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         or _safe_str(adjusted.get("service_time"))
         or _safe_str(adjusted.get("visitation_date"))
         or _safe_str(adjusted.get("visitation_time"))
+        or _safe_str(adjusted.get("delivery_recommendation_date"))
+        or _safe_str(adjusted.get("delivery_recommendation_time"))
         or _safe_str(adjusted.get("ceremony_date"))
         or _safe_str(adjusted.get("ceremony_time"))
     )
@@ -1108,8 +1212,9 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
 
     has_obituary_url = any(_is_obituary_like_url(url) for url in source_urls)
     has_legacy_source = any("legacy.com" in str(url).lower() for url in source_urls)
+    has_strong_source_url = any(_is_strong_source_url(url) for url in source_urls)
     has_valid_source_url = bool(source_urls)
-    has_external_source_evidence = bool(has_valid_source_url or original_venue_evidence or original_timing_evidence)
+    has_external_source_evidence = bool(has_valid_source_url or original_venue_evidence)
     service_type_normalized = _safe_str(adjusted.get("service_type")).lower()
     has_venue_evidence = bool(
         _safe_str(adjusted.get("funeral_home_name"))
@@ -1154,6 +1259,12 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
     adjusted["date_verification_status"] = date_verification_status
     adjusted["date_verification_notes"] = date_verification_note
     notes = _append_unique_note(notes, date_verification_note)
+    source_freshness_status, source_freshness_note = _evaluate_source_freshness(order, adjusted)
+    adjusted["source_freshness_status"] = source_freshness_status
+    notes = _append_unique_note(notes, source_freshness_note)
+    venue_alignment_status, venue_alignment_note = _evaluate_venue_alignment(order, adjusted)
+    adjusted["venue_alignment_status"] = venue_alignment_status
+    notes = _append_unique_note(notes, venue_alignment_note)
 
     score = float(adjusted.get("ai_accuracy_score") or 0)
     instruction_has_schedule = bool(instruction_schedule)
@@ -1163,25 +1274,35 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         adjusted["match_status"] = "Review"
         adjusted["ai_accuracy_score"] = min(max(score, 60.0), 84.0)
         notes = _append_unique_note(notes, "Review: source identity does not cleanly match requested deceased")
+    elif venue_alignment_status == "conflict" and has_source_evidence:
+        adjusted["match_status"] = "Review"
+        adjusted["ai_accuracy_score"] = min(max(score, 60.0), 84.0)
+        notes = _append_unique_note(notes, "Review: source venue conflicts with recipient / care-of details")
+    elif source_freshness_status in {"backdated", "stale"} and date_verification_status != "verified":
+        adjusted["match_status"] = "Review"
+        adjusted["ai_accuracy_score"] = min(max(score, 58.0), 84.0)
+        notes = _append_unique_note(notes, "Review: source timing is stale or backdated for this order")
     elif date_verification_status == "mismatch":
         adjusted["match_status"] = "Review"
         adjusted["ai_accuracy_score"] = min(max(score, 60.0), 84.0)
         notes = _append_unique_note(notes, "Review: source date conflicts with customer instructions")
     elif (
         instruction_schedule
-        and not has_external_source_evidence
+        and not has_strong_source_url
         and date_verification_status in {"verified", "instruction_only"}
         and name_match_status in {"exact", "minor", "fuzzy"}
     ):
         adjusted["match_status"] = "Customer"
         adjusted["ai_accuracy_score"] = max(score, 72.0)
-        notes = _append_unique_note(notes, "Customer: schedule normalized from order instructions because outside sources did not confirm it")
+        notes = _append_unique_note(notes, "Customer: schedule normalized from order instructions because no trustworthy obituary/detail source confirmed it")
     elif (
         name_match_status in {"exact", "minor", "fuzzy"}
-        and has_valid_source_url
+        and has_strong_source_url
         and has_date_evidence
         and has_time_evidence
         and date_verification_status != "mismatch"
+        and source_freshness_status not in {"backdated", "stale"}
+        and venue_alignment_status != "conflict"
     ):
         adjusted["match_status"] = "Found"
         adjusted["ai_accuracy_score"] = max(score, 85.0)
@@ -1191,11 +1312,18 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         and has_time_evidence
         and not has_date_evidence
         and date_verification_status in {"missing", "invalid"}
+        and venue_alignment_status != "conflict"
     ):
         adjusted["match_status"] = "Found"
         adjusted["ai_accuracy_score"] = max(score, 75.0)
         notes = _append_unique_note(notes, "Found with time-only evidence from an obituary/detail source URL")
-    elif date_verification_status in {"verified", "source_only"} and name_match_status in {"exact", "minor", "fuzzy"}:
+    elif (
+        date_verification_status in {"verified", "source_only"}
+        and name_match_status in {"exact", "minor", "fuzzy"}
+        and (has_strong_source_url or (date_verification_status == "source_only" and has_venue_evidence))
+        and source_freshness_status not in {"backdated", "stale"}
+        and venue_alignment_status != "conflict"
+    ):
         adjusted["match_status"] = "Found"
         adjusted["ai_accuracy_score"] = max(score, 85.0 if date_verification_status == "verified" else 80.0)
     elif date_verification_status == "instruction_only" and name_match_status in {"exact", "minor", "fuzzy"}:
@@ -1229,6 +1357,8 @@ def _apply_business_rules(order: dict, parsed: dict) -> dict:
         and adjusted.get("match_status") == "Review"
         and name_match_status in {"exact", "minor", "fuzzy"}
         and date_verification_status != "mismatch"
+        and source_freshness_status not in {"backdated", "stale"}
+        and venue_alignment_status != "conflict"
     ):
         adjusted["match_status"] = "Found"
         adjusted["ai_accuracy_score"] = max(float(adjusted.get("ai_accuracy_score") or 0), 85.0)
@@ -1506,11 +1636,22 @@ def parse_ai_response(ai_text: str) -> dict:
     delivery_recommendation_location = _safe_str(ai_data.get("delivery_recommendation_location") or ai_data.get("DELIVER TO"))
     special_instructions = _safe_str(ai_data.get("special_instructions") or ai_data.get("SPECIAL INSTRUCTIONS"))
 
+    service_date = _parse_date_candidate(service_date)
+    visitation_date = _parse_date_candidate(visitation_date)
+    ceremony_date = _parse_date_candidate(ceremony_date)
+    delivery_recommendation_date = _parse_date_candidate(delivery_recommendation_date)
+    service_time = _extract_time_from_text(service_time)
+    visitation_time = _extract_time_from_text(visitation_time)
+    ceremony_time = _extract_time_from_text(ceremony_time)
+    delivery_recommendation_time = _extract_time_from_text(delivery_recommendation_time)
+
     service_date, service_time, fallback_source = _normalize_service_datetime(
         service_date,
         service_time,
         visitation_date,
         visitation_time,
+        delivery_recommendation_date,
+        delivery_recommendation_time,
         ceremony_date,
         ceremony_time,
     )
@@ -1591,12 +1732,17 @@ def parse_ai_response(ai_text: str) -> dict:
         return re.sub(r"[^a-z0-9]+", "", raw)
 
     evidence_count = sum(1 for value in evidence_values if _normalized_marker(value) not in invalid_markers)
-    has_datetime_pair = bool((service_date and service_time) or (visitation_date and visitation_time) or (ceremony_date and ceremony_time))
+    has_datetime_pair = bool(
+        (service_date and service_time)
+        or (visitation_date and visitation_time)
+        or (delivery_recommendation_date and delivery_recommendation_time)
+        or (ceremony_date and ceremony_time)
+    )
     notes_value = _safe_str(ai_data.get("notes") or ai_data.get("Summary") or ai_data.get("Status Justification"))
 
     def _partial_timing_note() -> str:
-        dates_present = any(_safe_str(value) for value in [service_date, visitation_date, ceremony_date])
-        times_present = any(_safe_str(value) for value in [service_time, visitation_time, ceremony_time])
+        dates_present = any(_safe_str(value) for value in [service_date, visitation_date, delivery_recommendation_date, ceremony_date])
+        times_present = any(_safe_str(value) for value in [service_time, visitation_time, delivery_recommendation_time, ceremony_time])
         if has_datetime_pair:
             return ""
         if dates_present and not times_present:
@@ -1656,7 +1802,7 @@ def parse_ai_response(ai_text: str) -> dict:
     # NOTE: Do NOT force NotFound here when evidence exists.
     # Let _apply_business_rules() decide based on web sources, venue confirmation, etc.
 
-    if fallback_source in {"visitation", "ceremony"}:
+    if fallback_source in {"visitation", "delivery", "ceremony"}:
         notes_value = f"{notes_value} | service datetime fallback={fallback_source}".strip(" |")
 
     return {

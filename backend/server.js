@@ -53,6 +53,29 @@ import {
   touchSession,
   updateUserPassword,
 } from "./lib/auth-store.js";
+import {
+  buildMysqlConnectionGuidance,
+  createManualOrderUpdate,
+  generateSqlReport,
+  getSqlOrderStats,
+  getMysqlConfigurationSnapshot,
+  getMysqlStartupStatus,
+  getSqlLiveQueueRows,
+  getSqlOrderTimeline,
+  getSqlReportDateBounds,
+  hydrateScriptLogsFromSql,
+  importOutputsToMysql,
+  initializeMysqlRuntime,
+  isMysqlConfigured,
+  listSqlOrders,
+  listSqlViewFiles,
+  persistRuntimeJobLogsToMysql,
+  readSqlViewContent,
+  scopedDeleteOrderData,
+  setOrderProcessingState,
+  syncScriptOutputsToMysql,
+  testMysqlConnection,
+} from "./lib/mysql-persistence.js";
 
 const app = express();
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
@@ -108,6 +131,7 @@ const SCHEDULE_RETRY_DELAY_MS = Number(process.env.SCHEDULE_RETRY_DELAY_MS || 15
 const DEMO_FAST_PIPELINE = process.env.BLOSSOM_DEMO_FAST_PIPELINE === "1";
 const PIPELINE_ORDER = ["get-task", "get-order-inquiry", "funeral-finder", "reverify", "updater", "closing-task"];
 const AUTH_COOKIE_NAME = "blossom_session";
+const PUBLIC_DASHBOARD_MODE = process.env.PUBLIC_DASHBOARD_MODE !== "0";
 const ROOT_ENV_PATH = path.resolve(process.cwd(), ".env");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-search-preview";
 const DEFAULT_PERPLEXITY_MODEL = "sonar-pro";
@@ -235,14 +259,39 @@ function readSessionId(req) {
   return parseCookies(req.headers.cookie || "")[AUTH_COOKIE_NAME] || "";
 }
 
+function buildPublicAuthContext() {
+  const now = new Date().toISOString();
+  return {
+    session: {
+      id: "public-session",
+      createdAt: now,
+      expiresAt: now,
+      lastSeenAt: now,
+    },
+    user: {
+      id: "public-admin",
+      username: "Public Dashboard",
+      role: "viewer",
+    },
+  };
+}
+
 function requireAuth(req, res, next) {
   const sessionId = readSessionId(req);
   if (!sessionId) {
+    if (PUBLIC_DASHBOARD_MODE) {
+      req.auth = buildPublicAuthContext();
+      return next();
+    }
     return res.status(401).json({ error: "Login required" });
   }
 
   const session = touchSession(sessionId, getSessionTtlMinutes());
   if (!session) {
+    if (PUBLIC_DASHBOARD_MODE) {
+      req.auth = buildPublicAuthContext();
+      return next();
+    }
     res.setHeader("Set-Cookie", clearSessionCookie());
     return res.status(401).json({ error: "Session expired" });
   }
@@ -629,6 +678,270 @@ function createPreflightReport() {
     checkedAt: new Date().toISOString(),
     checks,
   };
+}
+
+async function buildSqlHealthResponse() {
+  const config = getMysqlConfigurationSnapshot();
+  const guidance = buildMysqlConnectionGuidance();
+  const startup = getMysqlStartupStatus();
+
+  if (!config.configured) {
+    return {
+      configured: false,
+      connected: false,
+      message: "MySQL configuration is incomplete.",
+      error: startup.error || "",
+      config,
+      guidance,
+      startup,
+      connection: null,
+    };
+  }
+
+  try {
+    const connection = await testMysqlConnection();
+    return {
+      configured: true,
+      connected: true,
+      message: "MySQL connection is active.",
+      config,
+      guidance,
+      startup,
+      connection,
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      connected: false,
+      message: "MySQL configuration is present but the live connection failed.",
+      error: error instanceof Error ? error.message : String(error),
+      config,
+      guidance,
+      startup,
+      connection: null,
+    };
+  }
+}
+
+function readGetTaskDiagnostics() {
+  const statsPath = path.resolve(process.cwd(), "Scripts", "outputs", "GetTask", "stats.json");
+  if (!fs.existsSync(statsPath)) {
+    return { ok: false, message: "GetTask diagnostics are not available yet. Run GetTask once to generate stats.json." };
+  }
+  try {
+    return JSON.parse(fs.readFileSync(statsPath, "utf-8"));
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Failed to parse GetTask diagnostics.",
+    };
+  }
+}
+
+async function buildLiveOrderQueueSnapshot() {
+  const rows = await getSqlLiveQueueRows({ limit: 500 });
+  const runningOrders = rows.filter((row) => row.status === "running");
+  const pendingOrders = rows.filter((row) => row.status === "pending");
+  const failedOrders = rows.filter((row) => row.status === "failed");
+  const jobs = loadJobs();
+  const activeJobs = jobs.filter((job) => ["running", "queued"].includes(job.status)).length;
+  return {
+    source: "sql",
+    generatedAt: new Date().toISOString(),
+    summary: {
+      running: runningOrders.length,
+      pending: pendingOrders.length,
+      failed: failedOrders.length,
+      trackedRows: rows.length,
+      activeJobs,
+    },
+    runningOrders,
+    pendingOrders,
+    failedOrders,
+  };
+}
+
+function readSqlRunLogs(jobId) {
+  const job = loadJobs().find((entry) => entry.id === jobId);
+  if (!job) {
+    return null;
+  }
+  const orderIds = Array.isArray(job.logs)
+    ? Array.from(new Set(
+        job.logs
+          .map((line) => String(line || "").match(/Order ID\s*:\s*([A-Za-z0-9._-]+)/i)?.[1] || "")
+          .filter(Boolean),
+      ))
+    : [];
+  return {
+    jobId: job.id,
+    logs: Array.isArray(job.logs) ? job.logs : [],
+    status: job.status,
+    orderIds,
+  };
+}
+
+function normalizeRuntimeOrderId(value) {
+  return String(value || "").trim().replace(/\.0$/, "");
+}
+
+function extractOrderIdsFromLogText(text) {
+  const value = String(text || "");
+  const matches = value.matchAll(/Order ID\s*:\s*([A-Za-z0-9._-]+)/gi);
+  return Array.from(new Set(Array.from(matches, (match) => normalizeRuntimeOrderId(match[1])))).filter(Boolean);
+}
+
+function extractOrderIdsFromRows(rows = []) {
+  return Array.from(new Set(
+    rows
+      .map((row) => normalizeRuntimeOrderId(
+        row?.order_id
+        ?? row?.orderid
+        ?? row?.ord_id
+        ?? row?.OrderID
+        ?? row?.Order_Id,
+      ))
+      .filter(Boolean),
+  ));
+}
+
+function readPipelineRows(relativePath) {
+  try {
+    const content = readFileContent(relativePath, 0);
+    return Array.isArray(content?.parsed) ? content.parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getCandidateRowsForScript(scriptId, option) {
+  if (scriptId === "get-order-inquiry") {
+    return readPipelineRows("Scripts/outputs/GetTask/data.csv");
+  }
+  if (scriptId === "funeral-finder") {
+    return readPipelineRows("Scripts/outputs/GetOrderInquiry/data.csv");
+  }
+  if (scriptId === "reverify") {
+    const selectedOption = String(option || "both").trim().toLowerCase();
+    if (selectedOption === "not_found") {
+      return readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data_not_found.csv");
+    }
+    if (selectedOption === "review") {
+      return readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data_review.csv");
+    }
+    return [
+      ...readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data_not_found.csv"),
+      ...readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data_review.csv"),
+    ];
+  }
+  if (scriptId === "updater") {
+    const selectedOption = String(option || "complete").trim().toLowerCase();
+    if (selectedOption === "found_only") {
+      return readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data_found.csv");
+    }
+    if (selectedOption === "not_found") {
+      return readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data_not_found.csv");
+    }
+    if (selectedOption === "review") {
+      return readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data_review.csv");
+    }
+    return readPipelineRows("Scripts/outputs/Funeral_Finder/Funeral_data.csv");
+  }
+  if (scriptId === "closing-task") {
+    return readPipelineRows("Scripts/outputs/Updater/data.csv");
+  }
+  return [];
+}
+
+async function primeSqlQueueForScript({ jobId, scriptId, option }) {
+  if (!isMysqlConfigured()) {
+    return [];
+  }
+  try {
+    await initializeMysqlRuntime({ ensureSchema: true });
+    const candidateRows = getCandidateRowsForScript(scriptId, option);
+    const orderIds = extractOrderIdsFromRows(candidateRows).slice(0, 5000);
+    await Promise.all(orderIds.map((orderId) => setOrderProcessingState({
+      orderId,
+      scriptName: scriptId,
+      status: "pending",
+      lastRunUuid: jobId,
+      lastError: null,
+      incrementAttempt: false,
+    })));
+    return orderIds;
+  } catch (error) {
+    appendLog(jobId, `SQL queue priming failed for ${scriptId}: ${error instanceof Error ? error.message : String(error)}`);
+    return [];
+  }
+}
+
+async function markRuntimeOrderState({ orderId, scriptId, jobId, status, incrementAttempt = false, lastError = null }) {
+  if (!isMysqlConfigured() || !orderId) {
+    return;
+  }
+  try {
+    await initializeMysqlRuntime({ ensureSchema: true });
+    await setOrderProcessingState({
+      orderId,
+      scriptName: scriptId,
+      status,
+      lastRunUuid: jobId,
+      lastError,
+      incrementAttempt,
+    });
+  } catch (error) {
+    appendLog(jobId, `SQL live state update failed for ${scriptId}/${orderId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function finalizePrimedRuntimeOrderStates({ jobId, scriptId, orderIds = [], terminalStatus, errorMessage = null }) {
+  if (!isMysqlConfigured() || !orderIds.length) {
+    return;
+  }
+  const normalizedStatus = terminalStatus === "success" ? "skipped" : "failed";
+  await Promise.all(orderIds.map((orderId) => markRuntimeOrderState({
+    orderId,
+    scriptId,
+    jobId,
+    status: normalizedStatus,
+    incrementAttempt: false,
+    lastError: normalizedStatus === "failed" ? (errorMessage || `${scriptId} did not complete`) : null,
+  })));
+}
+
+async function syncCompletedScriptArtifactsToSql({
+  jobId,
+  scriptId,
+  status = "success",
+  errorMessage = null,
+}) {
+  if (!isMysqlConfigured()) {
+    return { ok: false, reason: "mysql-not-configured" };
+  }
+
+  try {
+    await initializeMysqlRuntime({ ensureSchema: true });
+    const job = loadJobs().find((entry) => entry.id === jobId);
+    const logs = Array.isArray(job?.logs) ? job.logs : [];
+    await persistRuntimeJobLogsToMysql({
+      runUuid: jobId,
+      scriptId,
+      logs,
+    });
+    const summary = await syncScriptOutputsToMysql({
+      runUuid: jobId,
+      scriptId,
+      status,
+      errorMessage,
+    });
+    await hydrateScriptLogsFromSql(scriptId);
+    appendLog(jobId, `SQL sync complete for ${scriptId}: ${summary.syncedRows ?? 0} rows, ${summary.syncedFiles ?? 0} files, ${summary.runtimeLogs ?? 0} runtime logs`);
+    return { ok: true, summary };
+  } catch (error) {
+    appendLog(jobId, `SQL sync failed for ${scriptId}: ${error instanceof Error ? error.message : String(error)}`);
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function loadJobs() {
@@ -1214,6 +1527,11 @@ async function runDemoScriptJob({ jobId, scriptId, option, modelName, script, mo
   appendLog(jobId, `${script.name} finished with code 0`);
   resolvePipelineErrorReport({ jobId, scriptId, recoveredAt: new Date().toISOString() });
   appendScriptRunSummary(jobId, scriptId);
+  await syncCompletedScriptArtifactsToSql({
+    jobId,
+    scriptId,
+    status: "success",
+  });
   return { success: true, exitCode: 0 };
 }
 
@@ -1300,6 +1618,15 @@ async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCou
   if (scriptId === "updater" && effectiveOption) {
     scriptArgs.push("--mode", effectiveOption);
   }
+  const primedOrderIds = await primeSqlQueueForScript({
+    jobId,
+    scriptId,
+    option: effectiveOption,
+  });
+  if (primedOrderIds.length > 0) {
+    appendLog(jobId, `SQL queue primed for ${scriptId}: ${primedOrderIds.length} candidate order(s) ready for live tracking`);
+  }
+  const seenRuntimeOrderIds = new Set();
   const child = spawn(PYTHON_BIN, [script.file, ...scriptArgs], {
     cwd: path.dirname(script.file),
     env,
@@ -1313,6 +1640,20 @@ async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCou
     const text = chunk.toString().trim();
     appendLog(jobId, text);
     updateProgressFromOutput(jobId, text);
+    extractOrderIdsFromLogText(text).forEach((orderId) => {
+      if (seenRuntimeOrderIds.has(orderId)) {
+        return;
+      }
+      seenRuntimeOrderIds.add(orderId);
+      void markRuntimeOrderState({
+        orderId,
+        scriptId,
+        jobId,
+        status: "running",
+        incrementAttempt: true,
+        lastError: null,
+      });
+    });
   });
 
   child.stderr.on("data", (chunk) => {
@@ -1320,7 +1661,7 @@ async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCou
   });
 
   return new Promise((resolve) => {
-    child.on("error", (error) => {
+    child.on("error", async (error) => {
       runningProcesses.delete(jobId);
       finishModelRun(modelRunId, "failed");
       const failedJob = upsertJob(jobId, {
@@ -1335,7 +1676,19 @@ async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCou
         message: `Process error: ${error.message}`,
       });
       appendScriptRunSummary(jobId, scriptId);
-      resolve({ success: false, exitCode: 1 });
+      await finalizePrimedRuntimeOrderStates({
+        jobId,
+        scriptId,
+        orderIds: primedOrderIds,
+        terminalStatus: "failed",
+        errorMessage: error.message,
+      });
+      syncCompletedScriptArtifactsToSql({
+        jobId,
+        scriptId,
+        status: "failed",
+        errorMessage: error.message,
+      }).finally(() => resolve({ success: false, exitCode: 1 }));
     });
 
     child.on("close", async (code) => {
@@ -1351,6 +1704,19 @@ async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCou
         });
         appendLog(jobId, `${script.name} stopped by user`);
         appendScriptRunSummary(jobId, scriptId);
+        await finalizePrimedRuntimeOrderStates({
+          jobId,
+          scriptId,
+          orderIds: primedOrderIds,
+          terminalStatus: "failed",
+          errorMessage: "Cancelled by user",
+        });
+        await syncCompletedScriptArtifactsToSql({
+          jobId,
+          scriptId,
+          status: "cancelled",
+          errorMessage: "Cancelled by user",
+        });
         await syncScriptOutputsIfConfigured(jobId, scriptId);
         resolve({ success: false, exitCode: code ?? 1 });
         return;
@@ -1379,6 +1745,19 @@ async function runScriptJob({ jobId, scriptId, option, modelName, forceLatestCou
         });
       }
       appendScriptRunSummary(jobId, scriptId);
+      await finalizePrimedRuntimeOrderStates({
+        jobId,
+        scriptId,
+        orderIds: primedOrderIds,
+        terminalStatus: success ? "success" : "failed",
+        errorMessage: success ? null : (concurrentGuardMessage || `${script.name} finished with code ${finalExitCode}`),
+      });
+      await syncCompletedScriptArtifactsToSql({
+        jobId,
+        scriptId,
+        status: success ? "success" : "failed",
+        errorMessage: success ? null : (concurrentGuardMessage || `${script.name} finished with code ${finalExitCode}`),
+      });
       await syncScriptOutputsIfConfigured(jobId, scriptId);
       resolve({ success, exitCode: finalExitCode ?? 1 });
     });
@@ -2043,6 +2422,156 @@ app.get("/api/auth/me", (req, res) => {
     reverifyDefaultProvider: getReverifyDefaultProvider(),
     configuredTimezone: getConfiguredTimezone(),
     databasePath: getDatabasePath(),
+  });
+});
+
+app.get("/api/diagnostics/get-task", (_req, res) => {
+  return res.json(readGetTaskDiagnostics());
+});
+
+app.get("/api/sql/health", async (_req, res) => {
+  return res.json(await buildSqlHealthResponse());
+});
+
+app.post("/api/sql/bootstrap", async (req, res) => {
+  try {
+    await initializeMysqlRuntime({ ensureSchema: true });
+    const summary = await importOutputsToMysql({ ensureSchema: false });
+    return res.json({ ok: true, summary });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get("/api/sql/orders", async (req, res) => {
+  try {
+    const rows = await listSqlOrders({
+      status: String(req.query.status || "all"),
+      search: String(req.query.search || ""),
+      sort: String(req.query.sort || "updated_at"),
+      direction: String(req.query.direction || "desc"),
+      dateFrom: String(req.query.dateFrom || ""),
+      dateTo: String(req.query.dateTo || ""),
+      limit: Number(req.query.limit || 250),
+    });
+    return res.json({ rows });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get("/api/sql/files", (_req, res) => {
+  return res.json({ files: listSqlViewFiles() });
+});
+
+app.get("/api/sql/file-content", async (req, res) => {
+  try {
+    const filePath = String(req.query.path || "");
+    const limit = Number(req.query.limit || 2000);
+    const rows = await readSqlViewContent(filePath, { limit });
+    return res.json({ path: filePath, rows });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get("/api/sql/orders/:orderId/timeline", async (req, res) => {
+  try {
+    const timeline = await getSqlOrderTimeline(req.params.orderId);
+    if (!timeline) {
+      return res.status(404).json({ error: `Order not found in SQL: ${req.params.orderId}` });
+    }
+    return res.json(timeline);
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get("/api/sql/run-logs/:jobId", (req, res) => {
+  const result = readSqlRunLogs(req.params.jobId);
+  if (!result) {
+    return res.status(404).json({ error: "Job not found" });
+  }
+  return res.json(result);
+});
+
+app.get("/api/sql/reports/meta", async (_req, res) => {
+  try {
+    return res.json(await getSqlReportDateBounds());
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post("/api/sql/reports/generate", async (req, res) => {
+  try {
+    return res.json(await generateSqlReport({
+      dateFrom: String(req.body?.dateFrom || ""),
+      dateTo: String(req.body?.dateTo || ""),
+      createdBy: req.auth?.user?.id || null,
+    }));
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.get("/api/sql/live-queue", async (_req, res) => {
+  try {
+    return res.json(await buildLiveOrderQueueSnapshot());
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post("/api/sql/orders/:orderId/manual-update", async (req, res) => {
+  try {
+    return res.json(await createManualOrderUpdate({
+      orderId: req.params.orderId,
+      matchStatus: String(req.body?.matchStatus || ""),
+      serviceDatetime: String(req.body?.serviceDatetime || ""),
+      funeralHome: String(req.body?.funeralHome || ""),
+      notes: String(req.body?.notes || ""),
+      userId: req.auth?.user?.id || null,
+      reason: String(req.body?.reason || "manual update from dashboard"),
+    }));
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post("/api/sql/orders/:orderId/scoped-delete", async (req, res) => {
+  try {
+    return res.json(await scopedDeleteOrderData({
+      orderId: req.params.orderId,
+      scopes: Array.isArray(req.body?.scopes) ? req.body.scopes : [],
+      userId: req.auth?.user?.id || null,
+      reason: String(req.body?.reason || "scoped delete from dashboard"),
+    }));
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post("/api/sql/orders/run-pipeline", async (req, res) => {
+  const orderId = String(req.body?.orderId || "").trim();
+  const selectedScripts = Array.isArray(req.body?.selectedScripts) ? req.body.selectedScripts : [];
+  const reprocess = Boolean(req.body?.reprocess);
+  if (!orderId) {
+    return res.status(400).json({ error: "orderId is required" });
+  }
+  try {
+    const timeline = await getSqlOrderTimeline(orderId);
+    if (!timeline?.order) {
+      return res.status(404).json({ error: `Order not found in SQL: ${orderId}` });
+    }
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+  return res.status(501).json({
+    error: "Single-order script execution is not reconnected to the legacy Python pipeline yet. SQL health, import, reports, manual updates, scoped delete, and live queue are active; targeted script execution needs the next recovery patch.",
+    orderId,
+    selectedScripts,
+    reprocess,
   });
 });
 
@@ -2715,11 +3244,14 @@ function buildOrderStatsSnapshot() {
 
   live.rows.forEach((row) => {
     const status = normalizeStatusValue(row._normalizedStatus || row.match_status || row.status);
+    if (!["customer", "found", "notfound", "review"].includes(status)) {
+      unknown += 1;
+      return;
+    }
     if (status === "customer") customer += 1;
     else if (status === "found") found += 1;
     else if (status === "notfound") notfound += 1;
     else if (status === "review") review += 1;
-    else unknown += 1;
 
     const date = extractDateFromRow(row);
     if (date) {
@@ -2945,8 +3477,17 @@ function collectAlerts(limit = 50) {
   const jobs = loadJobs();
   const alerts = [];
   const seen = new Set();
+  const recentWindowMs = 72 * 60 * 60 * 1000;
+  const now = Date.now();
 
   jobs.forEach((job) => {
+    const jobUpdatedAtMs = Date.parse(job.updatedAt || job.finishedAt || job.startedAt || job.createdAt || "");
+    const jobIsRecent = Number.isFinite(jobUpdatedAtMs) ? (now - jobUpdatedAtMs) <= recentWindowMs : false;
+    const jobNeedsAttention = ["failed", "running", "queued", "cancelled"].includes(String(job.status || "").toLowerCase());
+    if (!jobIsRecent && !jobNeedsAttention) {
+      return;
+    }
+
     (job.logs || []).forEach((line, lineIndex) => {
       const text = String(line || "");
       const lower = text.toLowerCase();
@@ -2975,6 +3516,9 @@ function collectAlerts(limit = 50) {
       }
 
       if (!type) {
+        return;
+      }
+      if (job.status === "cancelled" && lower.includes("cancelled by user")) {
         return;
       }
 
@@ -3036,13 +3580,28 @@ function extractDateFromRow(row) {
   return parsed.toISOString().slice(0, 10);
 }
 
-app.get("/api/stats/order-processing", requireAuth, (_req, res) => {
+app.get("/api/stats/order-processing", requireAuth, async (_req, res) => {
+  try {
+    if (isMysqlConfigured()) {
+      return res.json(await getSqlOrderStats());
+    }
+  } catch (error) {
+    console.warn(`[stats] Falling back to file snapshot because SQL stats failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   return res.json(buildOrderStatsSnapshot());
 });
 
-app.get("/api/stats/order-processing/by-date", requireAuth, (req, res) => {
+app.get("/api/stats/order-processing/by-date", requireAuth, async (req, res) => {
   const from = String(req.query.from || "");
   const to = String(req.query.to || "");
+  try {
+    if (isMysqlConfigured()) {
+      const snapshot = await getSqlOrderStats({ dateFrom: from, dateTo: to });
+      return res.json({ from, to, days: snapshot.byDate });
+    }
+  } catch (error) {
+    console.warn(`[stats] Falling back to file date snapshot because SQL stats failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const snapshot = buildOrderStatsSnapshot();
   const days = snapshot.byDate.filter((day) => (!from || day.date >= from) && (!to || day.date <= to));
   return res.json({ from, to, days });
@@ -3114,5 +3673,16 @@ if (fs.existsSync(distDir)) {
 
 app.listen(PORT, () => {
   console.log(`Backend running at http://localhost:${PORT}`);
+  if (isMysqlConfigured()) {
+    initializeMysqlRuntime({ ensureSchema: true })
+      .then(() => {
+        console.log("[mysql] Startup initialization completed");
+      })
+      .catch((error) => {
+        console.error("[mysql] Startup initialization failed:", error instanceof Error ? error.message : error);
+      });
+  } else {
+    console.warn("[mysql] Startup initialization skipped because MySQL env is incomplete");
+  }
 });
 
