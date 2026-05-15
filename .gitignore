@@ -80,3 +80,9 @@ graphify-out/
 client_secret_*.apps.googleusercontent.com.json
 blossom-obituary-automation-api*.json
 NginxClaudesetupHelp*.mhtml
+backend/data/auth-store.json
+backend/data/google-sync.json
+backend/data/jobs.json
+backend/data/schedules.json
+pipeline_*.json
+.graphify_*
